@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ncurses.h>
+#include <ncursesw/ncurses.h>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -9,12 +9,98 @@
 #include <limits.h>
 #include <wchar.h>
 #include <locale.h>
+#include <pthread.h>
+
+// PortAudio 头文件
+#include <portaudio.h>
+
+// FFmpeg 头文件
+#include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
+#include <libswresample/swresample.h>
+#include <libavutil/opt.h>
+#include <libavutil/channel_layout.h>
+#include <libavutil/samplefmt.h>
+
+// 确保DT_REG和DT_UNKNOWN被定义
+#ifndef DT_REG
+#define DT_REG 8
+#endif
+
+#ifndef DT_UNKNOWN
+#define DT_UNKNOWN 0
+#endif
+
+// 循环模式定义
+typedef enum {
+    LOOP_OFF = 0,      // 关闭循环
+    LOOP_SINGLE = 1,   // 单曲循环
+    LOOP_LIST = 2,     // 列表内循环
+    LOOP_RANDOM = 3    // 随机循环
+} LoopMode;
+
+// 播放状态定义
+typedef enum {
+    PLAY_STATE_STOPPED = 0,
+    PLAY_STATE_PLAYING = 1,
+    PLAY_STATE_PAUSED = 2
+} PlayState;
 
 // 定义颜色对索引
 #define COLOR_PAIR_BORDER 1
 #define COLOR_PAIR_PLAYLIST 2
 #define COLOR_PAIR_CONTROLS 3
 #define COLOR_PAIR_LYRICS 4
+
+// 音频输出相关全局变量
+static PaStream *audio_stream = NULL;
+static int16_t *audio_buffer = NULL;
+static int buffer_size = 0;
+static int buffer_pos = 0;
+static pthread_mutex_t audio_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// 最大音频缓冲区大小（约1秒的立体声音频）
+#define MAX_AUDIO_BUFFER_SIZE (44100 * 2 * sizeof(int16_t))
+
+// PortAudio 回调函数
+static int audio_callback(const void *input, void *output,
+                         unsigned long frameCount,
+                         const PaStreamCallbackTimeInfo* timeInfo,
+                         PaStreamCallbackFlags statusFlags,
+                         void *userData)
+{
+    (void) input; // 不使用输入
+    (void) timeInfo;
+    (void) statusFlags;
+    
+    int16_t *out = (int16_t*)output;
+    int frames_to_write = frameCount * 2; // 立体声，每帧2个样本
+    
+    pthread_mutex_lock(&audio_mutex);
+    
+    // 安全检查
+    if (!audio_buffer || buffer_pos >= buffer_size) {
+        // 填充静音
+        memset(out, 0, frames_to_write * sizeof(int16_t));
+        pthread_mutex_unlock(&audio_mutex);
+        return paContinue;
+    }
+    
+    // 从缓冲区复制数据到输出
+    int i = 0;
+    while (i < frames_to_write && buffer_pos < buffer_size) {
+        out[i++] = audio_buffer[buffer_pos++];
+    }
+    
+    // 如果缓冲区已空，填充剩余部分为静音
+    while (i < frames_to_write) {
+        out[i++] = 0;
+    }
+    
+    pthread_mutex_unlock(&audio_mutex);
+    
+    return paContinue;
+}
 
 // 定义最大路径长度和歌曲数量
 #define MAX_PATH_LEN 512
@@ -51,7 +137,15 @@ int g_selected_index = 0;  // 当前选中的歌曲索引
 // 0: 列表模式 (List), 1: 控制模式 (Control)
 int g_control_focus = 0; 
 // 当前选中的控件索引 (0:上一曲，1:播放/暂停，2:下一曲，3:停止，4:循环)
-int g_current_control_idx = 1; 
+int g_current_control_idx = 1;
+
+// 播放相关全局变量
+PlayState g_play_state = PLAY_STATE_STOPPED; // 当前播放状态
+int g_current_play_index = -1; // 当前播放的歌曲索引
+LoopMode g_loop_mode = LOOP_OFF; // 当前循环模式
+pthread_t g_play_thread; // 播放线程
+int g_play_thread_running = 0; // 播放线程运行状态
+pthread_mutex_t g_play_mutex = PTHREAD_MUTEX_INITIALIZER; // 播放控制互斥锁 
 
 // 定义控件数量
 #define CONTROL_COUNT 5
@@ -60,6 +154,18 @@ const char *control_labels[] = {"<<", "Play/Pause", ">>", "Stop", "Loop"};
 // 函数声明
 void update_controls_status(const char *msg);
 void cleanup();
+void *play_audio_thread(void *arg);
+void play_audio(int index);
+void pause_audio();
+void resume_audio();
+void stop_audio();
+void next_track();
+void prev_track();
+void toggle_loop_mode();
+const char *get_loop_mode_str();
+// 新增：UTF-8字符串按屏幕显示宽度安全截断
+int utf8_str_truncate(char *dest, const char *src, int max_cols);
+
 
 /**
  * 初始化 ncurses 环境
@@ -67,6 +173,7 @@ void cleanup();
 void init_ncurses() {
     // 设置本地化环境，支持中文等多字节字符
     setlocale(LC_ALL, "");
+    setlocale(LC_CTYPE, "");
 
     initscr();             // 启动 ncurses 模式
     cbreak();              // 禁用行缓冲，立即读取输入
@@ -83,6 +190,32 @@ void init_ncurses() {
         init_pair(COLOR_PAIR_CONTROLS, COLOR_YELLOW, COLOR_BLACK);
         init_pair(COLOR_PAIR_LYRICS, COLOR_GREEN, COLOR_BLACK);
     }
+}
+
+int utf8_str_truncate(char *dest, const char *src, int max_cols) {
+    if (!dest || !src || max_cols <= 0) {
+        if (dest) *dest = '\0';
+        return 0;
+    }
+    int cols = 0;
+    char *d = dest;
+    const char *s = src;
+    while (*s && cols < max_cols) {
+        unsigned char c = *s;
+        int char_len = 0, char_width = 1;
+        if (c < 0x80) { char_len = 1; char_width = 1; }
+        else if ((c & 0xE0) == 0xC0) { char_len = 2; char_width = 2; }
+        else if ((c & 0xF0) == 0xE0) { char_len = 3; char_width = 2; }
+        else if ((c & 0xF8) == 0xF0) { char_len = 4; char_width = 2; }
+        else { char_len = 1; char_width = 1; }
+
+        if (cols + char_width > max_cols) break;
+        for (int i=0; i<char_len; i++) *d++ = *s++;
+        cols += char_width;
+    }
+    if (*s && cols + 3 <= max_cols) strcpy(d, "...");
+    else *d = '\0';
+    return cols;
 }
 
 /**
@@ -173,22 +306,21 @@ void get_audio_metadata(const char *path, char *title, char *artist, char *album
     
     // 去除扩展名
     char temp_title[MAX_META_LEN];
-    strncpy(temp_title, fname, MAX_META_LEN - 1);
-    temp_title[MAX_META_LEN - 1] = '\0';
+    utf8_str_truncate(temp_title, fname, MAX_META_LEN - 1);
     char *dot = strrchr(temp_title, '.');
     if (dot) *dot = '\0';
 
     // 初始化默认值
-    strncpy(title, temp_title, MAX_META_LEN - 1);
-    strncpy(artist, "Unknown Artist", MAX_META_LEN - 1);
-    strncpy(album, "Unknown Album", MAX_META_LEN - 1);
+    utf8_str_truncate(title, temp_title, MAX_META_LEN - 1);
+    utf8_str_truncate(artist, "Unknown Artist", MAX_META_LEN - 1);
+    utf8_str_truncate(album, "Unknown Album", MAX_META_LEN - 1);
     
     // 尝试从文件名中提取元数据（格式：Artist - Title）
     char *dash_pos = strstr(temp_title, " - ");
     if (dash_pos) {
         *dash_pos = '\0';
-        strncpy(artist, temp_title, MAX_META_LEN - 1);
-        strncpy(title, dash_pos + 3, MAX_META_LEN - 1);
+        utf8_str_truncate(artist, temp_title, MAX_META_LEN - 1);
+        utf8_str_truncate(title, dash_pos + 3, MAX_META_LEN - 1);
     }
     
     // TODO: 集成 taglib_c 示例 (需链接 -ltag_c)
@@ -202,19 +334,20 @@ void get_audio_metadata(const char *path, char *title, char *artist, char *album
             const char *tag_album = taglib_tag_album(tag);
             
             if (tag_title && strlen(tag_title) > 0) {
-                strncpy(title, tag_title, MAX_META_LEN - 1);
+                utf8_str_truncate(title, tag_title, MAX_META_LEN - 1);
             }
             if (tag_artist && strlen(tag_artist) > 0) {
-                strncpy(artist, tag_artist, MAX_META_LEN - 1);
+                utf8_str_truncate(artist, tag_artist, MAX_META_LEN - 1);
             }
             if (tag_album && strlen(tag_album) > 0) {
-                strncpy(album, tag_album, MAX_META_LEN - 1);
+                utf8_str_truncate(album, tag_album, MAX_META_LEN - 1);
             }
             taglib_tag_free_strings();
         }
         taglib_file_free(file);
     }
     */
+
 }
 
 /**
@@ -236,7 +369,7 @@ int load_playlist(const char *path) {
             
             if (is_audio_file(entry->d_name)) {
                 Track *t = &g_playlist.tracks[g_playlist.count];
-                strncpy(t->path, full_path, MAX_PATH_LEN - 1);
+                utf8_str_truncate(t->path, full_path, MAX_PATH_LEN - 1);
                 
                 // 读取元数据
                 get_audio_metadata(full_path, t->title, t->artist, t->album);
@@ -247,7 +380,7 @@ int load_playlist(const char *path) {
     }
     closedir(dir);
     
-    strncpy(g_playlist.folder_path, path, MAX_PATH_LEN - 1);
+    utf8_str_truncate(g_playlist.folder_path, path, MAX_PATH_LEN - 1);
     g_playlist.is_loaded = (g_playlist.count > 0);
     
     return g_playlist.count;
@@ -292,21 +425,8 @@ void render_playlist_content() {
             char truncated_title[MAX_META_LEN];
             char truncated_artist[MAX_META_LEN];
             
-            strncpy(truncated_title, t->title, title_width - 1);
-            truncated_title[title_width - 1] = '\0';
-            if (strlen(t->title) > title_width - 1) {
-                truncated_title[title_width - 4] = '.';
-                truncated_title[title_width - 3] = '.';
-                truncated_title[title_width - 2] = '.';
-            }
-            
-            strncpy(truncated_artist, t->artist, artist_width - 1);
-            truncated_artist[artist_width - 1] = '\0';
-            if (strlen(t->artist) > artist_width - 1) {
-                truncated_artist[artist_width - 4] = '.';
-                truncated_artist[artist_width - 3] = '.';
-                truncated_artist[artist_width - 2] = '.';
-            }
+            utf8_str_truncate(truncated_title, t->title, title_width - 1);
+            utf8_str_truncate(truncated_artist, t->artist, artist_width - 1);
 
             if (idx == g_selected_index && g_control_focus == 0) {
                 wattron(win_playlist, A_REVERSE);
@@ -325,48 +445,48 @@ void render_playlist_content() {
         int status_line = h - 4;
         mvwhline(win_playlist, status_line, 1, ACS_HLINE, w - 2);
         
-        char status_msg[MAX_META_LEN] = "Stopped";
-        // 简单模拟状态显示，实际应由播放引擎驱动
-        // 这里仅作展示，具体状态文字可根据全局播放状态变量扩展
+        // 根据全局播放状态更新状态信息
+        char status_msg[MAX_META_LEN];
+        switch (g_play_state) {
+            case PLAY_STATE_PLAYING:
+                strcpy(status_msg, "Playing");
+                break;
+            case PLAY_STATE_PAUSED:
+                strcpy(status_msg, "Paused");
+                break;
+            case PLAY_STATE_STOPPED:
+            default:
+                strcpy(status_msg, "Stopped");
+                break;
+        }
+        
         if (g_playlist.count > 0) {
-             Track *t = &g_playlist.tracks[g_selected_index];
-             // 计算可用宽度，显示更多元数据
-             int status_width = w - 4;
-             int title_width = status_width * 2 / 5;
-             int artist_width = status_width * 2 / 5;
-             int album_width = status_width * 1 / 5;
-             
-             // 截断过长的字符串
-             char truncated_title[MAX_META_LEN];
-             char truncated_artist[MAX_META_LEN];
-             char truncated_album[MAX_META_LEN];
-             
-             strncpy(truncated_title, t->title, title_width - 1);
-             truncated_title[title_width - 1] = '\0';
-             if (strlen(t->title) > title_width - 1) {
-                 truncated_title[title_width - 4] = '.';
-                 truncated_title[title_width - 3] = '.';
-                 truncated_title[title_width - 2] = '.';
-             }
-             
-             strncpy(truncated_artist, t->artist, artist_width - 1);
-             truncated_artist[artist_width - 1] = '\0';
-             if (strlen(t->artist) > artist_width - 1) {
-                 truncated_artist[artist_width - 4] = '.';
-                 truncated_artist[artist_width - 3] = '.';
-                 truncated_artist[artist_width - 2] = '.';
-             }
-             
-             strncpy(truncated_album, t->album, album_width - 1);
-             truncated_album[album_width - 1] = '\0';
-             if (strlen(t->album) > album_width - 1) {
-                 truncated_album[album_width - 4] = '.';
-                 truncated_album[album_width - 3] = '.';
-                 truncated_album[album_width - 2] = '.';
-             }
-             
-             mvwprintw(win_playlist, status_line + 1, 2, "Status: %s", status_msg);
-             mvwprintw(win_playlist, status_line + 2, 2, "Title: %-*s Artist: %-*s Album: %-*s", 
+            Track *t;
+            if (g_current_play_index >= 0) {
+                // 显示当前正在播放的歌曲
+                t = &g_playlist.tracks[g_current_play_index];
+            } else {
+                // 显示当前选中的歌曲
+                t = &g_playlist.tracks[g_selected_index];
+            }
+            
+            // 计算可用宽度，显示更多元数据
+            int status_width = w - 4;
+            int title_width = status_width * 2 / 5;
+            int artist_width = status_width * 2 / 5;
+            int album_width = status_width * 1 / 5;
+            
+            // 截断过长的字符串
+            char truncated_title[MAX_META_LEN];
+            char truncated_artist[MAX_META_LEN];
+            char truncated_album[MAX_META_LEN];
+            
+            utf8_str_truncate(truncated_title, t->title, title_width - 1);
+            utf8_str_truncate(truncated_artist, t->artist, artist_width - 1);
+            utf8_str_truncate(truncated_album, t->album, album_width - 1);
+            
+            mvwprintw(win_playlist, status_line + 1, 2, "Status: %s | Loop: %s", status_msg, get_loop_mode_str());
+            mvwprintw(win_playlist, status_line + 2, 2, "Title: %-*s Artist: %-*s Album: %-*s", 
                       title_width, truncated_title, artist_width, truncated_artist, album_width, truncated_album);
         } else {
              mvwprintw(win_playlist, status_line + 1, 2, "Status: %s | Track: --", status_msg);
@@ -401,16 +521,21 @@ void render_controls() {
 
     int current_col = start_col;
     for (int i = 0; i < CONTROL_COUNT; i++) {
-        const char *label = control_labels[i];
-        int len = strlen(label);
+        char display_label[32];
+        if (i == 4) { // 循环按钮
+            snprintf(display_label, sizeof(display_label), "%s:%s", control_labels[i], get_loop_mode_str());
+        } else {
+            utf8_str_truncate(display_label, control_labels[i], sizeof(display_label) - 1);
+        }
+        int len = strlen(display_label);
         
         if (i == g_current_control_idx && g_control_focus == 1) {
             // 高亮当前选中的控件
             wattron(win_controls, A_REVERSE | A_BOLD);
-            mvwprintw(win_controls, row, current_col, " [%s] ", label);
+            mvwprintw(win_controls, row, current_col, " [%s] ", display_label);
             wattroff(win_controls, A_REVERSE | A_BOLD);
         } else {
-            mvwprintw(win_controls, row, current_col, " [%s] ", label);
+            mvwprintw(win_controls, row, current_col, " [%s] ", display_label);
         }
         
         current_col += len + 4; // 移动到下一个按钮位置
@@ -450,12 +575,11 @@ void prompt_open_folder() {
             if (home) {
                 snprintf(expanded_path, sizeof(expanded_path), "%s%s", home, input_path + 1);
             } else {
-                strncpy(expanded_path, input_path, sizeof(expanded_path) - 1);
+                utf8_str_truncate(expanded_path, input_path, sizeof(expanded_path) - 1);
             }
         } else {
-            strncpy(expanded_path, input_path, sizeof(expanded_path) - 1);
+            utf8_str_truncate(expanded_path, input_path, sizeof(expanded_path) - 1);
         }
-        expanded_path[MAX_PATH_LEN - 1] = '\0';
         
         // 验证路径是否存在且为目录
         struct stat s;
@@ -535,26 +659,36 @@ void run_event_loop() {
                     render_controls();
                     break;
                 case ' ':
-                    // 模拟执行当前选中的控件功能
-                    {
-                        char msg[64] = "";
-                        switch(g_current_control_idx) {
-                            case 0: snprintf(msg, sizeof(msg), "Action: Prev Track"); break;
-                            case 1: snprintf(msg, sizeof(msg), "Action: Play/Pause"); break;
-                            case 2: snprintf(msg, sizeof(msg), "Action: Next Track"); break;
-                            case 3: snprintf(msg, sizeof(msg), "Action: Stop"); break;
-                            case 4: snprintf(msg, sizeof(msg), "Action: Toggle Loop"); break;
-                        }
-                        // 临时在控制栏显示动作反馈，实际项目应更新全局播放状态
-                        int h, w;
-                        getmaxyx(win_controls, h, w);
-                        mvwprintw(win_controls, h-1, 2, "> %s", msg); 
-                        wrefresh(win_controls);
-                        // 注意：此处需要重新获取 h 或者避免使用局部变量 h，简化处理直接刷新
-                        // 由于上面作用域问题，这里简单重绘整个控件区恢复原状稍后优化，或者直接依赖下一次循环重绘
-                        // 为保持简洁，此处假设用户能看到短暂闪烁或后续逻辑会覆盖
-                        sleep(1); // 模拟延迟
-                        render_controls(); 
+                    // 执行当前选中的控件功能
+                    switch(g_current_control_idx) {
+                        case 0: // 上一曲
+                            prev_track();
+                            break;
+                        case 1: // 播放/暂停
+                            if (g_play_state == PLAY_STATE_PLAYING) {
+                                pause_audio();
+                            } else if (g_play_state == PLAY_STATE_PAUSED) {
+                                resume_audio();
+                            } else {
+                                // 停止状态，播放当前选中的歌曲
+                                if (g_playlist.is_loaded && g_playlist.count > 0) {
+                                    if (g_current_play_index >= 0) {
+                                        play_audio(g_current_play_index);
+                                    } else {
+                                        play_audio(g_selected_index);
+                                    }
+                                }
+                            }
+                            break;
+                        case 2: // 下一曲
+                            next_track();
+                            break;
+                        case 3: // 停止
+                            stop_audio();
+                            break;
+                        case 4: // 循环模式
+                            toggle_loop_mode();
+                            break;
                     }
                     break;
             }
@@ -575,9 +709,9 @@ void run_event_loop() {
                         }
                         break;
                     case ' ':
-                        // 在列表模式下空格也可以作为播放/暂停的快捷方式
-                        // 这里复用控制逻辑的提示
-                        render_playlist_content(); 
+                    case 10: // Enter键
+                        // 在列表模式下空格或Enter键播放选中的歌曲
+                        play_audio(g_selected_index);
                         break;
                     case 'O':
                     case 'o':
@@ -612,6 +746,460 @@ void update_controls_status(const char *msg) {
     mvwprintw(win_controls, h-1, 2, "                    ");
     wclrtoeol(win_controls);
     wrefresh(win_controls);
+}
+
+/**
+ * 获取循环模式的字符串表示
+ */
+const char *get_loop_mode_str() {
+    switch(g_loop_mode) {
+        case LOOP_OFF:
+            return "Off";
+        case LOOP_SINGLE:
+            return "Single";
+        case LOOP_LIST:
+            return "List";
+        case LOOP_RANDOM:
+            return "Random";
+        default:
+            return "Off";
+    }
+}
+
+/**
+ * 切换循环模式
+ */
+void toggle_loop_mode() {
+    g_loop_mode = (g_loop_mode + 1) % 4;
+    char msg[64];
+    snprintf(msg, sizeof(msg), "Loop mode: %s", get_loop_mode_str());
+    update_controls_status(msg);
+    render_controls();
+}
+
+/**
+ * 播放音频文件的线程函数
+ */
+void *play_audio_thread(void *arg) {
+    int index = *((int *)arg);
+    if (index < 0 || index >= g_playlist.count) {
+        return NULL;
+    }
+    
+    const char *file_path = g_playlist.tracks[index].path;
+
+    AVFormatContext *fmt_ctx = NULL;
+    if (avformat_open_input(&fmt_ctx, file_path, NULL, NULL) != 0) {
+        update_controls_status("Failed to open audio file");
+        return NULL;
+    }
+    
+    if (avformat_find_stream_info(fmt_ctx, NULL) < 0) {
+        update_controls_status("Failed to find stream info");
+        avformat_close_input(&fmt_ctx);
+        return NULL;
+    }
+    
+    // 找到音频流
+    int audio_stream_index = -1;
+    for (int i = 0; i < fmt_ctx->nb_streams; i++) {
+        if (fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+            audio_stream_index = i;
+            break;
+        }
+    }
+    
+    if (audio_stream_index == -1) {
+        update_controls_status("No audio stream found");
+        avformat_close_input(&fmt_ctx);
+        return NULL;
+    }
+    
+    // 获取解码器
+    AVCodecParameters *codec_par = fmt_ctx->streams[audio_stream_index]->codecpar;
+    const AVCodec *codec = avcodec_find_decoder(codec_par->codec_id);
+    if (!codec) {
+        update_controls_status("Unsupported codec");
+        avformat_close_input(&fmt_ctx);
+        return NULL;
+    }
+    
+    // 创建解码器上下文
+    AVCodecContext *codec_ctx = avcodec_alloc_context3(codec);
+    if (!codec_ctx) {
+        update_controls_status("Failed to allocate codec context");
+        avformat_close_input(&fmt_ctx);
+        return NULL;
+    }
+    
+    if (avcodec_parameters_to_context(codec_ctx, codec_par) < 0) {
+        update_controls_status("Failed to copy codec parameters");
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&fmt_ctx);
+        return NULL;
+    }
+    
+    if (avcodec_open2(codec_ctx, codec, NULL) < 0) {
+        update_controls_status("Failed to open codec");
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&fmt_ctx);
+        return NULL;
+    }
+    
+    // 音频重采样
+    SwrContext *swr_ctx = swr_alloc();
+    if (!swr_ctx) {
+        update_controls_status("Failed to allocate resampler");
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&fmt_ctx);
+        return NULL;
+    }
+    
+    // 设置重采样参数
+    AVChannelLayout in_ch_layout = codec_ctx->ch_layout;
+    AVChannelLayout out_ch_layout = AV_CHANNEL_LAYOUT_STEREO;
+    
+    av_opt_set_chlayout(swr_ctx, "in_chlayout", &in_ch_layout, 0);
+    av_opt_set_chlayout(swr_ctx, "out_chlayout", &out_ch_layout, 0);
+    av_opt_set_int(swr_ctx, "in_sample_rate", codec_ctx->sample_rate, 0);
+    av_opt_set_int(swr_ctx, "out_sample_rate", 44100, 0);
+    av_opt_set_sample_fmt(swr_ctx, "in_sample_fmt", codec_ctx->sample_fmt, 0);
+    av_opt_set_sample_fmt(swr_ctx, "out_sample_fmt", AV_SAMPLE_FMT_S16, 0);
+    
+    if (swr_init(swr_ctx) < 0) {
+        update_controls_status("Failed to initialize resampler");
+        swr_free(&swr_ctx);
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&fmt_ctx);
+        return NULL;
+    }
+    
+    // 分配帧和数据包
+    AVPacket *packet = av_packet_alloc();
+    AVFrame *frame = av_frame_alloc();
+    if (!packet || !frame) {
+        update_controls_status("Failed to allocate packet or frame");
+        swr_free(&swr_ctx);
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&fmt_ctx);
+        return NULL;
+    }
+    
+    // 初始化 PortAudio
+    PaError pa_err = Pa_Initialize();
+    if (pa_err != paNoError) {
+        update_controls_status("Failed to initialize PortAudio");
+        swr_free(&swr_ctx);
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&fmt_ctx);
+        return NULL;
+    }
+    
+    // 创建音频缓冲区
+    audio_buffer = malloc(MAX_AUDIO_BUFFER_SIZE);
+    if (!audio_buffer) {
+        update_controls_status("Failed to allocate audio buffer");
+        Pa_Terminate();
+        swr_free(&swr_ctx);
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&fmt_ctx);
+        return NULL;
+    }
+    buffer_size = 0;
+    buffer_pos = 0;
+    
+    // 设置音频流参数
+    PaStreamParameters output_params;
+    output_params.device = Pa_GetDefaultOutputDevice();
+    if (output_params.device == paNoDevice) {
+        update_controls_status("No default audio device");
+        free(audio_buffer);
+        audio_buffer = NULL;
+        Pa_Terminate();
+        swr_free(&swr_ctx);
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&fmt_ctx);
+        return NULL;
+    }
+    
+    output_params.channelCount = 2;
+    output_params.sampleFormat = paInt16;
+    output_params.suggestedLatency = Pa_GetDeviceInfo(output_params.device)->defaultLowOutputLatency;
+    output_params.hostApiSpecificStreamInfo = NULL;
+    
+    // 创建音频流
+    pa_err = Pa_OpenStream(
+        &audio_stream,
+        NULL, // no input
+        &output_params,
+        44100,
+        512,
+        paClipOff,
+        audio_callback,
+        NULL
+    );
+    
+    if (pa_err != paNoError) {
+        update_controls_status("Failed to open audio stream");
+        free(audio_buffer);
+        audio_buffer = NULL;
+        Pa_Terminate();
+        swr_free(&swr_ctx);
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&fmt_ctx);
+        return NULL;
+    }
+    
+    // 启动音频流
+    pa_err = Pa_StartStream(audio_stream);
+    if (pa_err != paNoError) {
+        update_controls_status("Failed to start audio stream");
+        Pa_CloseStream(audio_stream);
+        audio_stream = NULL;
+        free(audio_buffer);
+        audio_buffer = NULL;
+        Pa_Terminate();
+        swr_free(&swr_ctx);
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&fmt_ctx);
+        return NULL;
+    }
+    
+    // 播放状态设置为播放中
+    g_play_state = PLAY_STATE_PLAYING;
+    
+    // 解码和播放循环
+    while (g_play_thread_running && av_read_frame(fmt_ctx, packet) >= 0) {
+        if (packet->stream_index == audio_stream_index) {
+            if (avcodec_send_packet(codec_ctx, packet) < 0) {
+                break;
+            }
+            
+            while (avcodec_receive_frame(codec_ctx, frame) == 0) {
+                // 重采样音频帧
+                int dst_nb_samples = av_rescale_rnd(
+                    swr_get_delay(swr_ctx, codec_ctx->sample_rate) + frame->nb_samples,
+                    44100, codec_ctx->sample_rate, AV_ROUND_UP);
+                
+                // 分配输出帧
+                uint8_t *output_data;
+                int ret = av_samples_alloc(&output_data, NULL, 2, dst_nb_samples,
+                                          AV_SAMPLE_FMT_S16, 0);
+                if (ret < 0) {
+                    break; // 分配失败，跳过这一帧
+                }
+                
+                // 执行重采样
+                int converted_samples = swr_convert(swr_ctx, &output_data, dst_nb_samples,
+                                                   (const uint8_t**)frame->data, frame->nb_samples);
+                if (converted_samples > 0) {
+                    // 将重采样后的数据写入音频缓冲区
+                    int16_t *samples = (int16_t*)output_data;
+                    int sample_count = converted_samples * 2; // 立体声，每帧2个样本
+                    
+                    pthread_mutex_lock(&audio_mutex);
+                    
+                    // 如果缓冲区有足够空间，直接复制
+                    if (buffer_size + sample_count <= MAX_AUDIO_BUFFER_SIZE / sizeof(int16_t)) {
+                        memcpy(audio_buffer + buffer_size, samples, sample_count * sizeof(int16_t));
+                        buffer_size += sample_count;
+                    } else {
+                        // 缓冲区满，覆盖旧数据（简单处理）
+                        // 重置缓冲区，从头开始
+                        buffer_size = 0;
+                        buffer_pos = 0;
+                        if (sample_count <= MAX_AUDIO_BUFFER_SIZE / sizeof(int16_t)) {
+                            memcpy(audio_buffer, samples, sample_count * sizeof(int16_t));
+                            buffer_size = sample_count;
+                        } else {
+                            // 数据量超过缓冲区大小，只保留最新的部分
+                            memcpy(audio_buffer, 
+                                   samples + (sample_count - MAX_AUDIO_BUFFER_SIZE / sizeof(int16_t)),
+                                   MAX_AUDIO_BUFFER_SIZE / sizeof(int16_t) * sizeof(int16_t));
+                            buffer_size = MAX_AUDIO_BUFFER_SIZE / sizeof(int16_t);
+                        }
+                    }
+                    
+                    pthread_mutex_unlock(&audio_mutex);
+                }
+                
+                // 释放输出帧内存
+                av_freep(&output_data);
+                
+                // 检查是否需要暂停
+                if (g_play_state == PLAY_STATE_PAUSED) {
+                    while (g_play_state == PLAY_STATE_PAUSED && g_play_thread_running) {
+                        usleep(100000);
+                    }
+                }
+                
+                if (!g_play_thread_running) {
+                    break;
+                }
+            }
+        }
+        av_packet_unref(packet);
+    }
+    
+    // 清理资源
+    if (audio_stream) {
+        Pa_StopStream(audio_stream);
+        Pa_CloseStream(audio_stream);
+        audio_stream = NULL;
+    }
+    
+    if (audio_buffer) {
+        free(audio_buffer);
+        audio_buffer = NULL;
+    }
+    
+    Pa_Terminate();
+    
+    av_frame_free(&frame);
+    av_packet_free(&packet);
+    swr_free(&swr_ctx);
+    avcodec_free_context(&codec_ctx);
+    avformat_close_input(&fmt_ctx);
+    
+    // 播放完成，处理下一曲
+    if (g_play_thread_running) {
+        switch (g_loop_mode) {
+            case LOOP_SINGLE:
+                // 单曲循环，重新播放当前歌曲
+                play_audio(g_current_play_index);
+                break;
+            case LOOP_LIST:
+                // 列表循环，播放下一首
+                next_track();
+                break;
+            case LOOP_RANDOM:
+                // 随机播放，随机选择一首歌曲
+                if (g_playlist.count > 0) {
+                    int random_index = rand() % g_playlist.count;
+                    play_audio(random_index);
+                } else {
+                    g_play_state = PLAY_STATE_STOPPED;
+                    g_current_play_index = -1;
+                }
+                break;
+            case LOOP_OFF:
+            default:
+                // 关闭循环，停止播放
+                g_play_state = PLAY_STATE_STOPPED;
+                g_current_play_index = -1;
+                break;
+        }
+    }
+    
+    g_play_thread_running = 0;
+    return NULL;
+}
+
+/**
+ * 播放音频
+ */
+void play_audio(int index) {
+    // 停止当前播放
+    if (g_play_thread_running) {
+        stop_audio();
+    }
+    
+    // 设置当前播放索引
+    g_current_play_index = index;
+    g_selected_index = index;
+    
+    // 启动播放线程
+    g_play_thread_running = 1;
+    pthread_create(&g_play_thread, NULL, play_audio_thread, &index);
+    
+    // 更新状态
+    char msg[64];
+    snprintf(msg, sizeof(msg), "Playing: %s - %s", 
+             g_playlist.tracks[index].title, g_playlist.tracks[index].artist);
+    update_controls_status(msg);
+    render_playlist_content();
+}
+
+/**
+ * 暂停音频
+ */
+void pause_audio() {
+    if (g_play_state == PLAY_STATE_PLAYING) {
+        g_play_state = PLAY_STATE_PAUSED;
+        update_controls_status("Paused");
+        render_playlist_content();
+    }
+}
+
+/**
+ * 恢复音频
+ */
+void resume_audio() {
+    if (g_play_state == PLAY_STATE_PAUSED) {
+        g_play_state = PLAY_STATE_PLAYING;
+        update_controls_status("Resumed");
+        render_playlist_content();
+    }
+}
+
+/**
+ * 停止音频
+ */
+void stop_audio() {
+    if (g_play_thread_running) {
+        g_play_thread_running = 0;
+        pthread_join(g_play_thread, NULL);
+    }
+    g_play_state = PLAY_STATE_STOPPED;
+    g_current_play_index = -1;
+    update_controls_status("Stopped");
+    render_playlist_content();
+}
+
+/**
+ * 播放下一曲
+ */
+void next_track() {
+    if (g_playlist.count == 0) {
+        return;
+    }
+    
+    int next_index;
+    if (g_loop_mode == LOOP_RANDOM) {
+        // 随机播放
+        next_index = rand() % g_playlist.count;
+    } else {
+        // 顺序播放
+        next_index = g_current_play_index + 1;
+        if (next_index >= g_playlist.count) {
+            next_index = 0;
+        }
+    }
+    
+    play_audio(next_index);
+}
+
+/**
+ * 播放上一曲
+ */
+void prev_track() {
+    if (g_playlist.count == 0) {
+        return;
+    }
+    
+    int prev_index;
+    if (g_loop_mode == LOOP_RANDOM) {
+        // 随机播放
+        prev_index = rand() % g_playlist.count;
+    } else {
+        // 顺序播放
+        prev_index = g_current_play_index - 1;
+        if (prev_index < 0) {
+            prev_index = g_playlist.count - 1;
+        }
+    }
+    
+    play_audio(prev_index);
 }
 
 /**
