@@ -1,0 +1,38 @@
+# VSCode
+.vscode/
+
+# Fedora
+.directory
+
+# Build files
+build/
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+
+# Executables
+ter-music
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Object files
+*.o
+*.obj
+
+# Dependency files
+*.d
+
+# Shared libraries
+*.so
+*.dylib
+*.dll
+
+# Static libraries
+*.a
+*.lib
