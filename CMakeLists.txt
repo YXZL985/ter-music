@@ -1,4 +1,4 @@
-cd cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.10)
 project(ter-music C)
 
 set(CMAKE_C_STANDARD 99)
@@ -23,4 +23,3 @@ if(NOT CURSES_LIBRARIES MATCHES "ncursesw")
 else()
     target_link_libraries(ter-music ${CURSES_LIBRARIES})
 endif()
-
