@@ -309,11 +309,7 @@ void update_controls_status(const char *msg) {
     mvwprintw(win_controls, h-1, 2, "%s", msg);
     wclrtoeol(win_controls);
     wrefresh(win_controls);
-    // 短暂显示后清除
-    sleep(1);
-    mvwprintw(win_controls, h-1, 2, "                    ");
-    wclrtoeol(win_controls);
-    wrefresh(win_controls);
+    // 移除阻塞的sleep调用，让状态信息自然显示
 }
 
 /**

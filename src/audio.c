@@ -48,6 +48,8 @@ char g_default_audio_device[128] = "default";
  */
 void init_ffmpeg() {
     avformat_network_init();
+    // 禁用FFmpeg日志输出，避免干扰UI
+    av_log_set_level(AV_LOG_QUIET);
 }
 
 /**
@@ -97,9 +99,7 @@ const char *get_loop_mode_str() {
  */
 void toggle_loop_mode() {
     g_loop_mode = (g_loop_mode + 1) % 4;
-    char msg[64];
-    snprintf(msg, sizeof(msg), "Loop mode: %s", get_loop_mode_str());
-    update_controls_status(msg);
+    // 不再调用update_controls_status，避免阻塞
     render_controls();
 }
 
@@ -471,9 +471,27 @@ void *play_audio_thread(void *arg) {
  * 如果已有播放线程在运行，则先停止当前播放
  */
 void play_audio(int index) {
+    // 检查索引有效性
+    if (index < 0 || index >= g_playlist.count) {
+        return;
+    }
+
+    // 如果请求播放的曲目与当前播放的相同，且正在播放，则不做任何操作
+    if (g_play_state == PLAY_STATE_PLAYING && g_current_play_index == index) {
+        return;
+    }
+
     // 停止当前播放
     if (g_play_thread_running) {
-        stop_audio();
+        g_play_thread_running = 0;
+        // 关闭ALSA设备以立即停止播放
+        if (audio_handle) {
+            snd_pcm_drop(audio_handle);
+            snd_pcm_close(audio_handle);
+            audio_handle = NULL;
+        }
+        // 等待线程结束
+        pthread_join(g_play_thread, NULL);
     }
     
     // 设置当前播放索引
@@ -505,7 +523,7 @@ void pause_audio() {
         if (audio_handle) {
             snd_pcm_pause(audio_handle, 1);
         }
-        update_controls_status("Paused");
+        // 不再调用update_controls_status，避免阻塞
         render_playlist_content();
     }
 }
@@ -521,7 +539,7 @@ void resume_audio() {
         if (audio_handle) {
             snd_pcm_pause(audio_handle, 0);
         }
-        update_controls_status("Resumed");
+        // 不再调用update_controls_status，避免阻塞
         render_playlist_content();
     }
 }
@@ -531,13 +549,26 @@ void resume_audio() {
  * 停止播放线程并重置播放状态
  */
 void stop_audio() {
-    if (g_play_thread_running) {
-        g_play_thread_running = 0;
+    // 先设置停止标志
+    int was_running = g_play_thread_running;
+    g_play_thread_running = 0;
+
+    // 如果ALSA设备正在播放，先关闭它
+    if (audio_handle) {
+        snd_pcm_drop(audio_handle);
+        snd_pcm_close(audio_handle);
+        audio_handle = NULL;
+    }
+
+    // 等待线程结束
+    if (was_running) {
         pthread_join(g_play_thread, NULL);
     }
+
+    // 重置播放状态
     g_play_state = PLAY_STATE_STOPPED;
     g_current_play_index = -1;
-    update_controls_status("Stopped");
+    // 不再调用update_controls_status，避免阻塞
     render_playlist_content();
 }
 
@@ -555,8 +586,14 @@ void next_track() {
         // 随机播放
         next_index = rand() % g_playlist.count;
     } else {
-        // 顺序播放
-        next_index = g_current_play_index + 1;
+        // 顺序播放，使用当前播放索引或选中索引
+        if (g_current_play_index >= 0) {
+            next_index = g_current_play_index + 1;
+        } else {
+            next_index = g_selected_index + 1;
+        }
+
+        // 循环到列表开头
         if (next_index >= g_playlist.count) {
             next_index = 0;
         }
@@ -579,8 +616,14 @@ void prev_track() {
         // 随机播放
         prev_index = rand() % g_playlist.count;
     } else {
-        // 顺序播放
-        prev_index = g_current_play_index - 1;
+        // 顺序播放，使用当前播放索引或选中索引
+        if (g_current_play_index >= 0) {
+            prev_index = g_current_play_index - 1;
+        } else {
+            prev_index = g_selected_index - 1;
+        }
+
+        // 循环到列表末尾
         if (prev_index < 0) {
             prev_index = g_playlist.count - 1;
         }
