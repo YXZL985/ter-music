@@ -782,6 +782,7 @@ void toggle_loop_mode() {
  */
 void *play_audio_thread(void *arg) {
     int index = *((int *)arg);
+    free(arg); // 释放内存
     if (index < 0 || index >= g_playlist.count) {
         return NULL;
     }
@@ -1110,7 +1111,9 @@ void play_audio(int index) {
     
     // 启动播放线程
     g_play_thread_running = 1;
-    pthread_create(&g_play_thread, NULL, play_audio_thread, &index);
+    int *index_ptr = malloc(sizeof(int));
+    *index_ptr = index;
+    pthread_create(&g_play_thread, NULL, play_audio_thread, index_ptr);
     
     // 更新状态
     char msg[64];
@@ -1215,6 +1218,9 @@ void cleanup() {
 int main(int argc, char *argv[]) {
     // 1. 初始化
     init_ncurses();
+
+    // 初始化FFmpeg库
+    avformat_network_init();
 
     // 2. 构建布局
     create_layout();
