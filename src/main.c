@@ -11,8 +11,8 @@
 #include <locale.h>
 #include <pthread.h>
 
-// PortAudio 头文件
-#include <portaudio.h>
+// ALSA 头文件
+#include <alsa/asoundlib.h>
 
 // FFmpeg 头文件
 #include <libavformat/avformat.h>
@@ -53,54 +53,17 @@ typedef enum {
 #define COLOR_PAIR_LYRICS 4
 
 // 音频输出相关全局变量
-static PaStream *audio_stream = NULL;
+static snd_pcm_t *audio_handle = NULL;
 static int16_t *audio_buffer = NULL;
 static int buffer_size = 0;
 static int buffer_pos = 0;
 static pthread_mutex_t audio_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+// 全局变量：默认音频设备名称
+static char g_default_audio_device[128] = "default";
+
 // 最大音频缓冲区大小（约1秒的立体声音频）
 #define MAX_AUDIO_BUFFER_SIZE (44100 * 2 * sizeof(int16_t))
-
-// PortAudio 回调函数
-static int audio_callback(const void *input, void *output,
-                         unsigned long frameCount,
-                         const PaStreamCallbackTimeInfo* timeInfo,
-                         PaStreamCallbackFlags statusFlags,
-                         void *userData)
-{
-    (void) input; // 不使用输入
-    (void) timeInfo;
-    (void) statusFlags;
-    
-    int16_t *out = (int16_t*)output;
-    int frames_to_write = frameCount * 2; // 立体声，每帧2个样本
-    
-    pthread_mutex_lock(&audio_mutex);
-    
-    // 安全检查
-    if (!audio_buffer || buffer_pos >= buffer_size) {
-        // 填充静音
-        memset(out, 0, frames_to_write * sizeof(int16_t));
-        pthread_mutex_unlock(&audio_mutex);
-        return paContinue;
-    }
-    
-    // 从缓冲区复制数据到输出
-    int i = 0;
-    while (i < frames_to_write && buffer_pos < buffer_size) {
-        out[i++] = audio_buffer[buffer_pos++];
-    }
-    
-    // 如果缓冲区已空，填充剩余部分为静音
-    while (i < frames_to_write) {
-        out[i++] = 0;
-    }
-    
-    pthread_mutex_unlock(&audio_mutex);
-    
-    return paContinue;
-}
 
 // 定义最大路径长度和歌曲数量
 #define MAX_PATH_LEN 512
@@ -886,21 +849,10 @@ void *play_audio_thread(void *arg) {
         return NULL;
     }
     
-    // 初始化 PortAudio
-    PaError pa_err = Pa_Initialize();
-    if (pa_err != paNoError) {
-        update_controls_status("Failed to initialize PortAudio");
-        swr_free(&swr_ctx);
-        avcodec_free_context(&codec_ctx);
-        avformat_close_input(&fmt_ctx);
-        return NULL;
-    }
-    
     // 创建音频缓冲区
     audio_buffer = malloc(MAX_AUDIO_BUFFER_SIZE);
     if (!audio_buffer) {
         update_controls_status("Failed to allocate audio buffer");
-        Pa_Terminate();
         swr_free(&swr_ctx);
         avcodec_free_context(&codec_ctx);
         avformat_close_input(&fmt_ctx);
@@ -909,57 +861,123 @@ void *play_audio_thread(void *arg) {
     buffer_size = 0;
     buffer_pos = 0;
     
-    // 设置音频流参数
-    PaStreamParameters output_params;
-    output_params.device = Pa_GetDefaultOutputDevice();
-    if (output_params.device == paNoDevice) {
-        update_controls_status("No default audio device");
+    // 初始化 ALSA
+    int err;
+    snd_pcm_hw_params_t *params;
+    
+    // 打开默认音频设备
+    err = snd_pcm_open(&audio_handle, g_default_audio_device, SND_PCM_STREAM_PLAYBACK, 0);
+    if (err < 0) {
+        char err_msg[128];
+        snprintf(err_msg, sizeof(err_msg), "Failed to open audio device: %s", snd_strerror(err));
+        update_controls_status(err_msg);
         free(audio_buffer);
         audio_buffer = NULL;
-        Pa_Terminate();
         swr_free(&swr_ctx);
         avcodec_free_context(&codec_ctx);
         avformat_close_input(&fmt_ctx);
         return NULL;
     }
     
-    output_params.channelCount = 2;
-    output_params.sampleFormat = paInt16;
-    output_params.suggestedLatency = Pa_GetDeviceInfo(output_params.device)->defaultLowOutputLatency;
-    output_params.hostApiSpecificStreamInfo = NULL;
+    // 分配硬件参数对象
+    snd_pcm_hw_params_alloca(&params);
     
-    // 创建音频流
-    pa_err = Pa_OpenStream(
-        &audio_stream,
-        NULL, // no input
-        &output_params,
-        44100,
-        512,
-        paClipOff,
-        audio_callback,
-        NULL
-    );
-    
-    if (pa_err != paNoError) {
-        update_controls_status("Failed to open audio stream");
+    // 重置参数
+    err = snd_pcm_hw_params_any(audio_handle, params);
+    if (err < 0) {
+        update_controls_status("Failed to initialize hardware parameters");
+        snd_pcm_close(audio_handle);
+        audio_handle = NULL;
         free(audio_buffer);
         audio_buffer = NULL;
-        Pa_Terminate();
         swr_free(&swr_ctx);
         avcodec_free_context(&codec_ctx);
         avformat_close_input(&fmt_ctx);
         return NULL;
     }
     
-    // 启动音频流
-    pa_err = Pa_StartStream(audio_stream);
-    if (pa_err != paNoError) {
-        update_controls_status("Failed to start audio stream");
-        Pa_CloseStream(audio_stream);
-        audio_stream = NULL;
+    // 设置访问模式
+    err = snd_pcm_hw_params_set_access(audio_handle, params, SND_PCM_ACCESS_RW_INTERLEAVED);
+    if (err < 0) {
+        update_controls_status("Failed to set access mode");
+        snd_pcm_close(audio_handle);
+        audio_handle = NULL;
         free(audio_buffer);
         audio_buffer = NULL;
-        Pa_Terminate();
+        swr_free(&swr_ctx);
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&fmt_ctx);
+        return NULL;
+    }
+    
+    // 设置采样格式
+    err = snd_pcm_hw_params_set_format(audio_handle, params, SND_PCM_FORMAT_S16_LE);
+    if (err < 0) {
+        update_controls_status("Failed to set sample format");
+        snd_pcm_close(audio_handle);
+        audio_handle = NULL;
+        free(audio_buffer);
+        audio_buffer = NULL;
+        swr_free(&swr_ctx);
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&fmt_ctx);
+        return NULL;
+    }
+    
+    // 设置采样率
+    unsigned int rate = 44100;
+    err = snd_pcm_hw_params_set_rate_near(audio_handle, params, &rate, NULL);
+    if (err < 0) {
+        update_controls_status("Failed to set sample rate");
+        snd_pcm_close(audio_handle);
+        audio_handle = NULL;
+        free(audio_buffer);
+        audio_buffer = NULL;
+        swr_free(&swr_ctx);
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&fmt_ctx);
+        return NULL;
+    }
+    
+    // 设置通道数
+    unsigned int channels = 2;
+    err = snd_pcm_hw_params_set_channels(audio_handle, params, channels);
+    if (err < 0) {
+        update_controls_status("Failed to set channels");
+        snd_pcm_close(audio_handle);
+        audio_handle = NULL;
+        free(audio_buffer);
+        audio_buffer = NULL;
+        swr_free(&swr_ctx);
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&fmt_ctx);
+        return NULL;
+    }
+    
+    // 应用参数
+    err = snd_pcm_hw_params(audio_handle, params);
+    if (err < 0) {
+        char err_msg[128];
+        snprintf(err_msg, sizeof(err_msg), "Failed to apply hardware parameters: %s", snd_strerror(err));
+        update_controls_status(err_msg);
+        snd_pcm_close(audio_handle);
+        audio_handle = NULL;
+        free(audio_buffer);
+        audio_buffer = NULL;
+        swr_free(&swr_ctx);
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&fmt_ctx);
+        return NULL;
+    }
+    
+    // 准备音频设备
+    err = snd_pcm_prepare(audio_handle);
+    if (err < 0) {
+        update_controls_status("Failed to prepare audio device");
+        snd_pcm_close(audio_handle);
+        audio_handle = NULL;
+        free(audio_buffer);
+        audio_buffer = NULL;
         swr_free(&swr_ctx);
         avcodec_free_context(&codec_ctx);
         avformat_close_input(&fmt_ctx);
@@ -994,34 +1012,24 @@ void *play_audio_thread(void *arg) {
                 int converted_samples = swr_convert(swr_ctx, &output_data, dst_nb_samples,
                                                    (const uint8_t**)frame->data, frame->nb_samples);
                 if (converted_samples > 0) {
-                    // 将重采样后的数据写入音频缓冲区
+                    // 直接写入 ALSA 设备
                     int16_t *samples = (int16_t*)output_data;
-                    int sample_count = converted_samples * 2; // 立体声，每帧2个样本
+                    int frames = converted_samples;
                     
-                    pthread_mutex_lock(&audio_mutex);
-                    
-                    // 如果缓冲区有足够空间，直接复制
-                    if (buffer_size + sample_count <= MAX_AUDIO_BUFFER_SIZE / sizeof(int16_t)) {
-                        memcpy(audio_buffer + buffer_size, samples, sample_count * sizeof(int16_t));
-                        buffer_size += sample_count;
-                    } else {
-                        // 缓冲区满，覆盖旧数据（简单处理）
-                        // 重置缓冲区，从头开始
-                        buffer_size = 0;
-                        buffer_pos = 0;
-                        if (sample_count <= MAX_AUDIO_BUFFER_SIZE / sizeof(int16_t)) {
-                            memcpy(audio_buffer, samples, sample_count * sizeof(int16_t));
-                            buffer_size = sample_count;
-                        } else {
-                            // 数据量超过缓冲区大小，只保留最新的部分
-                            memcpy(audio_buffer, 
-                                   samples + (sample_count - MAX_AUDIO_BUFFER_SIZE / sizeof(int16_t)),
-                                   MAX_AUDIO_BUFFER_SIZE / sizeof(int16_t) * sizeof(int16_t));
-                            buffer_size = MAX_AUDIO_BUFFER_SIZE / sizeof(int16_t);
+                    int written = snd_pcm_writei(audio_handle, samples, frames);
+                    if (written < 0) {
+                        // 处理错误
+                        if (written == -EPIPE) {
+                            // 管道破裂，尝试恢复
+                            snd_pcm_prepare(audio_handle);
+                            written = snd_pcm_writei(audio_handle, samples, frames);
+                        }
+                        if (written < 0) {
+                            char err_msg[128];
+                            snprintf(err_msg, sizeof(err_msg), "Failed to write audio: %s", snd_strerror(written));
+                            update_controls_status(err_msg);
                         }
                     }
-                    
-                    pthread_mutex_unlock(&audio_mutex);
                 }
                 
                 // 释放输出帧内存
@@ -1043,18 +1051,16 @@ void *play_audio_thread(void *arg) {
     }
     
     // 清理资源
-    if (audio_stream) {
-        Pa_StopStream(audio_stream);
-        Pa_CloseStream(audio_stream);
-        audio_stream = NULL;
+    if (audio_handle) {
+        snd_pcm_drain(audio_handle);
+        snd_pcm_close(audio_handle);
+        audio_handle = NULL;
     }
     
     if (audio_buffer) {
         free(audio_buffer);
         audio_buffer = NULL;
     }
-    
-    Pa_Terminate();
     
     av_frame_free(&frame);
     av_packet_free(&packet);
@@ -1221,6 +1227,19 @@ int main(int argc, char *argv[]) {
 
     // 初始化FFmpeg库
     avformat_network_init();
+
+    // 初始化 ALSA 并检测音频设备
+    int err;
+    snd_pcm_t *test_handle;
+    
+    // 尝试打开默认音频设备
+    err = snd_pcm_open(&test_handle, g_default_audio_device, SND_PCM_STREAM_PLAYBACK, 0);
+    if (err < 0) {
+        printf("Warning: Failed to open default audio device: %s\n", snd_strerror(err));
+    } else {
+        printf("Selected audio device: %s\n", g_default_audio_device);
+        snd_pcm_close(test_handle);
+    }
 
     // 2. 构建布局
     create_layout();

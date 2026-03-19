@@ -12,8 +12,8 @@ pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
     libswresample
 )
 
-# 查找 PortAudio 库
-pkg_check_modules(PORTAUDIO REQUIRED IMPORTED_TARGET portaudio-2.0)
+# 查找 ALSA 库
+find_package(ALSA REQUIRED)
 
 set(CURSES_NEED_NCURSES TRUE)
 set(CURSES_NEED_WIDE TRUE)
@@ -24,12 +24,12 @@ add_executable(ter-music src/main.c)
 target_include_directories(ter-music PRIVATE 
     ${FFMPEG_INCLUDE_DIRS}
     ${CURSES_INCLUDE_DIR}
-    ${PORTAUDIO_INCLUDE_DIRS}
+    ${ALSA_INCLUDE_DIRS}
 )
 
 target_link_libraries(ter-music PRIVATE 
     PkgConfig::FFMPEG
-    PkgConfig::PORTAUDIO
+    ${ALSA_LIBRARIES}
     ${CURSES_LIBRARIES}
     tinfo
 )
