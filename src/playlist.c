@@ -11,14 +11,14 @@
 #include <locale.h>
 #include <pthread.h>
 
-// 音频文件扩展名列表
+// 支持的音频文件扩展名列表
 const char *audio_extensions[] = {".mp3", ".flac", ".wav", ".ogg", ".m4a", NULL};
 
 // 全局变量定义
 Playlist g_playlist = {0};
 int g_selected_index = 0;  // 当前选中的歌曲索引
 
-// 新增：控制区焦点状态
+// 控制区焦点状态
 // 0: 列表模式 (List), 1: 控制模式 (Control)
 int g_control_focus = 0; 
 // 当前选中的控件索引 (0:上一曲，1:播放/暂停，2:下一曲，3:停止，4:循环)
@@ -26,6 +26,7 @@ int g_current_control_idx = 1;
 
 /**
  * 检查文件是否为支持的音频格式
+ * 通过文件扩展名判断
  */
 int is_audio_file(const char *filename) {
     const char *ext = strrchr(filename, '.');
@@ -41,6 +42,7 @@ int is_audio_file(const char *filename) {
 
 /**
  * 获取音频元数据
+ * 从文件路径提取基本元数据信息
  * 注意：实际项目中应在此处调用 taglib 或其他库读取 ID3 标签
  * 此处若无真实标签，则默认标题为文件名，艺术家为 "Unknown Artist"
  */
@@ -95,7 +97,8 @@ void get_audio_metadata(const char *path, char *title, char *artist, char *album
 }
 
 /**
- * 加载播放列表
+ * 加载指定路径下的音频文件到播放列表
+ * 扫描目录，过滤支持的音频文件，并提取元数据
  */
 int load_playlist(const char *path) {
     DIR *dir = opendir(path);

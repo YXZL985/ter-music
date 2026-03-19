@@ -60,11 +60,12 @@ extern int g_current_play_index; // 当前播放的歌曲索引
 extern LoopMode g_loop_mode; // 当前循环模式
 extern pthread_t g_play_thread; // 播放线程
 extern int g_play_thread_running; // 播放线程运行状态
-extern char g_default_audio_device[128]; // 新增：默认音频设备名称声明
+extern char g_default_audio_device[128]; // 默认音频设备名称
 
-// 新增：FFmpeg 初始化函数声明
+// FFmpeg 初始化函数声明
 void init_ffmpeg();
-// 新增：音频设备初始化函数声明
+
+// 音频设备初始化函数声明
 void init_audio_device();
 
 // 音频控制函数声明

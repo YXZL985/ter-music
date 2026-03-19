@@ -18,15 +18,17 @@ extern WINDOW *win_lyrics;
 
 extern const char *control_labels[];
 
-// 全局变量
+// 全局窗口变量
 WINDOW *win_playlist;
 WINDOW *win_controls;
 WINDOW *win_lyrics;
 
+// 控件标签文本
 const char *control_labels[] = {"<<", "Play/Pause", ">>", "Stop", "Loop"};
 
 /**
- * 初始化 ncurses 环境
+ * 初始化ncurses环境
+ * 设置本地化、终端模式和颜色对
  */
 void init_ncurses() {
     // 设置本地化环境，支持中文等多字节字符
@@ -50,6 +52,10 @@ void init_ncurses() {
     }
 }
 
+/**
+ * UTF-8字符串截断函数
+ * 根据显示列数而非字节数截断字符串，正确处理多字节字符
+ */
 int utf8_str_truncate(char *dest, const char *src, int max_cols) {
     if (!dest || !src || max_cols <= 0) {
         if (dest) *dest = '\0';
@@ -78,11 +84,7 @@ int utf8_str_truncate(char *dest, const char *src, int max_cols) {
 
 /**
  * 创建和调整窗口布局
- * 布局策略:
- * 总高度 H, 总宽度 W
- * 左侧区域宽度：W -  lyrics_width
- * 播放列表高度：(H - 2) * 5 / 7  (减去边框占用，大致比例)
- * 控制栏高度：(H - 2) * 2 / 7
+ * 设置播放列表、控制栏和歌词窗口的大小和位置
  */
 void create_layout() {
     int max_y, max_x;
@@ -138,7 +140,8 @@ void create_layout() {
 }
 
 /**
- * 绘制播放列表内容 (包含底部的状态提示)
+ * 绘制播放列表内容
+ * 包括歌曲列表和底部状态栏
  */
 void render_playlist_content() {
     werase(win_playlist); // 清空窗口内容
@@ -249,6 +252,7 @@ void render_playlist_content() {
 
 /**
  * 渲染控制栏按钮
+ * 显示播放控制按钮并高亮当前选中的控件
  */
 void render_controls() {
     werase(win_controls);
@@ -297,6 +301,7 @@ void render_controls() {
 
 /**
  * 更新控制栏状态信息
+ * 在控制栏底部显示临时消息
  */
 void update_controls_status(const char *msg) {
     int h, w;
@@ -312,7 +317,8 @@ void update_controls_status(const char *msg) {
 }
 
 /**
- * 处理用户输入路径
+ * 提示用户输入文件夹路径
+ * 处理路径输入和验证
  */
 void prompt_open_folder() {
     echo(); // 开启回显以输入路径
@@ -370,7 +376,8 @@ void prompt_open_folder() {
 }
 
 /**
- * 主事件循环 (预留逻辑处理位置)
+ * 主事件循环
+ * 处理用户输入、焦点切换和功能调用
  */
 void run_event_loop() {
     int ch;
@@ -503,7 +510,8 @@ void run_event_loop() {
 }
 
 /**
- * 清理资源
+ * 清理ncurses资源
+ * 释放窗口并结束ncurses模式
  */
 void cleanup() {
     delwin(win_playlist);

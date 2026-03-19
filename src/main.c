@@ -12,6 +12,10 @@ extern void cleanup();
 extern int load_playlist(const char *path);
 extern void prompt_open_folder();
 
+/**
+ * 主函数
+ * 程序入口点，负责初始化、处理命令行参数、运行主循环和清理资源
+ */
 int main(int argc, char *argv[]) {
     // 解析命令行参数
     char *open_path = NULL;
@@ -32,24 +36,23 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // 1. 初始化
+    // 1. 初始化ncurses环境
     init_ncurses();
 
-    // 初始化FFmpeg库
+    // 2. 初始化FFmpeg库
     init_ffmpeg();
 
-
-    // 初始化音频设备
+    // 3. 初始化音频设备
     init_audio_device();
 
-    // 2. 构建布局
+    // 4. 构建UI布局
     create_layout();
     
-    // 初始化播放列表状态
+    // 5. 初始化播放列表状态
     g_playlist.is_loaded = 0;
     strcpy(g_playlist.folder_path, "");
     
-    // 如果指定了打开路径，加载播放列表
+    // 6. 如果指定了打开路径，加载播放列表
     if (open_path) {
         int count = load_playlist(open_path);
         if (count > 0) {
@@ -57,10 +60,10 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // 3. 运行事件循环
+    // 7. 运行主事件循环
     run_event_loop();
 
-    // 4. 清理退出
+    // 8. 清理资源并退出
     cleanup();
 
     printf("ter-music exited gracefully.\n");
