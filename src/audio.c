@@ -492,6 +492,10 @@ void play_audio(int index) {
 void pause_audio() {
     if (g_play_state == PLAY_STATE_PLAYING) {
         g_play_state = PLAY_STATE_PAUSED;
+        // 暂停ALSA设备
+        if (audio_handle) {
+            snd_pcm_pause(audio_handle, 1);
+        }
         update_controls_status("Paused");
         render_playlist_content();
     }
@@ -503,6 +507,10 @@ void pause_audio() {
 void resume_audio() {
     if (g_play_state == PLAY_STATE_PAUSED) {
         g_play_state = PLAY_STATE_PLAYING;
+        // 恢复ALSA设备
+        if (audio_handle) {
+            snd_pcm_pause(audio_handle, 0);
+        }
         update_controls_status("Resumed");
         render_playlist_content();
     }

@@ -457,6 +457,9 @@ void run_event_loop() {
                             toggle_loop_mode();
                             break;
                     }
+                    // 刷新UI以反映状态变化
+                    render_playlist_content();
+                    render_controls();
                     break;
             }
         } else {
