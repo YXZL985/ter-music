@@ -65,6 +65,7 @@ extern char g_default_audio_device[128]; // 默认音频设备名称
 // 进度条相关全局变量
 extern int g_current_position; // 当前播放位置（秒）
 extern int g_total_duration; // 当前歌曲总时长（秒）
+extern pthread_mutex_t g_seek_mutex; // 跳转操作互斥锁
 
 // FFmpeg 初始化函数声明
 void init_ffmpeg();

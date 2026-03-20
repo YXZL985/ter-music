@@ -46,7 +46,8 @@ int g_seek_position = 0; // 目标跳转位置（秒）
 
 // 进度条相关变量
 int g_current_position = 0; // 当前播放位置（秒）
-int g_total_duration = 0; // 当前歌曲总时长（秒） 
+int g_total_duration = 0; // 当前歌曲总时长（秒）
+pthread_mutex_t g_seek_mutex = PTHREAD_MUTEX_INITIALIZER; // 跳转操作互斥锁 
 
 // 全局变量：默认音频设备名称
 char g_default_audio_device[128] = "default";
@@ -139,10 +140,14 @@ void *play_audio_thread(void *arg) {
     // 获取歌曲总时长（秒）
     g_total_duration = fmt_ctx->duration / AV_TIME_BASE;
     
-    // 检查是否需要跳转到特定位置（在开始播放之前）
-    int initial_seek_position = g_current_position; // 使用当前全局位置作为初始跳转位置
+    // 重置当前播放位置为 0
+    g_current_position = 0;
     
-    g_current_position = 0; // 重置当前播放位置
+    // 检查是否需要跳转到特定位置（在开始播放之前）
+    int initial_seek_position = 0; // 默认不跳转
+    
+    // 强制更新 UI 显示，确保进度条从 0% 开始
+    render_controls();
     
     // 找到音频流
     int audio_stream_index = -1;
@@ -374,7 +379,7 @@ void *play_audio_thread(void *arg) {
         int64_t target_ts = av_rescale_q(initial_seek_position, (AVRational){1, 1}, time_base);
         
         // 执行跳转
-        int ret = av_seek_frame(fmt_ctx, audio_stream_index, target_ts, AVSEEK_FLAG_BACKWARD);
+        int ret = av_seek_frame(fmt_ctx, audio_stream_index, target_ts, 0);
         if (ret >= 0) {
             // 清空解码器缓冲区
             avcodec_flush_buffers(codec_ctx);
@@ -387,27 +392,58 @@ void *play_audio_thread(void *arg) {
 
     // 解码和播放循环
     while (g_play_thread_running) {
-        // 检查是否有跳转请求（移到循环开始处）
+        // 检查是否有跳转请求
         if (g_seek_request) {
-            // 计算目标时间戳
+            pthread_mutex_lock(&g_play_mutex);
+            
+            // 检查是否已被停止
+            if (!g_play_thread_running) {
+                pthread_mutex_unlock(&g_play_mutex);
+                break;
+            }
+            
+            if (audio_handle) {
+                snd_pcm_drop(audio_handle);
+            }
+            
             AVRational time_base = fmt_ctx->streams[audio_stream_index]->time_base;
             int64_t target_ts = av_rescale_q(g_seek_position, (AVRational){1, 1}, time_base);
-            
-            // 执行跳转
             int ret = av_seek_frame(fmt_ctx, audio_stream_index, target_ts, AVSEEK_FLAG_BACKWARD);
+            
             if (ret >= 0) {
-                // 清空解码器缓冲区
                 avcodec_flush_buffers(codec_ctx);
-                // 重置当前位置
+
+                // 更新当前位置
                 g_current_position = g_seek_position;
-                // 清除跳转请求
                 g_seek_request = 0;
-                // 更新UI显示
-                render_controls();
+
+                // 重置音频设备
+                if (audio_handle) {
+                    snd_pcm_prepare(audio_handle);
+                }
             } else {
-                // 跳转失败，清除请求
                 g_seek_request = 0;
+                if (audio_handle) {
+                    snd_pcm_prepare(audio_handle);
+                }
             }
+            
+            pthread_mutex_unlock(&g_play_mutex);
+        }
+        
+        // 检查是否需要暂停（在读取帧之前检查）
+        if (g_play_state == PLAY_STATE_PAUSED) {
+            while (g_play_state == PLAY_STATE_PAUSED && g_play_thread_running) {
+                usleep(100000);
+            }
+            // 从暂停恢复后，重新准备音频设备
+            if (audio_handle && g_play_thread_running) {
+                snd_pcm_prepare(audio_handle);
+            }
+        }
+        
+        if (!g_play_thread_running) {
+            break;
         }
         
         if (av_read_frame(fmt_ctx, packet) < 0) {
@@ -459,17 +495,37 @@ void *play_audio_thread(void *arg) {
                     // 更新当前播放位置（秒）
                     if (frame->pts != AV_NOPTS_VALUE) {
                         AVRational time_base = fmt_ctx->streams[audio_stream_index]->time_base;
-                        g_current_position = av_q2d(time_base) * frame->pts;
+                        int64_t start_time = fmt_ctx->streams[audio_stream_index]->start_time;
+                        int calculated_pos;
+                                                
+                        if (start_time != AV_NOPTS_VALUE) {
+                            int64_t corrected_pts = frame->pts - start_time;
+                            if (corrected_pts >= 0) {
+                                calculated_pos = av_q2d(time_base) * corrected_pts;
+                            } else {
+                                calculated_pos = 0;
+                            }
+                        } else {
+                            calculated_pos = av_q2d(time_base) * frame->pts;
+                        }
+                                                
+                        // 直接更新位置，不再比较大小
+                        // 因为新歌开始时 calculated_pos 会从 0 开始
+                        g_current_position = calculated_pos;
                     }
                 }
                 
                 // 释放输出帧内存
                 av_freep(&output_data);
                 
-                // 检查是否需要暂停
+                // 检查是否需要暂停（在处理每帧后检查）
                 if (g_play_state == PLAY_STATE_PAUSED) {
                     while (g_play_state == PLAY_STATE_PAUSED && g_play_thread_running) {
                         usleep(100000);
+                    }
+                    // 从暂停恢复后，重新准备音频设备
+                    if (audio_handle && g_play_thread_running) {
+                        snd_pcm_prepare(audio_handle);
                     }
                 }
                 
@@ -538,43 +594,46 @@ void *play_audio_thread(void *arg) {
  * 如果已有播放线程在运行，则先停止当前播放
  */
 void play_audio(int index) {
-    // 检查索引有效性
     if (index < 0 || index >= g_playlist.count) {
         return;
     }
-
-    // 如果请求播放的曲目与当前播放的相同，且正在播放，则不做任何操作
+    
+    pthread_mutex_lock(&g_play_mutex);  // 新增：加锁保护
+    
     if (g_play_state == PLAY_STATE_PLAYING && g_current_play_index == index) {
+        pthread_mutex_unlock(&g_play_mutex);  // 新增：解锁
         return;
     }
-
+    
     // 停止当前播放
     if (g_play_thread_running) {
         g_play_thread_running = 0;
-        // 关闭ALSA设备以立即停止播放
+        g_seek_request = 0;  // 新增：清除跳转请求
+        
         if (audio_handle) {
             snd_pcm_drop(audio_handle);
             snd_pcm_close(audio_handle);
             audio_handle = NULL;
         }
-        // 等待线程结束
+        
+        pthread_mutex_unlock(&g_play_mutex);  // 新增：在 join 前解锁
         pthread_join(g_play_thread, NULL);
+        pthread_mutex_lock(&g_play_mutex);  // 新增：重新加锁
     }
     
-    // 设置当前播放索引
     g_current_play_index = index;
     g_selected_index = index;
-    
-    // 启动播放线程
     g_play_thread_running = 1;
+    
+    pthread_mutex_unlock(&g_play_mutex);  // 新增：解锁
+    
     int *index_ptr = malloc(sizeof(int));
     *index_ptr = index;
     pthread_create(&g_play_thread, NULL, play_audio_thread, index_ptr);
     
-    // 更新状态
     char msg[64];
-    snprintf(msg, sizeof(msg), "Playing: %s - %s", 
-             g_playlist.tracks[index].title, g_playlist.tracks[index].artist);
+    snprintf(msg, sizeof(msg), "Playing: %s - %s",
+        g_playlist.tracks[index].title, g_playlist.tracks[index].artist);
     update_controls_status(msg);
     render_playlist_content();
 }
@@ -616,27 +675,37 @@ void resume_audio() {
  * 停止播放线程并重置播放状态
  */
 void stop_audio() {
+    pthread_mutex_lock(&g_play_mutex);  // 新增：加锁保护
+    
     // 先设置停止标志
     int was_running = g_play_thread_running;
     g_play_thread_running = 0;
-
-    // 如果ALSA设备正在播放，先关闭它
+    
+    // 清除跳转请求，避免跳转线程继续执行
+    g_seek_request = 0;
+    
+    // 如果 ALSA 设备正在播放，先关闭它
     if (audio_handle) {
         snd_pcm_drop(audio_handle);
         snd_pcm_close(audio_handle);
-        audio_handle = NULL;
+        audio_handle = NULL;  // 确保置空
     }
-
-    // 等待线程结束
+    
+    pthread_mutex_unlock(&g_play_mutex);  // 新增：解锁
+    
+    // 重置播放状态
+    g_play_state = PLAY_STATE_STOPPED;
+    g_current_position = 0;
+    
+    // 等待线程结束（在锁外等待，避免死锁）
     if (was_running) {
         pthread_join(g_play_thread, NULL);
     }
-
-    // 重置播放状态
-    g_play_state = PLAY_STATE_STOPPED;
+    
     g_current_play_index = -1;
-    // 不再调用update_controls_status，避免阻塞
+    
     render_playlist_content();
+    render_controls();  // 新增：更新控制栏
 }
 
 /**
@@ -704,23 +773,16 @@ void prev_track() {
  * 设置跳转请求标志和目标位置
  */
 void seek_audio(int position) {
-    if (position >= 0 && position <= g_total_duration) {
-        // 如果有播放线程正在运行，则设置跳转请求供播放线程处理
-        if (g_play_thread_running) {
-            g_seek_request = 1;
-            g_seek_position = position;
-        } else {
-            // 如果没有播放线程运行但存在当前播放的歌曲，则更新位置并播放
-            if (g_current_play_index >= 0) {
-                // 更新全局位置，这样下次播放时会从这个位置开始
-                g_current_position = position;
-                // 重新开始播放，从指定位置开始
-                play_audio(g_current_play_index);
-            } else if (g_selected_index >= 0) {
-                // 如果没有当前播放的歌曲但有选中的歌曲，则更新位置并播放选中的歌曲
-                g_current_position = position;
-                play_audio(g_selected_index);
-            }
-        }
-    }
+    if (position < 0) position = 0;
+    if (position > g_total_duration) position = g_total_duration;
+    
+    pthread_mutex_lock(&g_seek_mutex);
+    pthread_mutex_lock(&g_play_mutex);
+    
+    // 设置跳转目标和标志
+    g_seek_position = position;
+    g_seek_request = 1;
+    
+    pthread_mutex_unlock(&g_play_mutex);
+    pthread_mutex_unlock(&g_seek_mutex);
 }

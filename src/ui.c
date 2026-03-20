@@ -443,12 +443,30 @@ void prompt_open_folder() {
  */
 void run_event_loop() {
     int ch;
+    int last_progress_update = 0;
     
     // 初始渲染
     render_playlist_content();
     render_controls(); // 初始绘制控件
     
+    // 设置输入超时为 100ms，以便定期更新进度条
+    timeout(100);
+    
     while ((ch = getch()) != 'q') {
+        // 每秒更新一次进度条（当播放状态为播放或暂停时）
+        if (g_play_state == PLAY_STATE_PLAYING || g_play_state == PLAY_STATE_PAUSED) {
+            last_progress_update++;
+            if (last_progress_update >= 10) { // 10 * 100ms = 1 秒
+                render_controls();
+                last_progress_update = 0;
+            }
+        }
+        
+        // 如果用户没有按键，继续循环以允许进度条更新
+        if (ch == ERR) {
+            continue;
+        }
+        
         if (!g_playlist.is_loaded && g_control_focus == 0) {
             // 未加载文件夹且焦点在列表时，主要监听 'O' 或 'o'
             if (ch == 'O' || ch == 'o') {
@@ -495,19 +513,21 @@ void run_event_loop() {
                     render_controls();
                     break;
                 case ',':
-                    // 进度减10秒
+                    // 进度减 5 秒
                     if (g_play_state != PLAY_STATE_STOPPED && g_total_duration > 0) {
-                        int new_position = g_current_position > 10 ? g_current_position - 10 : 0;
-                        seek_audio(new_position);
-                        // 不需要立即调用update_progress_bar()，因为跳转会在播放线程中处理并更新UI
+                        int new_pos = g_current_position - 5;
+                        if (new_pos < 0) new_pos = 0;
+                        g_current_position = new_pos;
+                        seek_audio(new_pos);
                     }
                     break;
                 case '.':
-                    // 进度加10秒
+                    // 进度加 5 秒
                     if (g_play_state != PLAY_STATE_STOPPED && g_total_duration > 0) {
-                        int new_position = g_current_position < g_total_duration - 10 ? g_current_position + 10 : g_total_duration;
-                        seek_audio(new_position);
-                        // 不需要立即调用update_progress_bar()，因为跳转会在播放线程中处理并更新UI
+                        int new_pos = g_current_position + 5;
+                        if (new_pos > g_total_duration) new_pos = g_total_duration;
+                        g_current_position = new_pos;
+                        seek_audio(new_pos);
                     }
                     break;
                 case ' ':
