@@ -160,7 +160,7 @@ void render_playlist_content() {
         mvwprintw(win_playlist, h/2 + 1, 2, "Current Path: %s", g_playlist.folder_path[0] ? g_playlist.folder_path : "(None)");
     } else {
         int start_idx = 0;
-        int visible_lines = content_height - 3; // 预留 3 行给底部状态栏
+        int visible_lines = content_height - 5; // 预留 5 行给底部状态栏
         
         // 简单的滚动逻辑：保持选中项在可视范围内
         if (g_selected_index >= visible_lines) {
@@ -196,7 +196,7 @@ void render_playlist_content() {
         }
 
         // --- 新增：在播放列表底部绘制状态栏 ---
-        int status_line = h - 4;
+        int status_line = h - 6;
         mvwhline(win_playlist, status_line, 1, ACS_HLINE, w - 2);
         
         // 根据全局播放状态更新状态信息
@@ -224,7 +224,8 @@ void render_playlist_content() {
                 t = &g_playlist.tracks[g_selected_index];
             }
             
-            // 计算可用宽度，显示更多元数据
+            // 计算可用宽度，确保不超出边框
+            int content_width = w - 4;  // 减去左右边框和空格
             int status_width = w - 4;
             int title_width = status_width * 2 / 5;
             int artist_width = status_width * 2 / 5;
@@ -240,11 +241,14 @@ void render_playlist_content() {
             utf8_str_truncate(truncated_album, t->album, album_width - 1);
             
             mvwprintw(win_playlist, status_line + 1, 2, "Status: %s | Loop: %s", status_msg, get_loop_mode_str());
-            mvwprintw(win_playlist, status_line + 2, 2, "Title: %-*s Artist: %-*s Album: %-*s", 
-                      title_width, truncated_title, artist_width, truncated_artist, album_width, truncated_album);
+            mvwprintw(win_playlist, status_line + 2, 2, "Title: %s", truncated_title); 
+            mvwprintw(win_playlist, status_line + 3, 2, "Artist: %s", truncated_artist);
+            mvwprintw(win_playlist, status_line + 4, 2, "Album: %s", truncated_album);
         } else {
              mvwprintw(win_playlist, status_line + 1, 2, "Status: %s | Track: --", status_msg);
-             mvwprintw(win_playlist, status_line + 2, 2, "Title: -- Artist: -- Album: --");
+             mvwprintw(win_playlist, status_line + 2, 2, "Title: --");
+             mvwprintw(win_playlist, status_line + 3, 2, "Artist: --");
+             mvwprintw(win_playlist, status_line + 4, 2, "Album: --");
         }
     }
     wrefresh(win_playlist);
