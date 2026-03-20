@@ -36,3 +36,6 @@ ter-music
 # Static libraries
 *.a
 *.lib
+
+# OA documentation
+oadoc/
