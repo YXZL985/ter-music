@@ -38,7 +38,15 @@ int g_current_play_index = -1; // 当前播放的歌曲索引
 LoopMode g_loop_mode = LOOP_OFF; // 当前循环模式
 pthread_t g_play_thread; // 播放线程
 int g_play_thread_running = 0; // 播放线程运行状态
-pthread_mutex_t g_play_mutex = PTHREAD_MUTEX_INITIALIZER; // 播放控制互斥锁 
+pthread_mutex_t g_play_mutex = PTHREAD_MUTEX_INITIALIZER; // 播放控制互斥锁
+
+// 跳转相关变量
+int g_seek_request = 0; // 跳转请求标志
+int g_seek_position = 0; // 目标跳转位置（秒）
+
+// 进度条相关变量
+int g_current_position = 0; // 当前播放位置（秒）
+int g_total_duration = 0; // 当前歌曲总时长（秒） 
 
 // 全局变量：默认音频设备名称
 char g_default_audio_device[128] = "default";
@@ -127,6 +135,14 @@ void *play_audio_thread(void *arg) {
         avformat_close_input(&fmt_ctx);
         return NULL;
     }
+
+    // 获取歌曲总时长（秒）
+    g_total_duration = fmt_ctx->duration / AV_TIME_BASE;
+    
+    // 检查是否需要跳转到特定位置（在开始播放之前）
+    int initial_seek_position = g_current_position; // 使用当前全局位置作为初始跳转位置
+    
+    g_current_position = 0; // 重置当前播放位置
     
     // 找到音频流
     int audio_stream_index = -1;
@@ -351,8 +367,53 @@ void *play_audio_thread(void *arg) {
     // 播放状态设置为播放中
     g_play_state = PLAY_STATE_PLAYING;
     
+    // 在开始播放前执行初始跳转（如果有）
+    if (initial_seek_position > 0 && initial_seek_position < g_total_duration) {
+        // 计算目标时间戳
+        AVRational time_base = fmt_ctx->streams[audio_stream_index]->time_base;
+        int64_t target_ts = av_rescale_q(initial_seek_position, (AVRational){1, 1}, time_base);
+        
+        // 执行跳转
+        int ret = av_seek_frame(fmt_ctx, audio_stream_index, target_ts, AVSEEK_FLAG_BACKWARD);
+        if (ret >= 0) {
+            // 清空解码器缓冲区
+            avcodec_flush_buffers(codec_ctx);
+            // 重置当前位置
+            g_current_position = initial_seek_position;
+            // 更新UI显示
+            render_controls();
+        }
+    }
+
     // 解码和播放循环
-    while (g_play_thread_running && av_read_frame(fmt_ctx, packet) >= 0) {
+    while (g_play_thread_running) {
+        // 检查是否有跳转请求（移到循环开始处）
+        if (g_seek_request) {
+            // 计算目标时间戳
+            AVRational time_base = fmt_ctx->streams[audio_stream_index]->time_base;
+            int64_t target_ts = av_rescale_q(g_seek_position, (AVRational){1, 1}, time_base);
+            
+            // 执行跳转
+            int ret = av_seek_frame(fmt_ctx, audio_stream_index, target_ts, AVSEEK_FLAG_BACKWARD);
+            if (ret >= 0) {
+                // 清空解码器缓冲区
+                avcodec_flush_buffers(codec_ctx);
+                // 重置当前位置
+                g_current_position = g_seek_position;
+                // 清除跳转请求
+                g_seek_request = 0;
+                // 更新UI显示
+                render_controls();
+            } else {
+                // 跳转失败，清除请求
+                g_seek_request = 0;
+            }
+        }
+        
+        if (av_read_frame(fmt_ctx, packet) < 0) {
+            break; // 文件读取完毕
+        }
+        
         if (packet->stream_index == audio_stream_index) {
             if (avcodec_send_packet(codec_ctx, packet) < 0) {
                 break;
@@ -393,6 +454,12 @@ void *play_audio_thread(void *arg) {
                             snprintf(err_msg, sizeof(err_msg), "Failed to write audio: %s", snd_strerror(written));
                             update_controls_status(err_msg);
                         }
+                    }
+
+                    // 更新当前播放位置（秒）
+                    if (frame->pts != AV_NOPTS_VALUE) {
+                        AVRational time_base = fmt_ctx->streams[audio_stream_index]->time_base;
+                        g_current_position = av_q2d(time_base) * frame->pts;
                     }
                 }
                 
@@ -630,4 +697,30 @@ void prev_track() {
     }
     
     play_audio(prev_index);
+}
+
+/**
+ * 跳转到指定位置
+ * 设置跳转请求标志和目标位置
+ */
+void seek_audio(int position) {
+    if (position >= 0 && position <= g_total_duration) {
+        // 如果有播放线程正在运行，则设置跳转请求供播放线程处理
+        if (g_play_thread_running) {
+            g_seek_request = 1;
+            g_seek_position = position;
+        } else {
+            // 如果没有播放线程运行但存在当前播放的歌曲，则更新位置并播放
+            if (g_current_play_index >= 0) {
+                // 更新全局位置，这样下次播放时会从这个位置开始
+                g_current_position = position;
+                // 重新开始播放，从指定位置开始
+                play_audio(g_current_play_index);
+            } else if (g_selected_index >= 0) {
+                // 如果没有当前播放的歌曲但有选中的歌曲，则更新位置并播放选中的歌曲
+                g_current_position = position;
+                play_audio(g_selected_index);
+            }
+        }
+    }
 }

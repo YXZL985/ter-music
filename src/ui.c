@@ -24,7 +24,7 @@ WINDOW *win_controls;
 WINDOW *win_lyrics;
 
 // 控件标签文本
-const char *control_labels[] = {"<<", "Play/Pause", ">>", "Stop", "Loop"};
+const char *control_labels[] = {"<<", "Play/Pause", ">>", "Stop", "Loop", "Progress"};
 
 /**
  * 初始化ncurses环境
@@ -268,18 +268,69 @@ void render_controls() {
 
     int h, w;
     getmaxyx(win_controls, h, w);
+    
+    // 绘制进度条（在控件上方）
+    if (g_play_state != PLAY_STATE_STOPPED && g_total_duration > 0) {
+        int progress_row = h / 2 - 2; // 在控件上方两行
+        
+        // 计算进度百分比
+        int progress_percent = (g_current_position * 100) / g_total_duration;
+        if (progress_percent > 100) progress_percent = 100;
+        
+        // 计算进度条长度
+        int progress_bar_width = w - 30; // 左右留出更多空间
+        int filled_width = (progress_bar_width * progress_percent) / 100;
+        
+        // 格式化时间显示
+        int current_min = g_current_position / 60;
+        int current_sec = g_current_position % 60;
+        int total_min = g_total_duration / 60;
+        int total_sec = g_total_duration % 60;
+        
+        // 检查是否选中进度条
+        int is_progress_selected = (g_current_control_idx == 5 && g_control_focus == 1);
+        
+        if (is_progress_selected) {
+            wattron(win_controls, A_REVERSE | A_BOLD);
+        }
+        
+        // 绘制进度条
+        mvwprintw(win_controls, progress_row, 2, "%02d:%02d/%02d:%02d", 
+                 current_min, current_sec, total_min, total_sec);
+        
+        // 绘制进度条图形
+        mvwprintw(win_controls, progress_row, 12, "[");
+        for (int i = 0; i < progress_bar_width; i++) {
+            if (i < filled_width) {
+                mvwprintw(win_controls, progress_row, 13 + i, "=");
+            } else if (i == filled_width) {
+                mvwprintw(win_controls, progress_row, 13 + i, ">" );
+            } else {
+                mvwprintw(win_controls, progress_row, 13 + i, "-");
+            }
+        }
+        mvwprintw(win_controls, progress_row, 13 + progress_bar_width, "]");
+        
+        // 显示百分比
+        mvwprintw(win_controls, progress_row, 13 + progress_bar_width + 2, "%d%%", progress_percent);
+        
+        if (is_progress_selected) {
+            wattroff(win_controls, A_REVERSE | A_BOLD);
+        }
+    }
+    
     int row = h / 2; // 垂直居中
     
     // 计算按钮总宽度以便居中
     int total_len = 0;
-    for(int i=0; i<CONTROL_COUNT; i++) {
+    for(int i=0; i<CONTROL_COUNT-1; i++) { // 不包括进度条
         total_len += strlen(control_labels[i]) + 4; // 标签 + [ ] + 空格
     }
     int start_col = (w - total_len) / 2;
     if (start_col < 1) start_col = 1;
 
     int current_col = start_col;
-    for (int i = 0; i < CONTROL_COUNT; i++) {
+    for (int i = 0; i < CONTROL_COUNT-1; i++) { // 不包括进度条
         char display_label[32];
         if (i == 4) { // 循环按钮
             snprintf(display_label, sizeof(display_label), "%s:%s", control_labels[i], get_loop_mode_str());
@@ -301,6 +352,17 @@ void render_controls() {
     }
 
     wrefresh(win_controls);
+}
+
+/**
+ * 更新进度条
+ * 在控件窗格区域更新进度条显示
+ */
+void update_progress_bar() {
+    // 只在播放状态下更新进度条
+    if (g_play_state == PLAY_STATE_PLAYING || g_play_state == PLAY_STATE_PAUSED) {
+        render_controls();
+    }
 }
 
 /**
@@ -432,6 +494,22 @@ void run_event_loop() {
                     if (g_current_control_idx >= CONTROL_COUNT) g_current_control_idx = 0;
                     render_controls();
                     break;
+                case ',':
+                    // 进度减10秒
+                    if (g_play_state != PLAY_STATE_STOPPED && g_total_duration > 0) {
+                        int new_position = g_current_position > 10 ? g_current_position - 10 : 0;
+                        seek_audio(new_position);
+                        // 不需要立即调用update_progress_bar()，因为跳转会在播放线程中处理并更新UI
+                    }
+                    break;
+                case '.':
+                    // 进度加10秒
+                    if (g_play_state != PLAY_STATE_STOPPED && g_total_duration > 0) {
+                        int new_position = g_current_position < g_total_duration - 10 ? g_current_position + 10 : g_total_duration;
+                        seek_audio(new_position);
+                        // 不需要立即调用update_progress_bar()，因为跳转会在播放线程中处理并更新UI
+                    }
+                    break;
                 case ' ':
                     // 执行当前选中的控件功能
                     switch(g_current_control_idx) {
@@ -462,6 +540,8 @@ void run_event_loop() {
                             break;
                         case 4: // 循环模式
                             toggle_loop_mode();
+                            break;
+                        case 5: // 进度条（占位，无操作）
                             break;
                     }
                     // 刷新UI以反映状态变化

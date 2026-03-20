@@ -25,7 +25,7 @@ typedef enum {
 #define COLOR_PAIR_LYRICS 4
 
 // 定义控件数量
-#define CONTROL_COUNT 5
+#define CONTROL_COUNT 6
 
 // 最大音频缓冲区大小（约1秒的立体声音频）
 #define MAX_AUDIO_BUFFER_SIZE (44100 * 2 * sizeof(int16_t))
@@ -62,6 +62,10 @@ extern pthread_t g_play_thread; // 播放线程
 extern int g_play_thread_running; // 播放线程运行状态
 extern char g_default_audio_device[128]; // 默认音频设备名称
 
+// 进度条相关全局变量
+extern int g_current_position; // 当前播放位置（秒）
+extern int g_total_duration; // 当前歌曲总时长（秒）
+
 // FFmpeg 初始化函数声明
 void init_ffmpeg();
 
@@ -79,8 +83,12 @@ void next_track();
 void toggle_loop_mode();
 const char *get_loop_mode_str();
 void cleanup();
+void seek_audio(int position);
 
 // UI 辅助函数声明
 int utf8_str_truncate(char *dest, const char *src, int max_cols);
+
+// 进度条更新函数声明
+void update_progress_bar();
 
 #endif
