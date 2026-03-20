@@ -1,4 +1,5 @@
 #include "../include/defs.h"
+#include "../include/lyrics.h"    // 新增：歌词模块
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -80,6 +81,84 @@ int utf8_str_truncate(char *dest, const char *src, int max_cols) {
     if (*s && cols + 3 <= max_cols) strcpy(d, "...");
     else *d = '\0';
     return cols;
+}
+
+/**
+ * 计算 UTF-8 字符串的显示宽度（列数）
+ */
+int utf8_str_width(const char *src) {
+    if (!src) return 0;
+    int cols = 0;
+    const char *s = src;
+    while (*s) {
+        unsigned char c = *s;
+        int char_len = 0, char_width = 1;
+        if (c < 0x80) { char_len = 1; char_width = 1; }
+        else if ((c & 0xE0) == 0xC0) { char_len = 2; char_width = 2; }
+        else if ((c & 0xF0) == 0xE0) { char_len = 3; char_width = 2; }
+        else if ((c & 0xF8) == 0xF0) { char_len = 4; char_width = 2; }
+        else { char_len = 1; char_width = 1; }
+        
+        for (int i = 0; i < char_len; i++) s++;
+        cols += char_width;
+    }
+    return cols;
+}
+
+/**
+ * UTF-8 字符串从指定偏移开始截取
+ * @param dest 目标缓冲区
+ * @param src 源字符串
+ * @param start_col 起始列偏移（从 0 开始）
+ * @param max_cols 最大列数
+ * @return 实际占用的列数
+ */
+int utf8_str_substring(char *dest, const char *src, int start_col, int max_cols) {
+    if (!dest || !src || max_cols <= 0) {
+        if (dest) *dest = '\0';
+        return 0;
+    }
+    
+    int cols = 0;
+    char *d = dest;
+    const char *s = src;
+    
+    // 跳过 start_col 列
+    while (*s && cols < start_col) {
+        unsigned char c = *s;
+        int char_len = 0, char_width = 1;
+        if (c < 0x80) { char_len = 1; char_width = 1; }
+        else if ((c & 0xE0) == 0xC0) { char_len = 2; char_width = 2; }
+        else if ((c & 0xF0) == 0xE0) { char_len = 3; char_width = 2; }
+        else if ((c & 0xF8) == 0xF0) { char_len = 4; char_width = 2; }
+        else { char_len = 1; char_width = 1; }
+        
+        if (cols + char_width > start_col) {
+            // 部分进入可视区域，从这个字符开始
+            break;
+        }
+        for (int i = 0; i < char_len; i++) s++;
+        cols += char_width;
+    }
+    
+    // 从当前位置开始复制最多 max_cols 列的字符
+    int result_cols = 0;
+    while (*s && result_cols < max_cols) {
+        unsigned char c = *s;
+        int char_len = 0, char_width = 1;
+        if (c < 0x80) { char_len = 1; char_width = 1; }
+        else if ((c & 0xE0) == 0xC0) { char_len = 2; char_width = 2; }
+        else if ((c & 0xF0) == 0xE0) { char_len = 3; char_width = 2; }
+        else if ((c & 0xF8) == 0xF0) { char_len = 4; char_width = 2; }
+        else { char_len = 1; char_width = 1; }
+        
+        if (result_cols + char_width > max_cols) break;
+        for (int i = 0; i < char_len; i++) *d++ = *s++;
+        result_cols += char_width;
+    }
+    *d = '\0';
+    
+    return result_cols;
 }
 
 /**
@@ -423,6 +502,9 @@ void update_progress_bar() {
     
     // 刷新控件窗口
     wrefresh(win_controls);
+    
+    // 更新歌词显示
+    update_lyrics_display();
 }
 
 /**

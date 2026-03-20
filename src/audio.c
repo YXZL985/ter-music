@@ -1,5 +1,6 @@
 #include "../include/defs.h"
 #include "../include/progress.h"  // 新增：进度跟踪模块
+#include "../include/lyrics.h"    // 新增：歌词模块
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -655,6 +656,10 @@ void play_audio(int index) {
         g_playlist.tracks[index].title, g_playlist.tracks[index].artist);
     update_controls_status(msg);
     render_playlist_content();
+    
+    // 加载歌词文件
+    load_lyrics(g_playlist.tracks[index].path);
+    render_lyrics();
 }
 
 /**
@@ -740,8 +745,12 @@ void stop_audio() {
     
     g_current_play_index = -1;
     
+    // 清空歌词
+    clear_lyrics();
+    
     render_playlist_content();
     render_controls();  // 新增：更新控制栏
+    render_lyrics();    // 更新歌词显示
 }
 
 /**

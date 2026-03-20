@@ -40,6 +40,7 @@ add_executable(${PROJECT_NAME}
     src/playlist.c
     src/audio.c
     src/progress.c  # 新增：进度跟踪模块
+    src/lyrics.c    # 新增：歌词模块
 )
 
 # 包含头文件目录

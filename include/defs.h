@@ -89,6 +89,8 @@ void seek_audio(int position);
 
 // UI 辅助函数声明
 int utf8_str_truncate(char *dest, const char *src, int max_cols);
+int utf8_str_width(const char *src);
+int utf8_str_substring(char *dest, const char *src, int start_col, int max_cols);
 
 // 进度条更新函数声明
 void update_progress_bar();
