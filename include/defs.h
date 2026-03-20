@@ -2,6 +2,7 @@
 #define DEFS_H
 
 #include <pthread.h>
+#include "progress.h"  // 新增：进度跟踪模块
 
 // 循环模式定义
 typedef enum {

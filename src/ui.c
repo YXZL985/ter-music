@@ -355,14 +355,74 @@ void render_controls() {
 }
 
 /**
- * 更新进度条
- * 在控件窗格区域更新进度条显示
+ * 更新进度条（增量更新版本）
+ * 直接计算百分比并只重绘进度条区域
  */
 void update_progress_bar() {
     // 只在播放状态下更新进度条
-    if (g_play_state == PLAY_STATE_PLAYING || g_play_state == PLAY_STATE_PAUSED) {
-        render_controls();
+    if (g_play_state == PLAY_STATE_STOPPED || g_total_duration <= 0) {
+        return;
     }
+    
+    int h, w;
+    getmaxyx(win_controls, h, w);
+    
+    // 直接从全局变量获取最新位置（播放线程会更新它）
+    int current_pos = g_current_position;
+    
+    // 计算进度百分比
+    int progress_percent = (current_pos * 100) / g_total_duration;
+    if (progress_percent > 100) progress_percent = 100;
+    
+    // 计算进度条长度
+    int progress_bar_width = w - 30;
+    int filled_width = (progress_bar_width * progress_percent) / 100;
+    
+    // 格式化时间显示
+    int current_min = current_pos / 60;
+    int current_sec = current_pos % 60;
+    int total_min = g_total_duration / 60;
+    int total_sec = g_total_duration % 60;
+    
+    // 检查是否选中进度条控件
+    int is_progress_selected = (g_current_control_idx == 5 && g_control_focus == 1);
+    
+    int progress_row = h / 2 - 2;
+    
+    // 只清除进度条所在行
+    wmove(win_controls, progress_row, 0);
+    wclrtoeol(win_controls);
+    
+    if (is_progress_selected) {
+        wattron(win_controls, A_REVERSE | A_BOLD);
+    }
+    
+    // 绘制时间文本
+    mvwprintw(win_controls, progress_row, 2, "%02d:%02d/%02d:%02d", 
+             current_min, current_sec, total_min, total_sec);
+    
+    // 绘制进度条图形
+    mvwprintw(win_controls, progress_row, 12, "[");
+    for (int i = 0; i < progress_bar_width; i++) {
+        if (i < filled_width) {
+            mvwprintw(win_controls, progress_row, 13 + i, "=");
+        } else if (i == filled_width) {
+            mvwprintw(win_controls, progress_row, 13 + i, ">");
+        } else {
+            mvwprintw(win_controls, progress_row, 13 + i, "-");
+        }
+    }
+    mvwprintw(win_controls, progress_row, 13 + progress_bar_width, "]");
+    
+    // 显示百分比
+    mvwprintw(win_controls, progress_row, 13 + progress_bar_width + 2, "%d%%", progress_percent);
+    
+    if (is_progress_selected) {
+        wattroff(win_controls, A_REVERSE | A_BOLD);
+    }
+    
+    // 刷新控件窗口
+    wrefresh(win_controls);
 }
 
 /**
@@ -443,23 +503,18 @@ void prompt_open_folder() {
  */
 void run_event_loop() {
     int ch;
-    int last_progress_update = 0;
     
     // 初始渲染
     render_playlist_content();
     render_controls(); // 初始绘制控件
     
-    // 设置输入超时为 100ms，以便定期更新进度条
-    timeout(100);
+    // 设置输入超时为 10ms（100 FPS 刷新率，确保进度条流畅）
+    timeout(10);
     
     while ((ch = getch()) != 'q') {
-        // 每秒更新一次进度条（当播放状态为播放或暂停时）
+        // 每帧都更新进度条（当播放状态为播放或暂停时）
         if (g_play_state == PLAY_STATE_PLAYING || g_play_state == PLAY_STATE_PAUSED) {
-            last_progress_update++;
-            if (last_progress_update >= 10) { // 10 * 100ms = 1 秒
-                render_controls();
-                last_progress_update = 0;
-            }
+            update_progress_bar();
         }
         
         // 如果用户没有按键，继续循环以允许进度条更新

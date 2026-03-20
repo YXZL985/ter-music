@@ -1,0 +1,77 @@
+#ifndef PROGRESS_H
+#define PROGRESS_H
+
+#include <stdint.h>
+#include <pthread.h>
+
+/**
+ * 进度跟踪器结构体
+ * 基于样本数累加的精确进度跟踪
+ */
+typedef struct {
+    // === 核心状态 ===
+    int64_t total_samples_played;      // 累计已播放的样本帧数
+    int sample_rate;                    // 当前音频采样率（如 44100）
+    
+    // === Wall-clock 时间跟踪（用于校准） ===
+    uint64_t play_start_time_us;        // 播放开始时的微秒时间戳
+    uint64_t pause_accumulated_us;      // 暂停累计的微秒时间
+    uint64_t last_pause_time_us;        // 上次暂停的时间点
+    int is_playing;                     // 是否正在播放
+    
+    // === 线程同步 ===
+    pthread_mutex_t lock;               // 保护上述状态
+} ProgressTracker;
+
+/**
+ * 初始化进度跟踪器
+ * @param sample_rate 音频采样率（如 44100）
+ */
+void progress_tracker_init(int sample_rate);
+
+/**
+ * 销毁进度跟踪器，释放资源
+ */
+void progress_tracker_destroy(void);
+
+/**
+ * 累加已播放的样本数
+ * @param num_samples 样本数量
+ */
+void progress_tracker_add_samples(int num_samples);
+
+/**
+ * 获取当前播放位置（秒）
+ * @return 当前位置（秒）
+ */
+int progress_tracker_get_position_seconds(void);
+
+/**
+ * 跳转到指定位置
+ * @param position_seconds 目标位置（秒）
+ */
+void progress_tracker_seek(int position_seconds);
+
+/**
+ * 暂停时的回调
+ */
+void progress_tracker_on_pause(void);
+
+/**
+ * 恢复播放时的回调
+ */
+void progress_tracker_on_resume(void);
+
+/**
+ * 停止播放时重置跟踪器
+ */
+void progress_tracker_on_stop(void);
+
+/**
+ * 获取进度百分比（0-100）
+ * @param total_duration 总时长（秒）
+ * @return 进度百分比
+ */
+int progress_tracker_get_percent(int total_duration);
+
+#endif // PROGRESS_H

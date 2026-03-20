@@ -39,6 +39,7 @@ add_executable(${PROJECT_NAME}
     src/ui.c
     src/playlist.c
     src/audio.c
+    src/progress.c  # 新增：进度跟踪模块
 )
 
 # 包含头文件目录
