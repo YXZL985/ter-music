@@ -141,6 +141,25 @@ void *play_audio_thread(void *arg) {
     // 获取歌曲总时长（秒）
     g_total_duration = fmt_ctx->duration / AV_TIME_BASE;
     
+    // 验证时长的有效性，如果无效则尝试通过音频帧数计算
+    if (g_total_duration <= 0) {
+        // 尝试通过音频流的 duration 和 time_base 计算时长
+        for (int i = 0; i < fmt_ctx->nb_streams; i++) {
+            if (fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+                AVRational time_base = fmt_ctx->streams[i]->time_base;
+                int64_t stream_duration = fmt_ctx->streams[i]->duration;
+                if (stream_duration > 0 && time_base.den > 0) {
+                    g_total_duration = av_rescale_q(stream_duration, time_base, (AVRational){1, 1});
+                    break;
+                }
+            }
+        }
+        // 如果还是无法获取有效时长，设置为一个默认值（300 秒）
+        if (g_total_duration <= 0) {
+            g_total_duration = 300; // 默认 5 分钟
+        }
+    }
+    
     // 重置当前播放位置为 0
     g_current_position = 0;
     
@@ -389,6 +408,8 @@ void *play_audio_thread(void *arg) {
             avcodec_flush_buffers(codec_ctx);
             // 重置当前位置
             g_current_position = initial_seek_position;
+            // 同步进度跟踪器
+            progress_tracker_seek(initial_seek_position);
             // 更新UI显示
             render_controls();
         }
@@ -421,10 +442,17 @@ void *play_audio_thread(void *arg) {
                 g_current_position = g_seek_position;
                 g_seek_request = 0;
 
+                // 同步进度跟踪器到跳转位置
+                progress_tracker_seek(g_seek_position);
+
                 // 重置音频设备
                 if (audio_handle) {
                     snd_pcm_prepare(audio_handle);
                 }
+                
+                // 重要：跳转后跳过本次循环，避免处理旧的 packet
+                pthread_mutex_unlock(&g_play_mutex);
+                continue;
             } else {
                 g_seek_request = 0;
                 if (audio_handle) {
@@ -481,7 +509,10 @@ void *play_audio_thread(void *arg) {
                     progress_tracker_add_samples(converted_samples);
                     
                     // 更新全局位置变量（用于 UI 显示）- 每帧都更新
-                    g_current_position = progress_tracker_get_position_seconds();
+                    // 但如果已有跳转请求，跳过更新以避免干扰跳转
+                    if (!g_seek_request) {
+                        g_current_position = progress_tracker_get_position_seconds();
+                    }
                     
                     // 直接写入 ALSA 设备
                     int16_t *samples = (int16_t*)output_data;
@@ -651,12 +682,22 @@ void pause_audio() {
 void resume_audio() {
     if (g_play_state == PLAY_STATE_PAUSED) {
         g_play_state = PLAY_STATE_PLAYING;
-        // 恢复ALSA设备
+        /* 恢复 ALSA 设备前检查设备状态 */
         if (audio_handle) {
-            snd_pcm_pause(audio_handle, 0);
+            snd_pcm_state_t state = snd_pcm_state(audio_handle);
+            if (state == SND_PCM_STATE_PAUSED) {
+                /* 设备处于暂停状态，直接恢复 */
+                snd_pcm_pause(audio_handle, 0);
+            } else if (state == SND_PCM_STATE_SETUP || state == SND_PCM_STATE_PREPARED) {
+                /* 设备需要重新准备 */
+                snd_pcm_prepare(audio_handle);
+            } else {
+                /* 其他状态，尝试直接恢复 */
+                snd_pcm_pause(audio_handle, 0);
+            }
         }
-        // 不再调用update_controls_status，避免阻塞
-        // 通知进度跟踪器
+        /* 不再调用 update_controls_status，避免阻塞 */
+        /* 通知进度跟踪器 */
         progress_tracker_on_resume();
         render_playlist_content();
     }

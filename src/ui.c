@@ -568,20 +568,26 @@ void run_event_loop() {
                     render_controls();
                     break;
                 case ',':
-                    // 进度减 5 秒
+                    // 进度减 5 秒 - 基于进度跟踪器的准确位置
                     if (g_play_state != PLAY_STATE_STOPPED && g_total_duration > 0) {
-                        int new_pos = g_current_position - 5;
+                        // 使用 progress_tracker 获取准确的当前播放位置
+                        int current_pos = progress_tracker_get_position_seconds();
+                        int new_pos = current_pos - 5;
                         if (new_pos < 0) new_pos = 0;
-                        g_current_position = new_pos;
+                        // 先同步进度跟踪器，再发起跳转请求
+                        progress_tracker_seek(new_pos);
                         seek_audio(new_pos);
                     }
                     break;
                 case '.':
-                    // 进度加 5 秒
+                    // 进度加 5 秒 - 基于进度跟踪器的准确位置
                     if (g_play_state != PLAY_STATE_STOPPED && g_total_duration > 0) {
-                        int new_pos = g_current_position + 5;
+                        // 使用 progress_tracker 获取准确的当前播放位置
+                        int current_pos = progress_tracker_get_position_seconds();
+                        int new_pos = current_pos + 5;
                         if (new_pos > g_total_duration) new_pos = g_total_duration;
-                        g_current_position = new_pos;
+                        // 先同步进度跟踪器，再发起跳转请求
+                        progress_tracker_seek(new_pos);
                         seek_audio(new_pos);
                     }
                     break;

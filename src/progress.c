@@ -60,22 +60,20 @@ int progress_tracker_get_position_seconds(void) {
         // 基于样本数计算位置（主要方法）
         position = (int)(g_tracker.total_samples_played / g_tracker.sample_rate);
         
-        // 如果正在播放，可以用 wall-clock time 进行验证
+        // 如果正在播放，用 wall-clock time 进行验证和校正
         if (g_tracker.is_playing) {
             uint64_t current_time = get_current_time_us();
             uint64_t elapsed = current_time - g_tracker.play_start_time_us;
             elapsed -= g_tracker.pause_accumulated_us;
             int wallclock_pos = (int)(elapsed / 1000000);
             
-            // 如果两者差异过大（>5 秒），可用于调试或校正
-            // 当前禁用日志输出以避免干扰 ncurses UI
-            // int diff = abs(position - wallclock_pos);
-            // if (diff > 5) {
-            //     fprintf(stderr, "Progress warning: samples=%d, wallclock=%d, diff=%d\n", 
-            //             position, wallclock_pos, diff);
-            //     // 可以选择使用 wallclock 位置进行校正
-            //     // position = wallclock_pos;
-            // }
+            // 如果两者差异过大（>5 秒），使用 wallclock 位置进行校正
+            int diff = abs(position - wallclock_pos);
+            if (diff > 5) {
+                // 使用 wall-clock 位置校正样本数，避免跳变
+                g_tracker.total_samples_played = (int64_t)wallclock_pos * g_tracker.sample_rate;
+                position = wallclock_pos;
+            }
         }
     } else {
         position = 0;
@@ -114,10 +112,21 @@ void progress_tracker_on_pause(void) {
 void progress_tracker_on_resume(void) {
     pthread_mutex_lock(&g_tracker.lock);
     
-    uint64_t now = get_current_time_us();
-    uint64_t pause_duration = now - g_tracker.last_pause_time_us;
+    // 计算当前样本数对应的时间位置
+    int current_pos_seconds = (int)(g_tracker.total_samples_played / g_tracker.sample_rate);
+    uint64_t current_pos_us = (uint64_t)current_pos_seconds * 1000000;
     
-    g_tracker.pause_accumulated_us += pause_duration;
+    // 调整播放开始时间，使得 wall-clock 时间与样本数位置匹配
+    // 即：play_start_time_us = 当前时间 - 当前位置时间
+    uint64_t now = get_current_time_us();
+    if (now >= current_pos_us) {
+        g_tracker.play_start_time_us = now - current_pos_us;
+    } else {
+        // 避免溢出，这种情况通常不会发生
+        g_tracker.play_start_time_us = 0;
+    }
+    
+    g_tracker.pause_accumulated_us = 0;
     g_tracker.is_playing = 1;
     
     pthread_mutex_unlock(&g_tracker.lock);
