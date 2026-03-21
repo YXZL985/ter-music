@@ -56,27 +56,29 @@ int progress_tracker_get_position_seconds(void) {
     
     int position;
     
-    if (g_tracker.sample_rate > 0) {
-        // 基于样本数计算位置（主要方法）
-        position = (int)(g_tracker.total_samples_played / g_tracker.sample_rate);
+    // 采样率无效时，直接返回 0 作为安全值
+    if (g_tracker.sample_rate <= 0) {
+        pthread_mutex_unlock(&g_tracker.lock);
+        return 0;
+    }
+    
+    // 基于样本数计算位置（主要方法）
+    position = (int)(g_tracker.total_samples_played / g_tracker.sample_rate);
+    
+    // 如果正在播放，用 wall-clock time 进行验证和校正
+    if (g_tracker.is_playing) {
+        uint64_t current_time = get_current_time_us();
+        uint64_t elapsed = current_time - g_tracker.play_start_time_us;
+        elapsed -= g_tracker.pause_accumulated_us;
+        int wallclock_pos = (int)(elapsed / 1000000);
         
-        // 如果正在播放，用 wall-clock time 进行验证和校正
-        if (g_tracker.is_playing) {
-            uint64_t current_time = get_current_time_us();
-            uint64_t elapsed = current_time - g_tracker.play_start_time_us;
-            elapsed -= g_tracker.pause_accumulated_us;
-            int wallclock_pos = (int)(elapsed / 1000000);
-            
-            // 如果两者差异过大（>5 秒），使用 wallclock 位置进行校正
-            int diff = abs(position - wallclock_pos);
-            if (diff > 5) {
-                // 使用 wall-clock 位置校正样本数，避免跳变
-                g_tracker.total_samples_played = (int64_t)wallclock_pos * g_tracker.sample_rate;
-                position = wallclock_pos;
-            }
+        // 如果两者差异过大（>5 秒），使用 wallclock 位置进行校正
+        int diff = abs(position - wallclock_pos);
+        if (diff > 5) {
+            // 使用 wall-clock 位置校正样本数，避免跳变
+            g_tracker.total_samples_played = (int64_t)wallclock_pos * g_tracker.sample_rate;
+            position = wallclock_pos;
         }
-    } else {
-        position = 0;
     }
     
     pthread_mutex_unlock(&g_tracker.lock);
