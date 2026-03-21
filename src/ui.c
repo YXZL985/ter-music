@@ -356,10 +356,6 @@ void render_controls() {
         int progress_percent = (g_current_position * 100) / g_total_duration;
         if (progress_percent > 100) progress_percent = 100;
         
-        // 计算进度条长度
-        int progress_bar_width = w - 30; // 左右留出更多空间
-        int filled_width = (progress_bar_width * progress_percent) / 100;
-        
         // 格式化时间显示
         int current_min = g_current_position / 60;
         int current_sec = g_current_position % 60;
@@ -373,25 +369,31 @@ void render_controls() {
             wattron(win_controls, A_REVERSE | A_BOLD);
         }
         
-        // 绘制进度条
-        mvwprintw(win_controls, progress_row, 2, "%02d:%02d/%02d:%02d", 
+        // 时间显示（增加空格，分开总时长）
+        mvwprintw(win_controls, progress_row, 2, "%02d:%02d / %02d:%02d  ", 
                  current_min, current_sec, total_min, total_sec);
         
-        // 绘制进度条图形
-        mvwprintw(win_controls, progress_row, 12, "[");
+        // 进度条起始列后移，避免覆盖
+        int progress_start_col = 15;
+        mvwprintw(win_controls, progress_row, progress_start_col, "[");
+        
+        int progress_bar_width = w - 40;  // 加大余量
+        int filled_width = (progress_bar_width * progress_percent) / 100;
         for (int i = 0; i < progress_bar_width; i++) {
             if (i < filled_width) {
-                mvwprintw(win_controls, progress_row, 13 + i, "=");
+                mvwprintw(win_controls, progress_row, progress_start_col + 1 + i, "=");
             } else if (i == filled_width) {
-                mvwprintw(win_controls, progress_row, 13 + i, ">" );
+                mvwprintw(win_controls, progress_row, progress_start_col + 1 + i, ">");
             } else {
-                mvwprintw(win_controls, progress_row, 13 + i, "-");
+                mvwprintw(win_controls, progress_row, progress_start_col + 1 + i, "-");
             }
         }
-        mvwprintw(win_controls, progress_row, 13 + progress_bar_width, "]");
+        mvwprintw(win_controls, progress_row, progress_start_col + 1 + progress_bar_width, "]");
+        mvwprintw(win_controls, progress_row, progress_start_col + 1 + progress_bar_width + 2, "%d%%", progress_percent);
         
-        // 显示百分比
-        mvwprintw(win_controls, progress_row, 13 + progress_bar_width + 2, "%d%%", progress_percent);
+        // 强制恢复边框
+        mvwaddch(win_controls, progress_row, 0, ACS_VLINE);
+        mvwaddch(win_controls, progress_row, w - 1, ACS_VLINE);
         
         if (is_progress_selected) {
             wattroff(win_controls, A_REVERSE | A_BOLD);
@@ -453,10 +455,6 @@ void update_progress_bar() {
     int progress_percent = (current_pos * 100) / g_total_duration;
     if (progress_percent > 100) progress_percent = 100;
     
-    // 计算进度条长度
-    int progress_bar_width = w - 30;
-    int filled_width = (progress_bar_width * progress_percent) / 100;
-    
     // 格式化时间显示
     int current_min = current_pos / 60;
     int current_sec = current_pos % 60;
@@ -468,37 +466,45 @@ void update_progress_bar() {
     
     int progress_row = h / 2 - 2;
     
-    // 只清除进度条所在行
-    wmove(win_controls, progress_row, 0);
-    wclrtoeol(win_controls);
+    // 只清除内部区域（保留左右边框）
+    wmove(win_controls, progress_row, 1);
+    for (int i = 1; i < w - 1; i++) {
+        waddch(win_controls, ' ');
+    }
     
     if (is_progress_selected) {
         wattron(win_controls, A_REVERSE | A_BOLD);
     }
     
-    // 绘制时间文本
-    mvwprintw(win_controls, progress_row, 2, "%02d:%02d/%02d:%02d", 
+    // 时间显示（增加空格，分开总时长）
+    mvwprintw(win_controls, progress_row, 2, "%02d:%02d / %02d:%02d  ", 
              current_min, current_sec, total_min, total_sec);
     
-    // 绘制进度条图形
-    mvwprintw(win_controls, progress_row, 12, "[");
+    // 进度条起始列后移，避免覆盖
+    int progress_start_col = 15;
+    mvwprintw(win_controls, progress_row, progress_start_col, "[");
+    
+    int progress_bar_width = w - 40;  // 加大余量
+    int filled_width = (progress_bar_width * progress_percent) / 100;
     for (int i = 0; i < progress_bar_width; i++) {
         if (i < filled_width) {
-            mvwprintw(win_controls, progress_row, 13 + i, "=");
+            mvwprintw(win_controls, progress_row, progress_start_col + 1 + i, "=");
         } else if (i == filled_width) {
-            mvwprintw(win_controls, progress_row, 13 + i, ">");
+            mvwprintw(win_controls, progress_row, progress_start_col + 1 + i, ">");
         } else {
-            mvwprintw(win_controls, progress_row, 13 + i, "-");
+            mvwprintw(win_controls, progress_row, progress_start_col + 1 + i, "-");
         }
     }
-    mvwprintw(win_controls, progress_row, 13 + progress_bar_width, "]");
-    
-    // 显示百分比
-    mvwprintw(win_controls, progress_row, 13 + progress_bar_width + 2, "%d%%", progress_percent);
+    mvwprintw(win_controls, progress_row, progress_start_col + 1 + progress_bar_width, "]");
+    mvwprintw(win_controls, progress_row, progress_start_col + 1 + progress_bar_width + 2, "%d%%", progress_percent);
     
     if (is_progress_selected) {
         wattroff(win_controls, A_REVERSE | A_BOLD);
     }
+    
+    // 强制恢复边框
+    mvwaddch(win_controls, progress_row, 0, ACS_VLINE);
+    mvwaddch(win_controls, progress_row, w - 1, ACS_VLINE);
     
     // 刷新控件窗口
     wrefresh(win_controls);

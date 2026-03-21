@@ -434,7 +434,7 @@ void *play_audio_thread(void *arg) {
             
             AVRational time_base = fmt_ctx->streams[audio_stream_index]->time_base;
             int64_t target_ts = av_rescale_q(g_seek_position, (AVRational){1, 1}, time_base);
-            int ret = av_seek_frame(fmt_ctx, audio_stream_index, target_ts, AVSEEK_FLAG_BACKWARD);
+            int ret = av_seek_frame(fmt_ctx, audio_stream_index, target_ts, 0);  // 改为 0，不使用 BACKWARD
             
             if (ret >= 0) {
                 avcodec_flush_buffers(codec_ctx);
@@ -469,10 +469,7 @@ void *play_audio_thread(void *arg) {
             while (g_play_state == PLAY_STATE_PAUSED && g_play_thread_running) {
                 usleep(100000);
             }
-            // 从暂停恢复后，重新准备音频设备
-            if (audio_handle && g_play_thread_running) {
-                snd_pcm_prepare(audio_handle);
-            }
+            // 从暂停恢复后，不再调用 snd_pcm_prepare()，避免缓冲区重置
         }
         
         if (!g_play_thread_running) {
@@ -543,10 +540,7 @@ void *play_audio_thread(void *arg) {
                     while (g_play_state == PLAY_STATE_PAUSED && g_play_thread_running) {
                         usleep(100000);
                     }
-                    // 从暂停恢复后，重新准备音频设备
-                    if (audio_handle && g_play_thread_running) {
-                        snd_pcm_prepare(audio_handle);
-                    }
+                    // 从暂停恢复后，不再调用 snd_pcm_prepare()，避免缓冲区重置
                 }
                 
                 if (!g_play_thread_running) {
@@ -705,6 +699,7 @@ void resume_audio() {
         /* 通知进度跟踪器 */
         progress_tracker_on_resume();
         render_playlist_content();
+        update_progress_bar();   // 新增：确保进度条立刻同步
     }
 }
 
@@ -827,7 +822,12 @@ void seek_audio(int position) {
     // 设置跳转目标和标志
     g_seek_position = position;
     g_seek_request = 1;
+    g_current_position = position;          // 立即同步 UI
+    progress_tracker_seek(position);        // 确保 tracker 也同步
     
     pthread_mutex_unlock(&g_play_mutex);
     pthread_mutex_unlock(&g_seek_mutex);
+    
+    update_progress_bar();                  // 即时刷新进度条
+    render_controls();                      // 强化视觉反馈
 }
