@@ -338,6 +338,11 @@ void render_playlist_content() {
  * 显示播放控制按钮并高亮当前选中的控件
  */
 void render_controls() {
+    // 检查窗口是否有效
+    if (!win_controls) {
+        return;
+    }
+    
     werase(win_controls);
     box(win_controls, 0, 0);
     
@@ -352,51 +357,75 @@ void render_controls() {
     if (g_play_state != PLAY_STATE_STOPPED && g_total_duration > 0) {
         int progress_row = h / 2 - 2; // 在控件上方两行
         
-        // 计算进度百分比
-        int progress_percent = (g_current_position * 100) / g_total_duration;
-        if (progress_percent > 100) progress_percent = 100;
-        
-        // 格式化时间显示
-        int current_min = g_current_position / 60;
-        int current_sec = g_current_position % 60;
-        int total_min = g_total_duration / 60;
-        int total_sec = g_total_duration % 60;
-        
-        // 检查是否选中进度条
-        int is_progress_selected = (g_current_control_idx == 5 && g_control_focus == 1);
-        
-        if (is_progress_selected) {
-            wattron(win_controls, A_REVERSE | A_BOLD);
-        }
-        
-        // 时间显示（增加空格，分开总时长）
-        mvwprintw(win_controls, progress_row, 2, "%02d:%02d / %02d:%02d  ", 
-                 current_min, current_sec, total_min, total_sec);
-        
-        // 进度条起始列后移，避免覆盖
-        int progress_start_col = 15;
-        mvwprintw(win_controls, progress_row, progress_start_col, "[");
-        
-        int progress_bar_width = w - 40;  // 加大余量
-        int filled_width = (progress_bar_width * progress_percent) / 100;
-        for (int i = 0; i < progress_bar_width; i++) {
-            if (i < filled_width) {
-                mvwprintw(win_controls, progress_row, progress_start_col + 1 + i, "=");
-            } else if (i == filled_width) {
-                mvwprintw(win_controls, progress_row, progress_start_col + 1 + i, ">");
-            } else {
-                mvwprintw(win_controls, progress_row, progress_start_col + 1 + i, "-");
+        // 窗口尺寸校验
+        if (h >= 5 && w >= 20) {
+            // 安全获取位置
+            int current_pos = g_current_position;
+            if (current_pos < 0) current_pos = 0;
+            if (current_pos > g_total_duration) current_pos = g_total_duration;
+            
+            // 计算进度百分比
+            int progress_percent = (current_pos * 100) / g_total_duration;
+            if (progress_percent > 100) progress_percent = 100;
+            
+            // 格式化时间显示 - 限制时间值范围
+            int current_min = current_pos / 60;
+            int current_sec = current_pos % 60;
+            int total_min = g_total_duration / 60;
+            int total_sec = g_total_duration % 60;
+            
+            current_min %= 100;
+            total_min %= 100;
+            
+            // 检查是否选中进度条
+            int is_progress_selected = (g_current_control_idx == 5 && g_control_focus == 1);
+            
+            if (is_progress_selected) {
+                wattron(win_controls, A_REVERSE | A_BOLD);
             }
-        }
-        mvwprintw(win_controls, progress_row, progress_start_col + 1 + progress_bar_width, "]");
-        mvwprintw(win_controls, progress_row, progress_start_col + 1 + progress_bar_width + 2, "%d%%", progress_percent);
-        
-        // 强制恢复边框
-        mvwaddch(win_controls, progress_row, 0, ACS_VLINE);
-        mvwaddch(win_controls, progress_row, w - 1, ACS_VLINE);
-        
-        if (is_progress_selected) {
-            wattroff(win_controls, A_REVERSE | A_BOLD);
+            
+            // 时间显示 - 固定格式确保不越界
+            char time_str[32];
+            snprintf(time_str, sizeof(time_str), "%02d:%02d / %02d:%02d", 
+                     current_min, current_sec, total_min, total_sec);
+            mvwprintw(win_controls, progress_row, 2, "%s", time_str);
+            
+            // 计算进度条安全宽度
+            int time_width = 13;
+            int percent_width = 4;
+            int padding = 4;
+            
+            int progress_bar_width = w - time_width - percent_width - padding - 4;
+            if (progress_bar_width < 10) progress_bar_width = 10;
+            
+            int progress_start_col = 2 + time_width + 1;
+            
+            // 绘制进度条边框
+            mvwprintw(win_controls, progress_row, progress_start_col, "[");
+            
+            int filled_width = (progress_bar_width * progress_percent) / 100;
+            if (filled_width > progress_bar_width) filled_width = progress_bar_width;
+            
+            // 使用循环绘制，避免格式化字符串溢出
+            for (int i = 0; i < progress_bar_width && (progress_start_col + 1 + i) < w - 2; i++) {
+                char c = '-';
+                if (i < filled_width) c = '=';
+                else if (i == filled_width && progress_percent < 100) c = '>';
+                
+                mvwaddch(win_controls, progress_row, progress_start_col + 1 + i, c);
+            }
+            
+            mvwprintw(win_controls, progress_row, progress_start_col + 1 + progress_bar_width, "]");
+            mvwprintw(win_controls, progress_row, progress_start_col + 2 + progress_bar_width, 
+                      "%d%%", progress_percent);
+            
+            // 强制恢复边框
+            mvwaddch(win_controls, progress_row, 0, ACS_VLINE);
+            mvwaddch(win_controls, progress_row, w - 1, ACS_VLINE);
+            
+            if (is_progress_selected) {
+                wattroff(win_controls, A_REVERSE | A_BOLD);
+            }
         }
     }
     
@@ -440,35 +469,44 @@ void render_controls() {
  * 直接计算百分比并只重绘进度条区域
  */
 void update_progress_bar() {
-    // 只在播放状态下更新进度条
-    if (g_play_state == PLAY_STATE_STOPPED || g_total_duration <= 0) {
+    // 前置条件检查
+    if (g_play_state == PLAY_STATE_STOPPED || g_total_duration <= 0 || !win_controls) {
         return;
     }
     
     int h, w;
     getmaxyx(win_controls, h, w);
     
-    // 直接从全局变量获取最新位置（播放线程会更新它）
+    // 窗口尺寸校验
+    if (h < 5 || w < 20) return;  // 最小有效尺寸
+    
+    // 安全获取位置
     int current_pos = g_current_position;
+    if (current_pos < 0) current_pos = 0;
+    if (current_pos > g_total_duration) current_pos = g_total_duration;
     
     // 计算进度百分比
     int progress_percent = (current_pos * 100) / g_total_duration;
     if (progress_percent > 100) progress_percent = 100;
     
-    // 格式化时间显示
+    // 格式化时间显示 - 限制时间值范围，防止格式化溢出
     int current_min = current_pos / 60;
     int current_sec = current_pos % 60;
     int total_min = g_total_duration / 60;
     int total_sec = g_total_duration % 60;
     
+    current_min %= 100;  // 限制最大显示 99:59
+    total_min %= 100;
+    
     // 检查是否选中进度条控件
     int is_progress_selected = (g_current_control_idx == 5 && g_control_focus == 1);
     
     int progress_row = h / 2 - 2;
+    if (progress_row < 1 || progress_row >= h - 1) return;
     
-    // 只清除内部区域（保留左右边框）
+    // 安全清除行 - 保留边框
     wmove(win_controls, progress_row, 1);
-    for (int i = 1; i < w - 1; i++) {
+    for (int i = 1; i < w - 1 && i < 512; i++) {  // 限制最大清除宽度
         waddch(win_controls, ' ');
     }
     
@@ -476,37 +514,49 @@ void update_progress_bar() {
         wattron(win_controls, A_REVERSE | A_BOLD);
     }
     
-    // 时间显示（增加空格，分开总时长）
-    mvwprintw(win_controls, progress_row, 2, "%02d:%02d / %02d:%02d  ", 
+    // 时间显示 - 固定格式确保不越界
+    char time_str[32];
+    snprintf(time_str, sizeof(time_str), "%02d:%02d / %02d:%02d", 
              current_min, current_sec, total_min, total_sec);
+    mvwprintw(win_controls, progress_row, 2, "%s", time_str);
     
-    // 进度条起始列后移，避免覆盖
-    int progress_start_col = 15;
+    // 计算进度条安全宽度
+    int time_width = 13;  // "MM:SS / MM:SS" 的宽度
+    int percent_width = 4;  // "100%" 的宽度
+    int padding = 4;        // 左右括号和空格
+    
+    int progress_bar_width = w - time_width - percent_width - padding - 4;
+    if (progress_bar_width < 10) progress_bar_width = 10;  // 最小进度条宽度
+    
+    int progress_start_col = 2 + time_width + 1;
+    
+    // 绘制进度条边框
     mvwprintw(win_controls, progress_row, progress_start_col, "[");
     
-    int progress_bar_width = w - 40;  // 加大余量
     int filled_width = (progress_bar_width * progress_percent) / 100;
-    for (int i = 0; i < progress_bar_width; i++) {
-        if (i < filled_width) {
-            mvwprintw(win_controls, progress_row, progress_start_col + 1 + i, "=");
-        } else if (i == filled_width) {
-            mvwprintw(win_controls, progress_row, progress_start_col + 1 + i, ">");
-        } else {
-            mvwprintw(win_controls, progress_row, progress_start_col + 1 + i, "-");
-        }
+    if (filled_width > progress_bar_width) filled_width = progress_bar_width;
+    
+    // 使用循环绘制，避免格式化字符串溢出
+    for (int i = 0; i < progress_bar_width && (progress_start_col + 1 + i) < w - 2; i++) {
+        char c = '-';
+        if (i < filled_width) c = '=';
+        else if (i == filled_width && progress_percent < 100) c = '>';
+        
+        mvwaddch(win_controls, progress_row, progress_start_col + 1 + i, c);
     }
+    
     mvwprintw(win_controls, progress_row, progress_start_col + 1 + progress_bar_width, "]");
-    mvwprintw(win_controls, progress_row, progress_start_col + 1 + progress_bar_width + 2, "%d%%", progress_percent);
+    mvwprintw(win_controls, progress_row, progress_start_col + 2 + progress_bar_width, 
+              "%d%%", progress_percent);
     
     if (is_progress_selected) {
         wattroff(win_controls, A_REVERSE | A_BOLD);
     }
     
-    // 强制恢复边框
+    // 恢复边框
     mvwaddch(win_controls, progress_row, 0, ACS_VLINE);
     mvwaddch(win_controls, progress_row, w - 1, ACS_VLINE);
     
-    // 刷新控件窗口
     wrefresh(win_controls);
     
     // 更新歌词显示
@@ -656,33 +706,30 @@ void run_event_loop() {
                     render_controls();
                     break;
                 case ',':
-                    // 进度减 5 秒 - 基于进度跟踪器的准确位置
-                    if (g_play_state != PLAY_STATE_STOPPED && g_total_duration > 0) {
-                        // 使用 progress_tracker 获取准确的当前播放位置
+                    // 后退 5 秒 - 增加前置条件检查
+                    if (g_play_state != PLAY_STATE_STOPPED && 
+                        g_total_duration > 0 && 
+                        progress_tracker_is_ready()) {
+                        
                         int current_pos = progress_tracker_get_position_seconds();
                         int new_pos = current_pos - 5;
                         if (new_pos < 0) new_pos = 0;
-                        // 先同步进度跟踪器，再发起跳转请求
-                        progress_tracker_seek(new_pos);
+                        
                         seek_audio(new_pos);
-                        update_progress_bar();  // 立即刷新进度条
-                        render_controls();      // 刷新控制栏
-                        render_lyrics();        // 同步歌词高亮
                     }
                     break;
+
                 case '.':
-                    // 进度加 5 秒 - 基于进度跟踪器的准确位置
-                    if (g_play_state != PLAY_STATE_STOPPED && g_total_duration > 0) {
-                        // 使用 progress_tracker 获取准确的当前播放位置
+                    // 前进 5 秒 - 增加前置条件检查
+                    if (g_play_state != PLAY_STATE_STOPPED && 
+                        g_total_duration > 0 && 
+                        progress_tracker_is_ready()) {
+                        
                         int current_pos = progress_tracker_get_position_seconds();
                         int new_pos = current_pos + 5;
                         if (new_pos > g_total_duration) new_pos = g_total_duration;
-                        // 先同步进度跟踪器，再发起跳转请求
-                        progress_tracker_seek(new_pos);
+                        
                         seek_audio(new_pos);
-                        update_progress_bar();  // 立即刷新进度条
-                        render_controls();      // 刷新控制栏
-                        render_lyrics();        // 同步歌词高亮
                     }
                     break;
                 case ' ':

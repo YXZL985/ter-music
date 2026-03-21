@@ -74,4 +74,10 @@ void progress_tracker_on_stop(void);
  */
 int progress_tracker_get_percent(int total_duration);
 
+/**
+ * 检查进度跟踪器是否已就绪
+ * @return 1 表示已就绪，0 表示未就绪
+ */
+int progress_tracker_is_ready(void);
+
 #endif // PROGRESS_H

@@ -458,9 +458,19 @@ void *play_audio_thread(void *arg) {
                 // ALSA：丢弃旧缓冲，避免爆音或延迟
                 if (audio_handle) {
                     snd_pcm_state_t state = snd_pcm_state(audio_handle);
+                    // 只有在运行或暂停状态才需要 drop
                     if (state == SND_PCM_STATE_RUNNING || state == SND_PCM_STATE_PAUSED) {
-                        snd_pcm_drop(audio_handle);
+                        // 先 prepare 再 drop 确保缓冲区完全清空
                         snd_pcm_prepare(audio_handle);
+                        snd_pcm_drop(audio_handle);
+                    }
+                    
+                    // 重新准备设备
+                    int err = snd_pcm_prepare(audio_handle);
+                    if (err < 0) {
+                        fprintf(stderr, "ALSA prepare failed after seek: %s\n", snd_strerror(err));
+                        // 尝试恢复
+                        snd_pcm_recover(audio_handle, err, 0);
                     }
                 }
 
@@ -823,33 +833,43 @@ void prev_track() {
  * 设置跳转请求标志和目标位置
  */
 void seek_audio(int position) {
+    // 参数校验
     if (position < 0) position = 0;
-    if (position > g_total_duration) position = g_total_duration;
+    if (g_total_duration > 0 && position > g_total_duration) position = g_total_duration;
     
-    // 检查播放状态，如果未在播放，直接更新 UI 显示位置即可
+    // 检查播放状态 - 使用统一的锁保护
     pthread_mutex_lock(&g_play_mutex);
+    
+    // 如果未在播放，仅更新 UI 状态
     if (g_play_state == PLAY_STATE_STOPPED || !g_play_thread_running) {
         g_current_position = position;
-        progress_tracker_seek(position);
         pthread_mutex_unlock(&g_play_mutex);
+        
+        // 同步进度跟踪器（如果已初始化）
+        if (progress_tracker_is_ready()) {
+            progress_tracker_seek(position);
+        }
+        
         update_progress_bar();
         render_controls();
         return;
     }
-    pthread_mutex_unlock(&g_play_mutex);
     
+    // 正在播放，需要发起跳转请求
+    // 注意：保持锁顺序 play_mutex -> seek_mutex，避免死锁
     pthread_mutex_lock(&g_seek_mutex);
-    pthread_mutex_lock(&g_play_mutex);
     
-    // 设置跳转目标和标志
     g_seek_position = position;
     g_seek_request = 1;
-    g_current_position = position;          // 立即同步 UI
-    progress_tracker_seek(position);        // 确保 tracker 也同步
+    g_current_position = position;
     
-    pthread_mutex_unlock(&g_play_mutex);
+    // 同步进度跟踪器
+    progress_tracker_seek(position);
+    
     pthread_mutex_unlock(&g_seek_mutex);
+    pthread_mutex_unlock(&g_play_mutex);
     
-    update_progress_bar();                  // 即时刷新进度条
-    render_controls();                      // 强化视觉反馈
+    // 在锁外更新 UI，避免阻塞
+    update_progress_bar();
+    render_controls();
 }

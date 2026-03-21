@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
+#include <signal.h>
+#include <ncursesw/ncurses.h>
 
 // 声明外部函数
 extern void init_ncurses();
@@ -13,10 +15,24 @@ extern int load_playlist(const char *path);
 extern void prompt_open_folder();
 
 /**
+ * 崩溃信号处理器
+ * 确保 ncurses 资源被正确清理
+ */
+void crash_handler(int sig) {
+    endwin();  // 确保 ncurses 清理
+    fprintf(stderr, "Fatal error: signal %d\n", sig);
+    exit(1);
+}
+
+/**
  * 主函数
  * 程序入口点，负责初始化、处理命令行参数、运行主循环和清理资源
  */
 int main(int argc, char *argv[]) {
+    // 注册信号处理器
+    signal(SIGSEGV, crash_handler);
+    signal(SIGABRT, crash_handler);
+    
     // 解析命令行参数
     char *open_path = NULL;
     int opt;

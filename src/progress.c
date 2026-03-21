@@ -54,7 +54,7 @@ void progress_tracker_add_samples(int num_samples) {
 int progress_tracker_get_position_seconds(void) {
     pthread_mutex_lock(&g_tracker.lock);
     
-    int position;
+    int position = 0;
     
     // 采样率无效时，直接返回 0 作为安全值
     if (g_tracker.sample_rate <= 0) {
@@ -92,6 +92,12 @@ void progress_tracker_seek(int position_seconds) {
         position_seconds = 0;
     }
     
+    // 检查采样率是否有效
+    if (g_tracker.sample_rate <= 0) {
+        pthread_mutex_unlock(&g_tracker.lock);
+        return;
+    }
+    
     // 直接设置样本数偏移
     g_tracker.total_samples_played = (int64_t)position_seconds * g_tracker.sample_rate;
     
@@ -113,6 +119,12 @@ void progress_tracker_on_pause(void) {
 
 void progress_tracker_on_resume(void) {
     pthread_mutex_lock(&g_tracker.lock);
+    
+    // 检查采样率是否有效，避免除零错误
+    if (g_tracker.sample_rate <= 0) {
+        pthread_mutex_unlock(&g_tracker.lock);
+        return;
+    }
     
     // 计算当前样本数对应的时间位置
     int current_pos_seconds = (int)(g_tracker.total_samples_played / g_tracker.sample_rate);
@@ -160,4 +172,11 @@ int progress_tracker_get_percent(int total_duration) {
     }
     
     return percent;
+}
+
+int progress_tracker_is_ready(void) {
+    pthread_mutex_lock(&g_tracker.lock);
+    int ready = (g_tracker.sample_rate > 0);
+    pthread_mutex_unlock(&g_tracker.lock);
+    return ready;
 }
