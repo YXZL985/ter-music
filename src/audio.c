@@ -420,7 +420,7 @@ void *play_audio_thread(void *arg) {
     while (g_play_thread_running) {
         // === 新增：实时处理 seek 请求（无论播放/暂停）===
         pthread_mutex_lock(&g_seek_mutex);
-        if (g_seek_request && g_play_thread_running) {
+        if (g_seek_request && g_play_thread_running && fmt_ctx && codec_ctx) {
             g_seek_request = 0;
             int64_t target_ts = (int64_t)g_seek_position * AV_TIME_BASE;
 
@@ -433,11 +433,13 @@ void *play_audio_thread(void *arg) {
                 // 失败时不重置 UI
             } else {
                 // 成功：flush 解码器缓冲，避免残留旧帧
-                if (codec_ctx) avcodec_flush_buffers(codec_ctx);
+                avcodec_flush_buffers(codec_ctx);
 
                 // 重置 swresample 上下文
-                if (swr_ctx) swr_free(&swr_ctx);
-                swr_ctx = NULL;  // 稍后会重新 init（在 init_resampler 中）
+                if (swr_ctx) {
+                    swr_free(&swr_ctx);
+                    swr_ctx = NULL;
+                }
 
                 // 同步 tracker 和 UI（防止脱节）
                 progress_tracker_seek(g_seek_position);
@@ -449,6 +451,10 @@ void *play_audio_thread(void *arg) {
                 char msg[64];
                 snprintf(msg, sizeof(msg), "Seeked to %02d:%02d", g_seek_position / 60, g_seek_position % 60);
                 update_controls_status(msg);
+                
+                // 重要：跳过本次循环，避免处理旧的 packet
+                pthread_mutex_unlock(&g_seek_mutex);
+                continue;
             }
         }
         pthread_mutex_unlock(&g_seek_mutex);
@@ -456,13 +462,6 @@ void *play_audio_thread(void *arg) {
         // 检查是否需要暂停（在读取帧之前检查）
         if (g_play_state == PLAY_STATE_PAUSED) {
             while (g_play_state == PLAY_STATE_PAUSED && g_play_thread_running) {
-                // 暂停时也检测 seek 请求
-                pthread_mutex_lock(&g_seek_mutex);
-                if (g_seek_request && g_play_thread_running) {
-                    pthread_mutex_unlock(&g_seek_mutex);
-                    break;  // 退出暂停循环，让外层处理 seek
-                }
-                pthread_mutex_unlock(&g_seek_mutex);
                 usleep(100000);
             }
             // 从暂停恢复后，不再调用 snd_pcm_prepare()，避免缓冲区重置
