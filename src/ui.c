@@ -665,6 +665,9 @@ void run_event_loop() {
                         // 先同步进度跟踪器，再发起跳转请求
                         progress_tracker_seek(new_pos);
                         seek_audio(new_pos);
+                        update_progress_bar();  // 立即刷新进度条
+                        render_controls();      // 刷新控制栏
+                        render_lyrics();        // 同步歌词高亮
                     }
                     break;
                 case '.':
@@ -677,6 +680,9 @@ void run_event_loop() {
                         // 先同步进度跟踪器，再发起跳转请求
                         progress_tracker_seek(new_pos);
                         seek_audio(new_pos);
+                        update_progress_bar();  // 立即刷新进度条
+                        render_controls();      // 刷新控制栏
+                        render_lyrics();        // 同步歌词高亮
                     }
                     break;
                 case ' ':
