@@ -445,10 +445,9 @@ void *play_audio_thread(void *arg) {
                 // 成功：flush 解码器缓冲，避免残留旧帧
                 avcodec_flush_buffers(codec_ctx);
 
-                // 重置 swresample 上下文
+                // 重置 swresample 上下文（清除缓冲区，但保持对象有效）
                 if (swr_ctx) {
-                    swr_free(&swr_ctx);
-                    swr_ctx = NULL;
+                    swr_init(swr_ctx);
                 }
 
                 // 同步 tracker 和 UI（防止脱节）
