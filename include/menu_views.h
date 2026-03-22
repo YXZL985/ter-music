@@ -14,120 +14,50 @@
 
 #include "defs.h"
 
-/**
- * @brief 初始化菜单视图模块
- * 
- * 配置 ncurses 功能键支持，初始化全局状态
- */
 void init_menu_views(void);
-
-/**
- * @brief 渲染菜单视图框架
- * 
- * 绘制左右布局的外框和标题
- * 
- * @param title 视图标题
- */
 void render_menu_frame(const char *title);
-
-/**
- * @brief 渲染左侧菜单栏
- * 
- * 显示所有菜单项并高亮选中的项目
- * 
- * @param selected_idx 当前选中的菜单项索引
- */
-void render_menu_sidebar(int selected_idx);
-
-/**
- * @brief 处理菜单模式下的输入
- * 
- * 处理方向键、ESC、Enter 等导航输入
- * 
- * @param ch 输入的字符或键值
- */
+void render_menu_sidebar(int selected_idx, const char **items, int item_count);
 void handle_menu_input(int ch);
-
-/**
- * @brief 切换到指定视图
- * 
- * @param view 目标视图模式
- */
 void switch_to_view(ViewMode view);
-
-/**
- * @brief 退出当前视图返回主界面
- */
 void exit_current_view(void);
 
-/**
- * @brief 渲染设置界面内容
- */
 void render_settings_content(void);
-
-/**
- * @brief 渲染历史记录界面内容
- */
 void render_history_content(void);
-
-/**
- * @brief 渲染收藏夹界面内容
- */
 void render_favorites_content(void);
-
-/**
- * @brief 渲染信息界面内容
- */
 void render_info_content(void);
+void render_playlist_manager_content(void);
 
-/**
- * @brief 处理功能键（F1-F6）
- * 
- * @param fkey 功能键键值
- */
 void handle_function_keys(int fkey);
 
-/**
- * @brief 添加历史记录
- * 
- * @param track 歌曲信息
- */
 void add_history_entry(Track *track);
-
-/**
- * @brief 加载历史记录（从持久化存储）
- */
 void load_history(void);
-
-/**
- * @brief 保存历史记录（到持久化存储）
- */
 void save_history(void);
 
-/**
- * @brief 加载收藏夹（从持久化存储）
- */
 void load_favorites(void);
-
-/**
- * @brief 保存收藏夹（到持久化存储）
- */
 void save_favorites(void);
 
-/**
- * @brief 添加到收藏夹
- * 
- * @param track 歌曲信息
- * @return int 0=成功，-1=已满
- */
 int add_to_favorites(Track *track);
-
-/**
- * @brief 从收藏夹移除
- * 
- * @param index 收藏夹索引
- * @return int 0=成功，-1=索引无效
- */
 int remove_from_favorites(int index);
 
-#endif /* MENU_VIEWS_H */
+void add_dir_history_entry(const char *path);
+void load_dir_history(void);
+void save_dir_history(void);
+void clear_dir_history(void);
+
+void load_config(void);
+void save_config(void);
+void init_default_config(void);
+
+void load_all_playlists(void);
+void save_all_playlists(void);
+int create_user_playlist(const char *name);
+int delete_user_playlist(int index);
+int add_track_to_playlist(int playlist_idx, Track *track);
+int remove_track_from_playlist(int playlist_idx, int track_idx);
+
+void ensure_config_dir_exists(void);
+void init_all_persistent_data(void);
+
+void show_status_message(const char *msg);
+
+#endif

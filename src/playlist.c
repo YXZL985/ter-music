@@ -11,8 +11,12 @@
 #include <locale.h>
 #include <pthread.h>
 
-// 支持的音频文件扩展名列表
-const char *audio_extensions[] = {".mp3", ".flac", ".wav", ".ogg", ".m4a", NULL};
+const char *audio_extensions[] = {
+    ".mp3", ".MP3", ".flac", ".FLAC", ".wav", ".WAV", 
+    ".ogg", ".OGG", ".m4a", ".M4A", ".aac", ".AAC",
+    ".wma", ".WMA", ".ape", ".APE", ".opus", ".OPUS",
+    NULL
+};
 
 // 全局变量定义
 Playlist g_playlist = {0};

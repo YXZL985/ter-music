@@ -33,24 +33,24 @@ const char *control_labels[] = {"<<", "Play/Pause", ">>", "Stop", "Loop", "Progr
  * 设置本地化、终端模式和颜色对
  */
 void init_ncurses() {
-    // 设置本地化环境，支持中文等多字节字符
     setlocale(LC_ALL, "");
     setlocale(LC_CTYPE, "");
 
-    initscr();             // 启动 ncurses 模式
-    cbreak();              // 禁用行缓冲，立即读取输入
-    noecho();              // 不回显输入字符
-    keypad(stdscr, TRUE);  // 启用功能键（如方向键）
-    curs_set(0);           // 隐藏光标
-    clear();               // 清屏
+    initscr();
+    cbreak();
+    noecho();
+    keypad(stdscr, TRUE);
+    curs_set(0);
+    clear();
 
-    // 初始化颜色
     if (has_colors()) {
         start_color();
         init_pair(COLOR_PAIR_BORDER, COLOR_CYAN, COLOR_BLACK);
         init_pair(COLOR_PAIR_PLAYLIST, COLOR_WHITE, COLOR_BLACK);
         init_pair(COLOR_PAIR_CONTROLS, COLOR_YELLOW, COLOR_BLACK);
         init_pair(COLOR_PAIR_LYRICS, COLOR_GREEN, COLOR_BLACK);
+        init_pair(COLOR_PAIR_SIDEBAR, COLOR_CYAN, COLOR_BLACK);
+        init_pair(COLOR_PAIR_HIGHLIGHT, COLOR_BLACK, COLOR_WHITE);
     }
 }
 
@@ -585,32 +585,24 @@ void update_controls_status(const char *msg) {
     // 移除阻塞的sleep调用，让状态信息自然显示
 }
 
-/**
- * 提示用户输入文件夹路径
- * 处理路径输入和验证
- */
 void prompt_open_folder() {
-    echo(); // 开启回显以输入路径
-    curs_set(1); // 显示光标
+    echo();
+    curs_set(1);
     
     mvwprintw(win_controls, 4, 2, "Enter folder path: ");
     wclrtoeol(win_controls);
     wrefresh(win_controls);
     
     char input_path[MAX_PATH_LEN];
-    // 注意：在 setlocale 设置正确后，wgetnstr 通常能处理多字节字符输入
-    // 如果仍然乱码，可能需要改用 get_wch 逐字读取宽字符并转换
     wgetnstr(win_controls, input_path, MAX_PATH_LEN - 1);
     
     noecho();
     curs_set(0);
     
-    // 清除输入提示行
     mvwprintw(win_controls, 4, 2, "                    "); 
     wrefresh(win_controls);
 
     if (strlen(input_path) > 0) {
-        // 处理 ~ 路径
         char expanded_path[MAX_PATH_LEN];
         if (input_path[0] == '~') {
             const char *home = getenv("HOME");
@@ -623,17 +615,23 @@ void prompt_open_folder() {
             utf8_str_truncate(expanded_path, input_path, sizeof(expanded_path) - 1);
         }
         
-        // 验证路径是否存在且为目录
         struct stat s;
         if (stat(expanded_path, &s) == 0 && S_ISDIR(s.st_mode)) {
             int count = load_playlist(expanded_path);
             if (count > 0) {
+                add_dir_history_entry(expanded_path);
+                
+                if (g_app_config.remember_last_path) {
+                    strncpy(g_app_config.last_opened_path, expanded_path, MAX_PATH_LEN - 1);
+                    save_config();
+                }
+                
                 update_controls_status("Folder loaded successfully");
                 g_selected_index = 0;
                 render_playlist_content();
             } else {
                 update_controls_status("No audio files found");
-                g_playlist.is_loaded = 0; // 标记为空
+                g_playlist.is_loaded = 0;
                 render_playlist_content();
             }
         } else {
@@ -793,7 +791,6 @@ void run_event_loop() {
                     break;
             }
         } else {
-            // === 列表区模式 ===
             if (g_playlist.is_loaded) {
                 switch (ch) {
                     case KEY_UP:
@@ -809,24 +806,42 @@ void run_event_loop() {
                         }
                         break;
                     case ' ':
-                    case 10: // Enter键
-                        // 在列表模式下空格或Enter键播放选中的歌曲
+                    case 10:
                         play_audio(g_selected_index);
                         break;
                     case 'O':
                     case 'o':
-                        // 允许重新选择文件夹
                         prompt_open_folder();
                         render_playlist_content();
+                        break;
+                    case 'f':
+                    case 'F':
+                        if (g_playlist.count > 0) {
+                            Track *t = &g_playlist.tracks[g_selected_index];
+                            int result = add_to_favorites(t);
+                            if (result == 0) {
+                                update_controls_status("Added to favorites!");
+                            } else {
+                                update_controls_status("Already in favorites or full");
+                            }
+                        }
+                        break;
+                    case 'a':
+                    case 'A':
+                        if (g_playlist.count > 0 && g_playlist_manager.count > 0) {
+                            Track *t = &g_playlist.tracks[g_selected_index];
+                            add_track_to_playlist(0, t);
+                            update_controls_status("Added to first playlist!");
+                        } else if (g_playlist_manager.count == 0) {
+                            update_controls_status("No playlists. Create one in F3 menu.");
+                        }
                         break;
                 }
             }
         }
         
-        // 检查窗口大小变化 (可选优化)
         if (ch == KEY_RESIZE) {
-            cleanup(); // 简单处理：退出重进或重新 init
-            // 实际应调用 create_layout() 并重新渲染所有窗口
+            cleanup();
             return; 
         }
     }
