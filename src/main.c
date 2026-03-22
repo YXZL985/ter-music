@@ -13,6 +13,7 @@ extern void run_event_loop();
 extern void cleanup();
 extern int load_playlist(const char *path);
 extern void prompt_open_folder();
+extern void init_menu_views(void);  // 新增：菜单视图初始化
 
 /**
  * 崩溃信号处理器
@@ -52,23 +53,26 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // 1. 初始化ncurses环境
+    // 1. 初始化 ncurses 环境
     init_ncurses();
 
-    // 2. 初始化FFmpeg库
+    // 2. 初始化菜单视图模块（新增）
+    init_menu_views();
+
+    // 3. 初始化 FFmpeg 库
     init_ffmpeg();
 
-    // 3. 初始化音频设备
+    // 4. 初始化音频设备
     init_audio_device();
 
-    // 4. 构建UI布局
+    // 5. 构建 UI 布局
     create_layout();
     
-    // 5. 初始化播放列表状态
+    // 6. 初始化播放列表状态
     g_playlist.is_loaded = 0;
     strcpy(g_playlist.folder_path, "");
     
-    // 6. 如果指定了打开路径，加载播放列表
+    // 7. 如果指定了打开路径，加载播放列表
     if (open_path) {
         int count = load_playlist(open_path);
         if (count > 0) {
@@ -76,10 +80,10 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // 7. 运行主事件循环
+    // 8. 运行主事件循环
     run_event_loop();
 
-    // 8. 清理资源并退出
+    // 9. 清理资源并退出
     cleanup();
 
     printf("ter-music exited gracefully.\n");

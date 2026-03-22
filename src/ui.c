@@ -1,5 +1,6 @@
 #include "../include/defs.h"
 #include "../include/lyrics.h"    // 新增：歌词模块
+#include "../include/menu_views.h" // 新增：菜单视图模块
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -166,6 +167,14 @@ int utf8_str_substring(char *dest, const char *src, int start_col, int max_cols)
  * 设置播放列表、控制栏和歌词窗口的大小和位置
  */
 void create_layout() {
+    // 初始化视图状态（仅在第一次调用时）
+    static int initialized = 0;
+    if (!initialized) {
+        g_current_view = VIEW_MAIN;
+        g_menu_selected_idx = 0;
+        initialized = 1;
+    }
+    
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
 
@@ -657,6 +666,18 @@ void run_event_loop() {
         
         // 如果用户没有按键，继续循环以允许进度条更新
         if (ch == ERR) {
+            continue;
+        }
+        
+        // 新增：处理功能键（F1-F6）
+        if (ch >= KEY_F(1) && ch <= KEY_F(6)) {
+            handle_function_keys(ch);
+            continue;
+        }
+        
+        // 新增：如果在菜单视图模式下，优先处理菜单输入
+        if (g_current_view != VIEW_MAIN) {
+            handle_menu_input(ch);
             continue;
         }
         

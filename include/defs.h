@@ -19,6 +19,16 @@ typedef enum {
     PLAY_STATE_PAUSED = 2
 } PlayState;
 
+// 视图模式定义（新增：菜单视图功能）
+typedef enum {
+    VIEW_MAIN = 0,      // 主播放器界面
+    VIEW_SETTINGS = 1,  // 设置界面
+    VIEW_HISTORY = 2,   // 历史记录界面
+    VIEW_PLAYLIST = 3,  // 播放列表界面
+    VIEW_FAVORITES = 4, // 收藏夹界面
+    VIEW_INFO = 5       // 信息界面
+} ViewMode;
+
 // 定义颜色对索引
 #define COLOR_PAIR_BORDER 1
 #define COLOR_PAIR_PLAYLIST 2
@@ -44,6 +54,33 @@ typedef struct {
     char album[MAX_META_LEN];
 } Track;
 
+// 历史记录和收藏夹相关定义（新增）
+#define MAX_HISTORY_COUNT 100
+#define MAX_FAVORITES_COUNT 200
+
+// 时间戳类型
+#include <time.h>
+
+// 历史记录条目（新增）
+typedef struct {
+    char path[MAX_PATH_LEN];
+    char title[MAX_META_LEN];
+    char artist[MAX_META_LEN];
+    time_t play_time;  // 播放时间戳
+} HistoryEntry;
+
+// 播放历史记录（新增）
+typedef struct {
+    HistoryEntry entries[MAX_HISTORY_COUNT];
+    int count;
+} PlayHistory;
+
+// 收藏夹（新增）
+typedef struct {
+    Track tracks[MAX_FAVORITES_COUNT];
+    int count;
+} Favorites;
+
 // 播放列表结构体
 typedef struct {
     Track tracks[MAX_TRACKS];
@@ -62,6 +99,12 @@ extern LoopMode g_loop_mode; // 当前循环模式
 extern pthread_t g_play_thread; // 播放线程
 extern int g_play_thread_running; // 播放线程运行状态
 extern char g_default_audio_device[128]; // 默认音频设备名称
+
+// 菜单视图相关全局变量（新增）
+extern ViewMode g_current_view;        // 当前视图模式
+extern int g_menu_selected_idx;        // 左侧菜单选中项索引
+extern PlayHistory g_play_history;     // 全局播放历史
+extern Favorites g_favorites;          // 全局收藏夹
 
 // 进度条相关全局变量
 extern int g_current_position; // 当前播放位置（秒）
