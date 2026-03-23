@@ -125,6 +125,7 @@ typedef struct {
     ColorTheme theme;
     int auto_play_on_start;
     int remember_last_path;
+    int clear_history_on_startup;
 } AppConfig;
 
 typedef struct {

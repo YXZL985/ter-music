@@ -222,6 +222,7 @@ void init_default_config(void) {
     
     g_app_config.auto_play_on_start = 0;
     g_app_config.remember_last_path = 1;
+    g_app_config.clear_history_on_startup = 0;
 }
 
 void apply_color_theme(void) {
@@ -291,6 +292,7 @@ void load_config(void) {
     
     g_app_config.auto_play_on_start = (int)extract_json_int(json, "auto_play_on_start");
     g_app_config.remember_last_path = (int)extract_json_int(json, "remember_last_path");
+    g_app_config.clear_history_on_startup = (int)extract_json_int(json, "clear_history_on_startup");
     
     free(json);
 }
@@ -325,7 +327,8 @@ void save_config(void) {
     fprintf(f, "  },\n");
     
     fprintf(f, "  \"auto_play_on_start\": %d,\n", g_app_config.auto_play_on_start);
-    fprintf(f, "  \"remember_last_path\": %d\n", g_app_config.remember_last_path);
+    fprintf(f, "  \"remember_last_path\": %d,\n", g_app_config.remember_last_path);
+    fprintf(f, "  \"clear_history_on_startup\": %d\n", g_app_config.clear_history_on_startup);
     
     fprintf(f, "}\n");
     
@@ -1038,9 +1041,10 @@ static const char *settings_options[] = {
     "Border Color (BG)",
     "Default Startup Path",
     "Auto Play on Start",
-    "Remember Last Path"
+    "Remember Last Path",
+    "Clear History on Startup"
 };
-#define SETTINGS_OPTION_COUNT 15
+#define SETTINGS_OPTION_COUNT 16
 
 void render_settings_content(void) {
     int max_y, max_x;
@@ -1083,9 +1087,12 @@ void render_settings_content(void) {
         } else if (i == 13) {
             snprintf(line, sizeof(line), "%-25s: %s", settings_options[i], 
                     g_app_config.auto_play_on_start ? "Yes" : "No");
-        } else {
+        } else if (i == 14) {
             snprintf(line, sizeof(line), "%-25s: %s", settings_options[i], 
                     g_app_config.remember_last_path ? "Yes" : "No");
+        } else {
+            snprintf(line, sizeof(line), "%-25s: %s", settings_options[i], 
+                    g_app_config.clear_history_on_startup ? "Yes" : "No");
         }
         
         move(start_y + i, content_start_x);
@@ -1516,6 +1523,8 @@ static void handle_settings_input(int ch) {
                     g_app_config.auto_play_on_start = !g_app_config.auto_play_on_start;
                 } else if (g_settings_current_option == 14) {
                     g_app_config.remember_last_path = !g_app_config.remember_last_path;
+                } else if (g_settings_current_option == 15) {
+                    g_app_config.clear_history_on_startup = !g_app_config.clear_history_on_startup;
                 }
                 save_config();
                 render_settings_content();
@@ -1541,6 +1550,8 @@ static void handle_settings_input(int ch) {
                     g_app_config.auto_play_on_start = !g_app_config.auto_play_on_start;
                 } else if (g_settings_current_option == 14) {
                     g_app_config.remember_last_path = !g_app_config.remember_last_path;
+                } else if (g_settings_current_option == 15) {
+                    g_app_config.clear_history_on_startup = !g_app_config.clear_history_on_startup;
                 }
                 save_config();
                 render_settings_content();
@@ -1635,6 +1646,8 @@ static void handle_settings_input(int ch) {
                         g_app_config.auto_play_on_start = !g_app_config.auto_play_on_start;
                     } else if (g_settings_current_option == 14) {
                         g_app_config.remember_last_path = !g_app_config.remember_last_path;
+                    } else if (g_settings_current_option == 15) {
+                        g_app_config.clear_history_on_startup = !g_app_config.clear_history_on_startup;
                     }
                     save_config();
                     render_settings_content();

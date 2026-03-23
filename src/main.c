@@ -96,6 +96,10 @@ int main(int argc, char *argv[]) {
     
     init_menu_views();
     
+    if (g_app_config.clear_history_on_startup) {
+        clear_dir_history();
+    }
+    
     init_ffmpeg();
     
     init_audio_device();
