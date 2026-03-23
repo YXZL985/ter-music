@@ -599,6 +599,8 @@ void prompt_open_folder() {
     char input_path[MAX_PATH_LEN];
     wgetnstr(win_controls, input_path, MAX_PATH_LEN - 1);
     
+    flushinp();
+    
     noecho();
     curs_set(0);
     
@@ -670,10 +672,14 @@ void run_event_loop() {
             continue;
         }
         
-        // 新增：处理功能键（F1-F6）
-        if (ch >= KEY_F(1) && ch <= KEY_F(6)) {
+        // 新增：处理功能键（F1-F7）
+        if (ch >= KEY_F(1) && ch <= KEY_F(7)) {
             handle_function_keys(ch);
             continue;
+        }
+        
+        if (ch == 'q' || ch == 'Q') {
+            break;
         }
         
         // 新增：如果在菜单视图模式下，优先处理菜单输入

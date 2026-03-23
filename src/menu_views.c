@@ -1088,12 +1088,15 @@ void render_settings_content(void) {
                     g_app_config.remember_last_path ? "Yes" : "No");
         }
         
+        move(start_y + i, content_start_x);
         if (i == g_settings_current_option && g_focus_area == FOCUS_CONTENT) {
             attron(A_REVERSE);
-            mvprintw(start_y + i, content_start_x, "%s", line);
+            printw("%s", line);
+            clrtoeol();
             attroff(A_REVERSE);
         } else {
-            mvprintw(start_y + i, content_start_x, "%s", line);
+            printw("%s", line);
+            clrtoeol();
         }
     }
     
@@ -1571,8 +1574,42 @@ static void handle_settings_input(int ch) {
                     clrtoeol();
                     refresh();
                     
+                    flushinp();
+                    
                     char input_path[MAX_PATH_LEN];
-                    getnstr(input_path, MAX_PATH_LEN - 1);
+                    int pos = 0;
+                    int ch;
+                    while ((ch = getch()) != '\n' && ch != KEY_ENTER && pos < MAX_PATH_LEN - 1) {
+                        if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
+                            if (pos > 0) {
+                                int cx = getcurx(stdscr);
+                                int cy = getcury(stdscr);
+                                unsigned char c = (unsigned char)input_path[pos - 1];
+                                if (c >= 0x80) {
+                                    int bytes_to_remove = 1;
+                                    if ((c & 0xE0) == 0xC0) bytes_to_remove = 2;
+                                    else if ((c & 0xF0) == 0xE0) bytes_to_remove = 3;
+                                    else if ((c & 0xF8) == 0xF0) bytes_to_remove = 4;
+                                    else if ((c & 0xC0) == 0x80) {
+                                        bytes_to_remove = 2;
+                                        while (pos - bytes_to_remove >= 0 && (unsigned char)input_path[pos - bytes_to_remove] >= 0x80 && (unsigned char)input_path[pos - bytes_to_remove] < 0xC0) {
+                                            bytes_to_remove++;
+                                        }
+                                    }
+                                    if (bytes_to_remove > pos) bytes_to_remove = pos;
+                                    pos -= bytes_to_remove;
+                                    move(cy, cx - 1);
+                                } else {
+                                    pos--;
+                                    move(cy, cx - 1);
+                                }
+                                clrtoeol();
+                            }
+                        } else {
+                            input_path[pos++] = (char)ch;
+                        }
+                    }
+                    input_path[pos] = '\0';
                     
                     noecho();
                     curs_set(0);
@@ -2040,7 +2077,7 @@ void handle_menu_input(int ch) {
         return;
     }
     
-    if (ch >= KEY_F(1) && ch <= KEY_F(6)) {
+    if (ch >= KEY_F(1) && ch <= KEY_F(7)) {
         handle_function_keys(ch);
         return;
     }
