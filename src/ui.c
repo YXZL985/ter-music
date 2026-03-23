@@ -181,8 +181,8 @@ void create_layout() {
     int lyrics_width = max_x / 3; // 歌词栏占宽度的 1/3
     int main_width = max_x - lyrics_width;
 
-    // 计算高度比例 (5:2)，预留边框空间
-    int total_inner_height = max_y - 4; // 上下留边距
+    // 计算高度比例 (5:2)，预留边框空间和底部提示条（预留1行给菜单提示条
+    int total_inner_height = max_y - 5; // 上下留边距 + 底部提示条预留1行
     int playlist_height = (total_inner_height * 5) / 7;
     int controls_height = total_inner_height - playlist_height;
 
@@ -201,8 +201,8 @@ void create_layout() {
     
     wrefresh(win_controls);
 
-    // 3. 创建歌词侧栏窗口 (右侧)
-    win_lyrics = newwin(max_y - 2, lyrics_width, 1, 1 + main_width);
+    // 3. 创建歌词侧栏窗口 (右侧) - 高度减1为底部提示条预留空间
+    win_lyrics = newwin(max_y - 3, lyrics_width, 1, 1 + main_width);
     box(win_lyrics, 0, 0);
     mvwprintw(win_lyrics, 0, 2, " Lyrics ");
     wbkgd(win_lyrics, COLOR_PAIR(COLOR_PAIR_LYRICS));
@@ -213,8 +213,8 @@ void create_layout() {
     // --- 新增：绘制分隔线 ---
 
     // 绘制左侧区域与右侧歌词区之间的垂直分隔线
-    // 起点：(1, 1 + main_width), 长度：max_y - 2
-    mvvline(1, 1 + main_width, ACS_VLINE, max_y - 2);
+    // 起点：(1, 1 + main_width), 长度：max_y - 3（给底部提示条预留空间）
+    mvvline(1, 1 + main_width, ACS_VLINE, max_y - 3);
 
     // 绘制播放列表与控制栏之间的水平分隔线
     // 起点：(1 + playlist_height, 1), 长度：main_width
@@ -225,6 +225,9 @@ void create_layout() {
 
     // 刷新标准屏以显示分隔线
     refresh();
+    
+    // 渲染底部菜单栏提示条
+    render_menu_hint_bar();
 }
 
 /**

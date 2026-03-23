@@ -60,4 +60,6 @@ void init_all_persistent_data(void);
 
 void show_status_message(const char *msg);
 
+void render_menu_hint_bar(void);
+
 #endif

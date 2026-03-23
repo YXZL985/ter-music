@@ -788,6 +788,17 @@ void save_all_playlists(void) {
     }
 }
 
+void render_menu_hint_bar(void) {
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    
+    attron(COLOR_PAIR(COLOR_PAIR_BORDER));
+    mvhline(max_y - 1, 0, ' ', max_x);
+    mvprintw(max_y - 1, 2, "F1:Main  F2:Settings  F3:History  F4:PlayList  F5:Favorites  F6:Info  F7:Quit");
+    attroff(COLOR_PAIR(COLOR_PAIR_BORDER));
+    refresh();
+}
+
 int create_user_playlist(const char *name) {
     if (!name || strlen(name) == 0) return -1;
     if (g_playlist_manager.count >= MAX_PLAYLISTS_COUNT) return -2;
@@ -911,13 +922,13 @@ void render_menu_frame(const char *title) {
     attroff(COLOR_PAIR(COLOR_PAIR_BORDER));
     
     int menu_width = max_x / 4;
-    mvvline(1, menu_width, ACS_VLINE, max_y - 2);
+    mvvline(1, menu_width, ACS_VLINE, max_y - 3);
     mvaddch(1, menu_width, ACS_TTEE);
-    mvaddch(max_y - 2, menu_width, ACS_BTEE);
+    mvaddch(max_y - 3, menu_width, ACS_BTEE);
     
     if (strlen(g_status_message) > 0 && (time(NULL) - g_status_message_time) < 3) {
         attron(COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
-        mvprintw(max_y - 1, 2, "%s", g_status_message);
+        mvprintw(max_y - 2, 2, "%s", g_status_message);
         attroff(COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
     }
     
@@ -1372,29 +1383,34 @@ void switch_to_view(ViewMode view) {
     
     switch (view) {
         case VIEW_SETTINGS:
-            render_menu_frame("Settings [F1]");
+            render_menu_frame("Settings [F2]");
             render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
             render_settings_content();
+            render_menu_hint_bar();
             break;
         case VIEW_HISTORY:
-            render_menu_frame("History [F2]");
+            render_menu_frame("History [F3]");
             render_menu_sidebar(g_menu_selected_idx, history_sidebar_items, HISTORY_ITEM_COUNT);
             render_history_content();
+            render_menu_hint_bar();
             break;
         case VIEW_PLAYLIST:
-            render_menu_frame("Play List [F3]");
+            render_menu_frame("Play List [F4]");
             render_menu_sidebar(g_menu_selected_idx, playlist_sidebar_items, PLAYLIST_ITEM_COUNT);
             render_playlist_manager_content();
+            render_menu_hint_bar();
             break;
         case VIEW_FAVORITES:
-            render_menu_frame("Favorites [F4]");
+            render_menu_frame("Favorites [F5]");
             render_menu_sidebar(g_menu_selected_idx, favorites_sidebar_items, FAVORITES_ITEM_COUNT);
             render_favorites_content();
+            render_menu_hint_bar();
             break;
         case VIEW_INFO:
-            render_menu_frame("Info [F5]");
+            render_menu_frame("Info [F6]");
             render_menu_sidebar(g_menu_selected_idx, info_sidebar_items, INFO_ITEM_COUNT);
             render_info_content();
+            render_menu_hint_bar();
             break;
         default:
             break;
@@ -1415,21 +1431,24 @@ void exit_current_view(void) {
 void handle_function_keys(int fkey) {
     switch(fkey) {
         case KEY_F(1):
-            switch_to_view(VIEW_SETTINGS);
+            exit_current_view();
             break;
         case KEY_F(2):
-            switch_to_view(VIEW_HISTORY);
+            switch_to_view(VIEW_SETTINGS);
             break;
         case KEY_F(3):
-            switch_to_view(VIEW_PLAYLIST);
+            switch_to_view(VIEW_HISTORY);
             break;
         case KEY_F(4):
-            switch_to_view(VIEW_FAVORITES);
+            switch_to_view(VIEW_PLAYLIST);
             break;
         case KEY_F(5):
-            switch_to_view(VIEW_INFO);
+            switch_to_view(VIEW_FAVORITES);
             break;
         case KEY_F(6):
+            switch_to_view(VIEW_INFO);
+            break;
+        case KEY_F(7):
             cleanup();
             printf("ter-music exited gracefully.\n");
             exit(0);
