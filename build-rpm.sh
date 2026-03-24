@@ -88,12 +88,7 @@ detect_version() {
         local cmake_version=$(grep -E "project\(|set\(VERSION" "${SCRIPT_DIR}/CMakeLists.txt" | head -1)
         if [[ $cmake_version =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
             version="${BASH_REMATCH[1]}"
-            log_info "从 CMakeLists.txt 检测到版本: $version"
-        else
-            log_info "无法从 CMakeLists.txt 提取版本，使用默认版本: $version"
         fi
-    else
-        log_info "未找到 CMakeLists.txt，使用默认版本: $version"
     fi
     
     echo "$version"
@@ -157,14 +152,15 @@ make %{?_smp_mflags}
 
 %install
 rm -rf %{buildroot}
+mkdir -p %{buildroot}%{_bindir}
 cd build
-make install DESTDIR=%{buildroot}
+install -m 755 %{name} %{buildroot}%{_bindir}/%{name}
 
 %files
 %{_bindir}/%{name}
 
 %changelog
-* $(date +'%a %b %d %Y') Packager <packager@example.com> - ${version}-1
+* $(LANG=C date +'%a %b %d %Y') Packager <packager@example.com> - ${version}-1
 - Initial package
 EOF
     
@@ -176,15 +172,16 @@ create_source_tarball() {
     local tarball_name="${PROJECT_NAME}-${version}.tar.gz"
     local tarball_path="${TEMP_DIR}/SOURCES/${tarball_name}"
     local source_dir="${TEMP_DIR}/source_package"
+    local package_dir="${source_dir}/${PROJECT_NAME}-${version}"
     
     log_info "创建源码压缩包..."
     
     rm -rf "$source_dir"
-    mkdir -p "$source_dir"
+    mkdir -p "$package_dir"
     
-    cp -r "${SCRIPT_DIR}"/{src,include,CMakeLists.txt,README.md,LICENSE} "$source_dir/" 2>/dev/null || true
+    cp -r "${SCRIPT_DIR}"/{src,include,CMakeLists.txt,README.md,LICENSE} "$package_dir/" 2>/dev/null || true
     
-    tar -czf "$tarball_path" -C "$source_dir" .
+    tar -czf "$tarball_path" -C "$source_dir" "${PROJECT_NAME}-${version}"
     
     log_info "源码压缩包已创建: $tarball_path"
 }
@@ -210,16 +207,18 @@ collect_results() {
     
     local found_rpms=0
     
+    # 收集二进制 RPM 包
+    find "${TEMP_DIR}/RPMS" -name "*.rpm" -type f -exec cp {} "${OUTPUT_DIR}/" \;
     find "${TEMP_DIR}/RPMS" -name "*.rpm" -type f | while read -r rpm_file; do
         local filename=$(basename "$rpm_file")
-        cp "$rpm_file" "${OUTPUT_DIR}/"
         log_info "已复制: $filename -> ${OUTPUT_DIR}/"
         ((found_rpms++))
     done
     
+    # 收集源码 RPM 包
+    find "${TEMP_DIR}/SRPMS" -name "*.rpm" -type f -exec cp {} "${OUTPUT_DIR}/" \;
     find "${TEMP_DIR}/SRPMS" -name "*.rpm" -type f | while read -r rpm_file; do
         local filename=$(basename "$rpm_file")
-        cp "$rpm_file" "${OUTPUT_DIR}/"
         log_info "已复制: $filename -> ${OUTPUT_DIR}/"
         ((found_rpms++))
     done
@@ -290,6 +289,11 @@ main() {
     
     if [ "$version" = "$DEFAULT_VERSION" ]; then
         version=$(detect_version)
+        if [ "$version" != "$DEFAULT_VERSION" ]; then
+            log_info "从 CMakeLists.txt 检测到版本: $version"
+        else
+            log_info "无法从 CMakeLists.txt 提取版本，使用默认版本: $version"
+        fi
     else
         log_info "使用指定版本: $version"
     fi
