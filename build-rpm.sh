@@ -123,7 +123,7 @@ Source0:        %{name}-%{version}.tar.gz
 BuildRequires:  gcc, make, cmake, pkg-config
 BuildRequires:  ffmpeg-free-devel, alsa-lib-devel, ncurses-devel
 
-Requires:       ffmpeg-free-libs, alsa-lib, ncurses-libs
+Requires:       libavcodec-free, libavformat-free, libavutil-free, libswresample-free, alsa-lib, ncurses-libs
 
 %description
 Ter-Music is a lightweight terminal-based music player for Linux systems.
