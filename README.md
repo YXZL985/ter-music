@@ -41,7 +41,7 @@ Ter-Music 遵循**简约、高效、原生**的设计理念：
 | 🎨 **美观的 TUI** | 分栏布局，彩色界面，支持终端大小自适应 |
 | 🌍 **UTF-8 中文支持** | 完美支持 UTF-8 编码，正确显示中文歌曲信息 |
 | 🔄 **持久化存储** | 配置、收藏夹、播放历史自动保存，程序重启后恢复 |
-| 🎯 **多视图切换**：通过 F1-F6 功能键快速切换设置、历史、播放列表等视图 |
+| 🎯 **多视图切换**：通过 F2-F7 功能键快速切换设置、历史、播放列表等视图 |
 | ⚡ **响应式 UI**：100 FPS 刷新率，进度条流畅更新 |
 | 🔧 **CMake 构建**：现代化构建系统，跨平台兼容性好 |
 | 🔊 **ALSA 音频后端**：稳定的低延迟音频输出 |
@@ -221,6 +221,52 @@ rm -rf build
 ```
 解决：安装 ffmpeg-devel（Fedora）或 libavcodec-dev libavformat-dev...（Ubuntu）
 ```
+
+### 4.9 构建脚本使用方法
+
+Ter-Music 提供了两个构建脚本，用于创建不同格式的可执行文件：
+
+#### 4.9.1 AppImage 构建脚本
+
+`build-appimage.sh` 脚本用于将 RPM 包转换为 AppImage 格式，适用于各种 Linux 发行版：
+
+**使用方法：**
+
+```bash
+# 使用默认 RPM 包构建 AppImage
+./build-appimage.sh
+
+# 使用指定的 RPM 包构建 AppImage
+./build-appimage.sh -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm
+
+# 构建后保留临时文件（用于调试）
+./build-appimage.sh --keep-temp
+```
+
+**输出：**
+- AppImage 包将输出到：`build/appimage/`
+
+#### 4.9.2 可移植包构建脚本
+
+`build-portable.sh` 脚本用于将 RPM 包转换为可移植的压缩包格式，包含所有必要的依赖库：
+
+**使用方法：**
+
+```bash
+# 使用默认 RPM 包构建可移植包
+./build-portable.sh
+
+# 使用指定的 RPM 包构建可移植包
+./build-portable.sh -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm
+
+# 构建后保留临时文件（用于调试）
+./build-portable.sh --keep-temp
+```
+
+**输出：**
+- 可移植包将输出到：`build/portable/`
+
+**注意：** 这两个脚本都需要先运行 `build-rpm.sh` 生成 RPM 包，或者使用 `-r` 选项指定已有的 RPM 包路径。
 
 ## 5. 使用方法
 
