@@ -130,12 +130,19 @@ void toggle_loop_mode() {
  */
 void *play_audio_thread(void *arg) {
     int index = *((int *)arg);
-    free(arg); // 释放内存
-    if (index < 0 || index >= g_playlist.count) {
+    free(arg);
+    
+    pthread_mutex_lock(&g_play_mutex);
+    if (index < 0 || index >= g_playlist.count || !g_play_thread_running) {
+        pthread_mutex_unlock(&g_play_mutex);
         return NULL;
     }
     
-    const char *file_path = g_playlist.tracks[index].path;
+    char file_path[MAX_PATH_LEN];
+    strncpy(file_path, g_playlist.tracks[index].path, MAX_PATH_LEN - 1);
+    file_path[MAX_PATH_LEN - 1] = '\0';
+    
+    pthread_mutex_unlock(&g_play_mutex);
 
     AVFormatContext *fmt_ctx = NULL;
     if (avformat_open_input(&fmt_ctx, file_path, NULL, NULL) != 0) {
@@ -632,38 +639,45 @@ void play_audio(int index) {
         return;
     }
     
-    pthread_mutex_lock(&g_play_mutex);  // 新增：加锁保护
+    pthread_mutex_lock(&g_play_mutex);
     
     if (g_play_state == PLAY_STATE_PLAYING && g_current_play_index == index) {
-        pthread_mutex_unlock(&g_play_mutex);  // 新增：解锁
+        pthread_mutex_unlock(&g_play_mutex);
         return;
     }
     
-    // 停止当前播放
-    if (g_play_thread_running) {
+    int was_running = g_play_thread_running;
+    
+    if (was_running) {
         g_play_thread_running = 0;
-        g_seek_request = 0;  // 新增：清除跳转请求
+        g_seek_request = 0;
         
-        if (audio_handle) {
-            SAFE_PCM_CALL(snd_pcm_drop, audio_handle);
-            snd_pcm_close(audio_handle);
-            audio_handle = NULL;
-        }
+        pthread_mutex_unlock(&g_play_mutex);
         
-        pthread_mutex_unlock(&g_play_mutex);  // 新增：在 join 前解锁
         pthread_join(g_play_thread, NULL);
-        pthread_mutex_lock(&g_play_mutex);  // 新增：重新加锁
+        
+        pthread_mutex_lock(&g_play_mutex);
     }
     
     g_current_play_index = index;
     g_selected_index = index;
     g_play_thread_running = 1;
     
-    pthread_mutex_unlock(&g_play_mutex);  // 新增：解锁
+    pthread_mutex_unlock(&g_play_mutex);
     
     int *index_ptr = malloc(sizeof(int));
+    if (!index_ptr) {
+        return;
+    }
     *index_ptr = index;
-    pthread_create(&g_play_thread, NULL, play_audio_thread, index_ptr);
+    
+    if (pthread_create(&g_play_thread, NULL, play_audio_thread, index_ptr) != 0) {
+        free(index_ptr);
+        pthread_mutex_lock(&g_play_mutex);
+        g_play_thread_running = 0;
+        pthread_mutex_unlock(&g_play_mutex);
+        return;
+    }
     
     char msg[64];
     snprintf(msg, sizeof(msg), "Playing: %s - %s",
@@ -671,7 +685,6 @@ void play_audio(int index) {
     update_controls_status(msg);
     render_playlist_content();
     
-    // 加载歌词文件
     load_lyrics(g_playlist.tracks[index].path);
     render_lyrics();
 }
