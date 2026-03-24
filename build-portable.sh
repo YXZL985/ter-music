@@ -1,0 +1,300 @@
+#!/bin/bash
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_NAME="ter-music"
+OUTPUT_DIR="${SCRIPT_DIR}/build/portable"
+TEMP_DIR="${SCRIPT_DIR}/.portable_temp"
+
+log_info() {
+    echo "[INFO] $1"
+}
+
+log_error() {
+    echo "[ERROR] $1" >&2
+}
+
+log_clean() {
+    echo "[CLEAN] $1"
+}
+
+show_help() {
+    cat << EOF
+用法: $0 [选项]
+
+将 ter-music RPM 包转换为可移植的压缩包格式
+
+选项:
+    -h, --help          显示此帮助信息
+    -r, --rpm FILE      指定要转换的RPM包文件
+    -k, --keep-temp     保留临时构建文件（用于调试）
+
+示例:
+    $0                                          使用默认RPM包构建可移植包
+    $0 -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm  使用指定RPM包构建
+    $0 --keep-temp                              构建后保留临时文件
+
+输出:
+    可移植包将输出到: ${OUTPUT_DIR}/
+
+EOF
+}
+
+check_dependencies() {
+    log_info "检查构建依赖..."
+    
+    local missing_deps=()
+    
+    if ! command -v rpm2cpio &> /dev/null; then
+        missing_deps+=("rpm2cpio")
+    fi
+    
+    if ! command -v cpio &> /dev/null; then
+        missing_deps+=("cpio")
+    fi
+    
+    if ! command -v tar &> /dev/null; then
+        missing_deps+=("tar")
+    fi
+    
+    if [ ${#missing_deps[@]} -gt 0 ]; then
+        log_error "缺少以下构建工具:"
+        for dep in "${missing_deps[@]}"; do
+            echo "  - $dep"
+        done
+        echo ""
+        log_error "请使用以下命令安装缺失的工具:"
+        echo "  sudo dnf install ${missing_deps[*]}"
+        exit 1
+    fi
+    
+    log_info "所有构建依赖已满足"
+}
+
+find_rpm_package() {
+    local rpm_file="$1"
+    
+    if [ -z "$rpm_file" ]; then
+        rpm_file=$(find "${SCRIPT_DIR}/build/rpm" -name "${PROJECT_NAME}-*.x86_64.rpm" -type f | grep -v debuginfo | grep -v debugsource | head -1)
+    fi
+    
+    if [ -z "$rpm_file" ] || [ ! -f "$rpm_file" ]; then
+        log_error "未找到RPM包文件"
+        log_error "请先运行 ./build-rpm.sh 构建RPM包，或使用 -r 选项指定RPM包路径"
+        exit 1
+    fi
+    
+    echo "$rpm_file"
+}
+
+extract_rpm() {
+    local rpm_file="$1"
+    local extract_dir="$2"
+    
+    log_info "解压RPM包: $rpm_file"
+    
+    mkdir -p "${extract_dir}"
+    cd "${extract_dir}"
+    
+    rpm2cpio "$rpm_file" | cpio -idmv
+    
+    log_info "RPM包解压完成"
+}
+
+copy_dependencies() {
+    local extract_dir="$1"
+    local portable_dir="$2"
+    
+    log_info "复制依赖库..."
+    
+    local binary="${extract_dir}/usr/bin/${PROJECT_NAME}"
+    local lib_dir="${portable_dir}/lib"
+    
+    mkdir -p "${lib_dir}"
+    
+    if [ ! -f "$binary" ]; then
+        log_error "未找到二进制文件: $binary"
+        exit 1
+    fi
+    
+    local deps=$(ldd "$binary" | grep -E "^\s+/" | awk '{print $3}' | sort -u)
+    
+    for dep in $deps; do
+        if [ -f "$dep" ]; then
+            local dep_name=$(basename "$dep")
+            cp "$dep" "${lib_dir}/"
+            log_info "  复制: $dep_name"
+        fi
+    done
+    
+    log_info "依赖库复制完成"
+}
+
+create_portable_package() {
+    local extract_dir="$1"
+    local portable_dir="$2"
+    local version="$3"
+    
+    log_info "创建可移植包结构..."
+    
+    mkdir -p "${portable_dir}"/{bin,lib,share}
+    
+    cp "${extract_dir}/usr/bin/${PROJECT_NAME}" "${portable_dir}/bin/"
+    
+    cat > "${portable_dir}/run.sh" << 'EOF'
+#!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="${SCRIPT_DIR}/bin:${PATH}"
+export LD_LIBRARY_PATH="${SCRIPT_DIR}/lib:${LD_LIBRARY_PATH}"
+
+exec "${SCRIPT_DIR}/bin/ter-music" "$@"
+EOF
+    
+    chmod +x "${portable_dir}/run.sh"
+    
+    cat > "${portable_dir}/README.txt" << EOF
+Ter-Music 可移植包
+===================
+
+版本: ${version}
+
+使用方法:
+1. 解压此压缩包
+2. 进入解压后的目录
+3. 运行: ./run.sh
+
+或者直接运行:
+  ./run.sh --help
+
+注意:
+- 此包包含所有必要的依赖库
+- 可以在任何兼容的Linux系统上运行
+- 不需要安装任何依赖
+
+特性:
+- 支持多种音频格式 (MP3, WAV, FLAC, OGG, M4A, AAC, WMA, APE, OPUS)
+- LRC歌词同步显示
+- 多种播放模式 (顺序、单曲循环、列表循环、随机)
+- 播放列表管理
+- 收藏功能
+- 播放历史
+- 自定义颜色主题
+- 键盘快捷键
+- 实时进度条
+
+项目主页: https://gitee.com/yanxi-bamboo-forest/ter-music
+EOF
+    
+    log_info "可移植包结构创建完成"
+}
+
+create_tarball() {
+    local portable_dir="$1"
+    local version="$2"
+    local output_file="$3"
+    
+    log_info "创建压缩包..."
+    
+    local package_name="${PROJECT_NAME}-${version}-portable-x86_64"
+    local tarball_name="${package_name}.tar.gz"
+    local tarball_path="${OUTPUT_DIR}/${tarball_name}"
+    
+    cd "$(dirname "${portable_dir}")"
+    tar -czf "${tarball_path}" "$(basename "${portable_dir}")"
+    cd - > /dev/null
+    
+    log_info "压缩包已创建: ${tarball_path}"
+    echo "${tarball_path}"
+}
+
+cleanup() {
+    local keep_temp="$1"
+    
+    if [ "$keep_temp" != "true" ]; then
+        log_clean "清理临时文件..."
+        rm -rf "${TEMP_DIR}"
+        log_clean "临时文件已清理"
+    else
+        log_info "保留临时文件: ${TEMP_DIR}"
+    fi
+}
+
+show_summary() {
+    local tarball_path="$1"
+    
+    echo ""
+    echo "=========================================="
+    echo "可移植包构建完成！"
+    echo "=========================================="
+    echo ""
+    echo "输出目录: ${OUTPUT_DIR}/"
+    echo ""
+    echo "生成的可移植包:"
+    ls -lh "$tarball_path" 2>/dev/null || echo "  未找到可移植包"
+    echo ""
+    echo "使用方法:"
+    echo "  1. 解压: tar -xzf ${tarball_path}"
+    echo "  2. 进入目录: cd ${PROJECT_NAME}-*-portable-x86_64"
+    echo "  3. 运行: ./run.sh"
+    echo ""
+}
+
+main() {
+    local rpm_file=""
+    local keep_temp="false"
+    
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            -r|--rpm)
+                rpm_file="$2"
+                shift 2
+                ;;
+            -k|--keep-temp)
+                keep_temp="true"
+                shift
+                ;;
+            *)
+                log_error "未知选项: $1"
+                show_help
+                exit 1
+                ;;
+        esac
+    done
+    
+    echo "=========================================="
+    echo "Ter-Music RPM 到可移植包转换脚本"
+    echo "=========================================="
+    echo ""
+    
+    check_dependencies
+    
+    rpm_file=$(find_rpm_package "$rpm_file")
+    log_info "使用RPM包: $rpm_file"
+    
+    local version=$(basename "$rpm_file" | sed -E "s/${PROJECT_NAME}-([0-9]+\.[0-9]+\.[0-9]+).*/\1/")
+    log_info "版本: $version"
+    
+    mkdir -p "${OUTPUT_DIR}"
+    
+    rm -rf "${TEMP_DIR}"
+    mkdir -p "${TEMP_DIR}"
+    
+    local extract_dir="${TEMP_DIR}/rpm_extract"
+    local portable_dir="${TEMP_DIR}/${PROJECT_NAME}-portable"
+    
+    extract_rpm "$rpm_file" "$extract_dir"
+    copy_dependencies "$extract_dir" "$portable_dir"
+    create_portable_package "$extract_dir" "$portable_dir" "$version"
+    
+    local tarball_path=$(create_tarball "$portable_dir" "$version")
+    
+    cleanup "$keep_temp"
+    show_summary "$tarball_path"
+}
+
+main "$@"

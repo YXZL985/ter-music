@@ -44,3 +44,5 @@ oadoc/
 .trae
 
 .rpmbuild_temp/*
+.appimagetool/*
+squashfs-root/*

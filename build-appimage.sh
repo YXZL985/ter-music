@@ -1,0 +1,384 @@
+#!/bin/bash
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_NAME="ter-music"
+OUTPUT_DIR="${SCRIPT_DIR}/build/appimage"
+TEMP_DIR="${SCRIPT_DIR}/.appimage_temp"
+APPIMAGETOOL_DIR="${SCRIPT_DIR}/.appimagetool"
+APPIMAGETOOL_VERSION="continuous"
+
+log_info() {
+    echo "[INFO] $1"
+}
+
+log_error() {
+    echo "[ERROR] $1" >&2
+}
+
+log_clean() {
+    echo "[CLEAN] $1"
+}
+
+show_help() {
+    cat << EOF
+用法: $0 [选项]
+
+将 ter-music RPM 包转换为 AppImage 格式
+
+选项:
+    -h, --help          显示此帮助信息
+    -r, --rpm FILE      指定要转换的RPM包文件
+    -k, --keep-temp     保留临时构建文件（用于调试）
+
+示例:
+    $0                                          使用默认RPM包构建AppImage
+    $0 -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm  使用指定RPM包构建
+    $0 --keep-temp                              构建后保留临时文件
+
+输出:
+    AppImage 包将输出到: ${OUTPUT_DIR}/
+
+EOF
+}
+
+check_dependencies() {
+    log_info "检查构建依赖..."
+    
+    local missing_deps=()
+    
+    if ! command -v unsquashfs &> /dev/null; then
+        missing_deps+=("squashfs-tools")
+    fi
+    
+    if ! command -v rpm2cpio &> /dev/null; then
+        missing_deps+=("rpm2cpio")
+    fi
+    
+    if ! command -v cpio &> /dev/null; then
+        missing_deps+=("cpio")
+    fi
+    
+    if [ ${#missing_deps[@]} -gt 0 ]; then
+        log_error "缺少以下构建工具:"
+        for dep in "${missing_deps[@]}"; do
+            echo "  - $dep"
+        done
+        echo ""
+        log_error "请使用以下命令安装缺失的工具:"
+        echo "  sudo dnf install ${missing_deps[*]}"
+        exit 1
+    fi
+    
+    log_info "所有构建依赖已满足"
+}
+
+download_appimagetool() {
+    local appimagetool_dir="${APPIMAGETOOL_DIR}"
+    
+    if [ ! -f "${appimagetool_dir}/appimagetool" ]; then
+        log_info "下载 appimagetool..."
+        mkdir -p "${appimagetool_dir}"
+        
+        local appimagetool_url="https://github.com/AppImage/AppImageKit/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-x86_64.AppImage"
+        
+        if command -v wget &> /dev/null; then
+            wget "${appimagetool_url}" -O "${appimagetool_dir}/appimagetool"
+        elif command -v curl &> /dev/null; then
+            curl -L "${appimagetool_url}" -o "${appimagetool_dir}/appimagetool"
+        else
+            log_error "需要 wget 或 curl 来下载 appimagetool"
+            exit 1
+        fi
+        
+        chmod +x "${appimagetool_dir}/appimagetool"
+        log_info "appimagetool 下载完成"
+    fi
+}
+
+find_rpm_package() {
+    local rpm_file="$1"
+    
+    if [ -z "$rpm_file" ]; then
+        rpm_file=$(find "${SCRIPT_DIR}/build/rpm" -name "${PROJECT_NAME}-*.x86_64.rpm" -type f | grep -v debuginfo | grep -v debugsource | head -1)
+    fi
+    
+    if [ -z "$rpm_file" ] || [ ! -f "$rpm_file" ]; then
+        log_error "未找到RPM包文件"
+        log_error "请先运行 ./build-rpm.sh 构建RPM包，或使用 -r 选项指定RPM包路径"
+        exit 1
+    fi
+    
+    echo "$rpm_file"
+}
+
+extract_rpm() {
+    local rpm_file="$1"
+    local extract_dir="$2"
+    
+    log_info "解压RPM包: $rpm_file"
+    
+    mkdir -p "${extract_dir}"
+    cd "${extract_dir}"
+    
+    rpm2cpio "$rpm_file" | cpio -idmv
+    
+    log_info "RPM包解压完成"
+}
+
+create_appdir() {
+    local extract_dir="$1"
+    local appdir="$2"
+    local version="$3"
+    
+    log_info "创建 AppDir 结构..."
+    
+    mkdir -p "${appdir}"/{usr/bin,usr/lib,usr/share/applications,usr/share/icons/hicolor/256x256/apps}
+    
+    cp "${extract_dir}/usr/bin/${PROJECT_NAME}" "${appdir}/usr/bin/"
+    
+    if [ -d "${extract_dir}/usr/lib" ]; then
+        cp -r "${extract_dir}/usr/lib"/* "${appdir}/usr/lib/" 2>/dev/null || true
+    fi
+    
+    cat > "${appdir}/AppRun" << 'EOF'
+#!/bin/bash
+SELF=$(readlink -f "$0")
+HERE=${SELF%/*}
+export PATH="${HERE}/usr/bin:${PATH}"
+export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+
+exec "${HERE}/usr/bin/ter-music" "$@"
+EOF
+    
+    chmod +x "${appdir}/AppRun"
+    
+    cat > "${appdir}/${PROJECT_NAME}.desktop" << EOF
+[Desktop Entry]
+Name=Ter-Music
+Comment=A terminal-based music player with ncurses interface
+Exec=ter-music
+Icon=ter-music
+Terminal=true
+Type=Application
+Categories=Audio;AudioVideo;Player;
+Keywords=Music;Player;Terminal;Console;
+EOF
+    
+    cat > "${appdir}/AppInfo.xml" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<AppImage xmlns="http://www.appimage.org/1.0">
+  <id>ter-music</id>
+  <name>Ter-Music</name>
+  <summary>A terminal-based music player with ncurses interface</summary>
+  <description>
+    <p>Ter-Music is a lightweight terminal-based music player for Linux systems.</p>
+    <p>It uses FFmpeg for audio decoding, ALSA for audio output, and ncursesw for a beautiful text user interface.</p>
+  </description>
+  <version>${version}</version>
+  <release>1</release>
+  <categories>
+    <category>Audio</category>
+    <category>AudioVideo</category>
+    <category>Player</category>
+  </categories>
+  <keywords>
+    <keyword>Music</keyword>
+    <keyword>Player</keyword>
+    <keyword>Terminal</keyword>
+    <keyword>Console</keyword>
+  </keywords>
+  <url type="homepage">https://gitee.com/yanxi-bamboo-forest/ter-music</url>
+  <url type="bugtracker">https://gitee.com/yanxi-bamboo-forest/ter-music/issues</url>
+  <url type="help">https://gitee.com/yanxi-bamboo-forest/ter-music</url>
+  <project_license>GPL-3.0-or-later</project_license>
+  <developer_name>Yanxi Bamboo Forest</developer_name>
+</AppImage>
+EOF
+    
+    log_info "AppDir 结构创建完成"
+}
+
+copy_dependencies() {
+    local appdir="$1"
+    
+    log_info "复制依赖库..."
+    
+    local binary="${appdir}/usr/bin/${PROJECT_NAME}"
+    local lib_dir="${appdir}/usr/lib"
+    
+    if [ ! -f "$binary" ]; then
+        log_error "未找到二进制文件: $binary"
+        exit 1
+    fi
+    
+    local deps=$(ldd "$binary" | grep -E "^\s+/" | awk '{print $3}' | sort -u)
+    
+    for dep in $deps; do
+        if [ -f "$dep" ]; then
+            local dep_name=$(basename "$dep")
+            if [ ! -f "${lib_dir}/${dep_name}" ]; then
+                cp "$dep" "${lib_dir}/"
+                log_info "  复制: $dep_name"
+            fi
+        fi
+    done
+    
+    log_info "依赖库复制完成"
+}
+
+create_icon() {
+    local appdir="$1"
+    
+    log_info "创建应用图标..."
+    
+    local icon_file="${appdir}/ter-music.png"
+    
+    if [ ! -f "$icon_file" ]; then
+        convert -size 256x256 xc:transparent \
+            -fill '#2ECC71' \
+            -draw 'circle 128,128 128,20' \
+            -fill white \
+            -font DejaVu-Sans-Bold \
+            -pointsize 72 \
+            -gravity center \
+            -annotate +0+0 'T' \
+            "$icon_file" 2>/dev/null || \
+            echo "警告: 无法创建图标，需要 ImageMagick"
+    fi
+    
+    cp "$icon_file" "${appdir}/.DirIcon" 2>/dev/null || true
+    cp "$icon_file" "${appdir}/usr/share/icons/hicolor/256x256/apps/ter-music.png" 2>/dev/null || true
+    
+    log_info "应用图标创建完成"
+}
+
+build_appimage() {
+    local appdir="$1"
+    local version="$2"
+    local output_file="$3"
+    
+    log_info "构建 AppImage..."
+    
+    local appimagetool_dir="${APPIMAGETOOL_DIR}"
+    local appimagetool_binary="${appimagetool_dir}/squashfs-root/usr/bin/appimagetool"
+    
+    if [ ! -f "$appimagetool_binary" ]; then
+        download_appimagetool
+        chmod +x "${appimagetool_dir}/appimagetool"
+        cd "${appimagetool_dir}"
+        ./appimagetool --appimage-extract
+        cd - > /dev/null
+    fi
+    
+    export ARCH=x86_64
+    
+    "$appimagetool_binary" --no-appstream "${appdir}" "${output_file}"
+    
+    chmod +x "${output_file}"
+    
+    log_info "AppImage 构建完成"
+}
+
+cleanup() {
+    local keep_temp="$1"
+    
+    if [ "$keep_temp" != "true" ]; then
+        log_clean "清理临时文件..."
+        rm -rf "${TEMP_DIR}"
+        log_clean "临时文件已清理"
+    else
+        log_info "保留临时文件: ${TEMP_DIR}"
+    fi
+}
+
+show_summary() {
+    local output_file="$1"
+    
+    echo ""
+    echo "=========================================="
+    echo "AppImage 构建完成！"
+    echo "=========================================="
+    echo ""
+    echo "输出目录: ${OUTPUT_DIR}/"
+    echo ""
+    echo "生成的 AppImage 包:"
+    ls -lh "$output_file" 2>/dev/null || echo "  未找到 AppImage 包"
+    echo ""
+    echo "使用方法:"
+    echo "  chmod +x ${output_file}"
+    echo "  ./${output_file}"
+    echo ""
+    echo "或者直接运行:"
+    echo "  ${output_file}"
+    echo ""
+}
+
+main() {
+    local rpm_file=""
+    local keep_temp="false"
+    
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            -r|--rpm)
+                rpm_file="$2"
+                shift 2
+                ;;
+            -k|--keep-temp)
+                keep_temp="true"
+                shift
+                ;;
+            *)
+                log_error "未知选项: $1"
+                show_help
+                exit 1
+                ;;
+        esac
+    done
+    
+    echo "=========================================="
+    echo "Ter-Music RPM 到 AppImage 转换脚本"
+    echo "=========================================="
+    echo ""
+    
+    check_dependencies
+    
+    rpm_file=$(find_rpm_package "$rpm_file")
+    log_info "使用RPM包: $rpm_file"
+    
+    local version=$(basename "$rpm_file" | sed -E "s/${PROJECT_NAME}-([0-9]+\.[0-9]+\.[0-9]+).*/\1/")
+    log_info "版本: $version"
+    
+    prepare_directories
+    
+    local extract_dir="${TEMP_DIR}/rpm_extract"
+    local appdir="${TEMP_DIR}/AppDir"
+    local output_file="${OUTPUT_DIR}/${PROJECT_NAME}-${version}-x86_64.AppImage"
+    
+    extract_rpm "$rpm_file" "$extract_dir"
+    create_appdir "$extract_dir" "$appdir" "$version"
+    copy_dependencies "$appdir"
+    create_icon "$appdir"
+    build_appimage "$appdir" "$version" "$output_file"
+    
+    cleanup "$keep_temp"
+    show_summary "$output_file"
+}
+
+prepare_directories() {
+    log_info "准备构建目录..."
+    
+    mkdir -p "${OUTPUT_DIR}"
+    
+    rm -rf "${TEMP_DIR}"
+    mkdir -p "${TEMP_DIR}"
+    
+    log_clean "已清理并创建构建目录"
+}
+
+main "$@"
