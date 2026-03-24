@@ -192,20 +192,30 @@ EOF
 create_tarball() {
     local portable_dir="$1"
     local version="$2"
-    local output_file="$3"
-    
-    log_info "创建压缩包..."
     
     local package_name="${PROJECT_NAME}-${version}-portable-x86_64"
     local tarball_name="${package_name}.tar.gz"
     local tarball_path="${OUTPUT_DIR}/${tarball_name}"
     
-    cd "$(dirname "${portable_dir}")"
-    tar -czf "${tarball_path}" "$(basename "${portable_dir}")"
-    cd - > /dev/null
+    # 确保输出目录存在
+    mkdir -p "${OUTPUT_DIR}"
     
-    log_info "压缩包已创建: ${tarball_path}"
-    echo "${tarball_path}"
+    local original_dir=$(pwd)
+    cd "$(dirname "${portable_dir}")"
+    
+    if [ -d "$(basename "${portable_dir}")" ]; then
+        if tar -czf "${tarball_path}" "$(basename "${portable_dir}")"; then
+            cd "$original_dir"
+            echo "${tarball_path}"
+            return 0
+        else
+            cd "$original_dir"
+            return 1
+        fi
+    else
+        cd "$original_dir"
+        return 1
+    fi
 }
 
 cleanup() {
@@ -288,13 +298,25 @@ main() {
     local portable_dir="${TEMP_DIR}/${PROJECT_NAME}-portable"
     
     extract_rpm "$rpm_file" "$extract_dir"
+    
+    # 创建可移植目录
+    mkdir -p "${portable_dir}"
+    
     copy_dependencies "$extract_dir" "$portable_dir"
     create_portable_package "$extract_dir" "$portable_dir" "$version"
     
+    log_info "创建压缩包..."
     local tarball_path=$(create_tarball "$portable_dir" "$version")
     
-    cleanup "$keep_temp"
-    show_summary "$tarball_path"
+    if [ -n "$tarball_path" ] && [ -f "$tarball_path" ]; then
+        log_info "压缩包已创建: ${tarball_path}"
+        cleanup "$keep_temp"
+        show_summary "$tarball_path"
+    else
+        log_error "可移植包构建失败，跳过清理和总结步骤"
+        cleanup "$keep_temp"
+        exit 1
+    fi
 }
 
 main "$@"

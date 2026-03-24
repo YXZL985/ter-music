@@ -274,11 +274,14 @@ build_appimage() {
     
     export ARCH=x86_64
     
-    "$appimagetool_binary" --no-appstream "${appdir}" "${output_file}"
-    
-    chmod +x "${output_file}"
-    
-    log_info "AppImage 构建完成"
+    if "$appimagetool_binary" --no-appstream "${appdir}" "${output_file}"; then
+        chmod +x "${output_file}"
+        log_info "AppImage 构建完成"
+        return 0
+    else
+        log_error "AppImage 构建失败"
+        return 1
+    fi
 }
 
 cleanup() {
@@ -364,10 +367,15 @@ main() {
     create_appdir "$extract_dir" "$appdir" "$version"
     copy_dependencies "$appdir"
     create_icon "$appdir"
-    build_appimage "$appdir" "$version" "$output_file"
     
-    cleanup "$keep_temp"
-    show_summary "$output_file"
+    if build_appimage "$appdir" "$version" "$output_file"; then
+        cleanup "$keep_temp"
+        show_summary "$output_file"
+    else
+        log_error "AppImage 构建失败，跳过清理和总结步骤"
+        cleanup "$keep_temp"
+        exit 1
+    fi
 }
 
 prepare_directories() {

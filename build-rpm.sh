@@ -191,15 +191,20 @@ build_rpm() {
     
     export RPM_TOPDIR="${TEMP_DIR}"
     
-    rpmbuild -ba "${TEMP_DIR}/SPECS/${PROJECT_NAME}.spec" \
+    # 执行 rpmbuild 命令并检查退出状态
+    if rpmbuild -ba "${TEMP_DIR}/SPECS/${PROJECT_NAME}.spec" \
         --define "_topdir ${TEMP_DIR}" \
         --define "_sourcedir ${TEMP_DIR}/SOURCES" \
         --define "_specdir ${TEMP_DIR}/SPECS" \
         --define "_builddir ${TEMP_DIR}/BUILD" \
         --define "_rpmdir ${TEMP_DIR}/RPMS" \
-        --define "_srcrpmdir ${TEMP_DIR}/SRPMS"
-    
-    log_info "RPM 包构建完成"
+        --define "_srcrpmdir ${TEMP_DIR}/SRPMS"; then
+        log_info "RPM 包构建完成"
+        return 0
+    else
+        log_error "RPM 包构建失败"
+        return 1
+    fi
 }
 
 collect_results() {
@@ -301,10 +306,16 @@ main() {
     prepare_directories
     generate_spec_file "$version"
     create_source_tarball "$version"
-    build_rpm
-    collect_results
-    cleanup "$keep_temp"
-    show_summary
+    
+    if build_rpm; then
+        collect_results
+        cleanup "$keep_temp"
+        show_summary
+    else
+        log_error "构建过程失败，跳过收集结果和清理步骤"
+        cleanup "$keep_temp"
+        exit 1
+    fi
 }
 
 main "$@"
