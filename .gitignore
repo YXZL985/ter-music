@@ -43,4 +43,4 @@ oadoc/
 .lingma/*
 .trae
 
-.rpmbuild_tmp/*
+.rpmbuild_temp/*
