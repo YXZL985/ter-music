@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <errno.h>
+#include <unistd.h>
 
 extern void init_ncurses();
 extern void create_layout();
@@ -69,6 +70,12 @@ static void print_usage(const char *prog_name) {
 int main(int argc, char *argv[]) {
     signal(SIGSEGV, crash_handler);
     signal(SIGABRT, crash_handler);
+    
+    if (!isatty(STDOUT_FILENO)) {
+        fprintf(stderr, "Error: ter-music requires a terminal to run.\n");
+        fprintf(stderr, "Please run ter-music directly in a terminal, not piped to another command.\n");
+        return 1;
+    }
     
     char *open_path = NULL;
     int opt;
