@@ -410,6 +410,9 @@ void *play_audio_thread(void *arg) {
         return NULL;
     }
     
+    // 使用实际得到的输出采样率更新进度跟踪器
+    progress_tracker_set_sample_rate((int)rate);
+    
     // 播放状态设置为播放中
     g_play_state = PLAY_STATE_PLAYING;
     

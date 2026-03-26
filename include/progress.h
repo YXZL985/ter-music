@@ -80,4 +80,10 @@ int progress_tracker_get_percent(int total_duration);
  */
 int progress_tracker_is_ready(void);
 
+/**
+ * 更新采样率（动态切换歌曲时使用）
+ * @param new_sample_rate 新的采样率
+ */
+void progress_tracker_set_sample_rate(int new_sample_rate);
+
 #endif // PROGRESS_H

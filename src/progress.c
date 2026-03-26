@@ -56,28 +56,23 @@ int progress_tracker_get_position_seconds(void) {
     
     int position = 0;
     
-    // 采样率无效时，直接返回 0 作为安全值
-    if (g_tracker.sample_rate <= 0) {
-        pthread_mutex_unlock(&g_tracker.lock);
-        return 0;
-    }
-    
-    // 基于样本数计算位置（主要方法）
-    position = (int)(g_tracker.total_samples_played / g_tracker.sample_rate);
-    
-    // 如果正在播放，用 wall-clock time 进行验证和校正
-    if (g_tracker.is_playing) {
-        uint64_t current_time = get_current_time_us();
-        uint64_t elapsed = current_time - g_tracker.play_start_time_us;
-        elapsed -= g_tracker.pause_accumulated_us;
-        int wallclock_pos = (int)(elapsed / 1000000);
+    if (g_tracker.sample_rate > 0) {
+        position = (int)(g_tracker.total_samples_played / g_tracker.sample_rate);
         
-        // 如果两者差异过大（>5 秒），使用 wallclock 位置进行校正
-        int diff = abs(position - wallclock_pos);
-        if (diff > 5) {
-            // 使用 wall-clock 位置校正样本数，避免跳变
-            g_tracker.total_samples_played = (int64_t)wallclock_pos * g_tracker.sample_rate;
-            position = wallclock_pos;
+        if (g_tracker.is_playing) {
+            uint64_t current_time = get_current_time_us();
+            uint64_t elapsed = current_time - g_tracker.play_start_time_us;
+            elapsed -= g_tracker.pause_accumulated_us;
+            int wallclock_pos = (int)(elapsed / 1000000);
+            
+            int diff = abs(position - wallclock_pos);
+            if (diff > 2) {
+                int64_t correction_samples = (int64_t)wallclock_pos * g_tracker.sample_rate;
+                if (correction_samples > g_tracker.total_samples_played) {
+                    g_tracker.total_samples_played = correction_samples;
+                    position = wallclock_pos;
+                }
+            }
         }
     }
     
@@ -92,18 +87,20 @@ void progress_tracker_seek(int position_seconds) {
         position_seconds = 0;
     }
     
-    // 检查采样率是否有效
-    if (g_tracker.sample_rate <= 0) {
-        pthread_mutex_unlock(&g_tracker.lock);
-        return;
+    if (g_tracker.sample_rate > 0) {
+        g_tracker.total_samples_played = (int64_t)position_seconds * g_tracker.sample_rate;
+        
+        if (g_tracker.is_playing) {
+            uint64_t current_pos_us = (uint64_t)position_seconds * 1000000;
+            uint64_t now = get_current_time_us();
+            if (now >= current_pos_us) {
+                g_tracker.play_start_time_us = now - current_pos_us;
+            } else {
+                g_tracker.play_start_time_us = 0;
+            }
+            g_tracker.pause_accumulated_us = 0;
+        }
     }
-    
-    // 直接设置样本数偏移
-    g_tracker.total_samples_played = (int64_t)position_seconds * g_tracker.sample_rate;
-    
-    // 重置时间基准，确保 wall-clock 跟踪准确
-    g_tracker.play_start_time_us = get_current_time_us();
-    g_tracker.pause_accumulated_us = 0;
     
     pthread_mutex_unlock(&g_tracker.lock);
 }
@@ -179,4 +176,37 @@ int progress_tracker_is_ready(void) {
     int ready = (g_tracker.sample_rate > 0);
     pthread_mutex_unlock(&g_tracker.lock);
     return ready;
+}
+
+void progress_tracker_set_sample_rate(int new_sample_rate) {
+    pthread_mutex_lock(&g_tracker.lock);
+    
+    if (new_sample_rate <= 0) {
+        pthread_mutex_unlock(&g_tracker.lock);
+        return;
+    }
+    
+    if (g_tracker.sample_rate > 0 && g_tracker.total_samples_played > 0) {
+        int position_seconds = (int)(g_tracker.total_samples_played / g_tracker.sample_rate);
+        g_tracker.total_samples_played = (int64_t)position_seconds * new_sample_rate;
+    }
+    
+    g_tracker.sample_rate = new_sample_rate;
+    
+    if (g_tracker.is_playing) {
+        int current_pos_seconds = 0;
+        if (g_tracker.sample_rate > 0) {
+            current_pos_seconds = (int)(g_tracker.total_samples_played / g_tracker.sample_rate);
+        }
+        uint64_t current_pos_us = (uint64_t)current_pos_seconds * 1000000;
+        uint64_t now = get_current_time_us();
+        if (now >= current_pos_us) {
+            g_tracker.play_start_time_us = now - current_pos_us;
+        } else {
+            g_tracker.play_start_time_us = 0;
+        }
+        g_tracker.pause_accumulated_us = 0;
+    }
+    
+    pthread_mutex_unlock(&g_tracker.lock);
 }
