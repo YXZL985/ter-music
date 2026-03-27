@@ -14,12 +14,7 @@ pkg_check_modules(AVCODEC REQUIRED libavcodec)
 pkg_check_modules(AVFORMAT REQUIRED libavformat)
 pkg_check_modules(SWRESAMPLE REQUIRED libswresample)
 pkg_check_modules(AVUTIL REQUIRED libavutil)
-
-# 查找ALSA库
-find_library(ALSA_LIBRARY asound)
-if(NOT ALSA_LIBRARY)
-    message(FATAL_ERROR "ALSA library not found")
-endif()
+pkg_check_modules(PULSE REQUIRED libpulse)
 
 # 查找ncursesw库
 find_library(NCURSESW_LIBRARY NAMES ncursesw)
@@ -45,7 +40,11 @@ add_executable(${PROJECT_NAME}
 )
 
 # 包含头文件目录
-target_include_directories(${PROJECT_NAME} PRIVATE include /usr/include/ffmpeg)
+target_include_directories(${PROJECT_NAME} PRIVATE 
+    include 
+    /usr/include/ffmpeg
+    ${PULSE_INCLUDE_DIRS}
+)
 
 # 链接库
 target_link_libraries(${PROJECT_NAME}
@@ -53,7 +52,7 @@ target_link_libraries(${PROJECT_NAME}
     ${AVFORMAT_LIBRARIES}
     ${SWRESAMPLE_LIBRARIES}
     ${AVUTIL_LIBRARIES}
-    ${ALSA_LIBRARY}
+    ${PULSE_LIBRARIES}
     ${NCURSESW_LIBRARY}
     ${PTHREAD_LIBRARY}
 )
@@ -64,6 +63,7 @@ target_compile_options(${PROJECT_NAME} PRIVATE
     ${AVFORMAT_CFLAGS_OTHER}
     ${SWRESAMPLE_CFLAGS_OTHER}
     ${AVUTIL_CFLAGS_OTHER}
+    ${PULSE_CFLAGS_OTHER}
 )
 
 # 添加预处理器定义

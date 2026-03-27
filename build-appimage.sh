@@ -174,7 +174,7 @@ EOF
   <summary>A terminal-based music player with ncurses interface</summary>
   <description>
     <p>Ter-Music is a lightweight terminal-based music player for Linux systems.</p>
-    <p>It uses FFmpeg for audio decoding, ALSA for audio output, and ncursesw for a beautiful text user interface.</p>
+    <p>It uses FFmpeg for audio decoding, PulseAudio for audio output, and ncursesw for a beautiful text user interface.</p>
   </description>
   <version>${version}</version>
   <release>1</release>

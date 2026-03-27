@@ -86,4 +86,10 @@ int progress_tracker_is_ready(void);
  */
 void progress_tracker_set_sample_rate(int new_sample_rate);
 
+/**
+ * 开始播放，启动wall-clock计时
+ * 在音频设备完全准备好后调用
+ */
+void progress_tracker_start(void);
+
 #endif // PROGRESS_H

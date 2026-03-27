@@ -118,7 +118,7 @@ cd ter-music-portable
 - `cmake`
 - `pkg-config`
 - `ffmpeg-free-devel`
-- `alsa-lib-devel`
+- `libpulse-devel`
 - `ncurses-devel`
 
 ### build-appimage.sh 依赖：
@@ -161,7 +161,7 @@ cd ter-music-portable
 ### RPM 包安装失败
 如果遇到依赖问题，请确保系统已安装所有必要的开发包：
 ```bash
-sudo dnf install ffmpeg-free-devel alsa-lib-devel ncurses-devel
+sudo dnf install ffmpeg-free-devel libpulse-devel ncurses-devel
 ```
 
 ### AppImage 无法运行

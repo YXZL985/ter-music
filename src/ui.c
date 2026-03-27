@@ -592,19 +592,99 @@ void prompt_open_folder() {
     echo();
     curs_set(1);
     
+    int max_y, max_x;
+    getmaxyx(win_controls, max_y, max_x);
+    
     mvwprintw(win_controls, 4, 2, "Enter folder path: ");
     wclrtoeol(win_controls);
     wrefresh(win_controls);
     
-    char input_path[MAX_PATH_LEN];
-    wgetnstr(win_controls, input_path, MAX_PATH_LEN - 1);
+    // 获取提示文本后的起始光标位置
+    int prompt_len = 18; // "Enter folder path: " 的长度
+    int start_x = 2 + prompt_len;
     
+    char input_path[MAX_PATH_LEN];
+    memset(input_path, 0, sizeof(input_path));
+    int pos = 0;
+    int ch;
+    
+    flushinp();
+    
+    // BUGFIX 2026.03.26: 手动逐字符读取，正确处理 UTF-8 多字节中文输入
+    // 使用 wgetnstr 无法正确处理 UTF-8 中文输入，改为手动读取
+    while ((ch = getch()) != '\n' && ch != KEY_ENTER && pos < MAX_PATH_LEN - 1) {
+        if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
+            // 处理 Backspace 删除
+            if (pos > 0) {
+                int cx = getcurx(win_controls);
+                int cy = getcury(win_controls);
+                
+                // BUGFIX 2026.03.26: 正确处理 UTF-8 多字节字符删除
+                unsigned char last_c = (unsigned char)input_path[pos - 1];
+                int bytes_to_remove = 1;
+                if (last_c >= 0x80) {
+                    // 多字节 UTF-8 字符，需要回退到序列开头
+                    if ((last_c & 0xE0) == 0xC0) bytes_to_remove = 2;
+                    else if ((last_c & 0xF0) == 0xE0) bytes_to_remove = 3;
+                    else if ((last_c & 0xF8) == 0xF0) bytes_to_remove = 4;
+                    else if ((last_c & 0xC0) == 0x80) {
+                        //  continuation byte，继续向前找开头
+                        bytes_to_remove = 2;
+                        while (pos - bytes_to_remove >= 0 && 
+                               (unsigned char)input_path[pos - bytes_to_remove] >= 0x80 && 
+                               (unsigned char)input_path[pos - bytes_to_remove] < 0xC0) {
+                            bytes_to_remove++;
+                        }
+                    }
+                    if (bytes_to_remove > pos) bytes_to_remove = pos;
+                    pos -= bytes_to_remove;
+                    
+                    // 中文字符占两列，光标左移两格
+                    if ((last_c & 0xF0) == 0xE0 || (last_c & 0xE0) == 0xC0) {
+                        move(cy, cx - 2);
+                    } else {
+                        move(cy, cx - 1);
+                    }
+                } else {
+                    // ASCII 字符
+                    pos--;
+                    move(cy, cx - 1);
+                }
+                clrtoeol();
+                wrefresh(win_controls);
+            }
+        } else if (ch >= 0x20 && ch <= 0x7E) {
+            // ASCII 字符
+            input_path[pos++] = (char)ch;
+            waddch(win_controls, ch);
+            wrefresh(win_controls);
+        } else if ((ch & 0xC0) == 0x80 || ch >= 0x80) {
+            // UTF-8 多字节字符的后续字节
+            if (pos < MAX_PATH_LEN - 1) {
+                input_path[pos++] = (char)ch;
+                // 只有字节序列开头才需要移动光标
+                if ((ch & 0xE0) == 0xC0 || (ch & 0xF0) == 0xE0) {
+                    waddch(win_controls, ch);
+                    // 中文字符占两列，但终端会自动处理光标移动
+                    wrefresh(win_controls);
+                }
+            }
+        } else {
+            // 其他可打印字符
+            input_path[pos++] = (char)ch;
+            waddch(win_controls, ch);
+            wrefresh(win_controls);
+        }
+    }
+    
+    input_path[pos] = '\0';
     flushinp();
     
     noecho();
     curs_set(0);
     
     mvwprintw(win_controls, 4, 2, "                    "); 
+    wclrtoeol(win_controls);
     wrefresh(win_controls);
 
     if (strlen(input_path) > 0) {

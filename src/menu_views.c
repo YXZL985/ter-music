@@ -1588,36 +1588,73 @@ static void handle_settings_input(int ch) {
                     flushinp();
                     
                     char input_path[MAX_PATH_LEN];
+                    memset(input_path, 0, sizeof(input_path));
                     int pos = 0;
                     int ch;
+                    
+                    // BUGFIX 2026.03.26: 改进 UTF-8 中文输入处理，每次按键后刷新
                     while ((ch = getch()) != '\n' && ch != KEY_ENTER && pos < MAX_PATH_LEN - 1) {
                         if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
+                            // 处理 Backspace 删除
                             if (pos > 0) {
                                 int cx = getcurx(stdscr);
                                 int cy = getcury(stdscr);
-                                unsigned char c = (unsigned char)input_path[pos - 1];
-                                if (c >= 0x80) {
+                                unsigned char last_c = (unsigned char)input_path[pos - 1];
+                                if (last_c >= 0x80) {
+                                    // 多字节 UTF-8 字符，需要回退到序列开头
                                     int bytes_to_remove = 1;
-                                    if ((c & 0xE0) == 0xC0) bytes_to_remove = 2;
-                                    else if ((c & 0xF0) == 0xE0) bytes_to_remove = 3;
-                                    else if ((c & 0xF8) == 0xF0) bytes_to_remove = 4;
-                                    else if ((c & 0xC0) == 0x80) {
+                                    if ((last_c & 0xE0) == 0xC0) bytes_to_remove = 2;
+                                    else if ((last_c & 0xF0) == 0xE0) bytes_to_remove = 3;
+                                    else if ((last_c & 0xF8) == 0xF0) bytes_to_remove = 4;
+                                    else if ((last_c & 0xC0) == 0x80) {
+                                        // continuation byte，继续向前找开头
                                         bytes_to_remove = 2;
-                                        while (pos - bytes_to_remove >= 0 && (unsigned char)input_path[pos - bytes_to_remove] >= 0x80 && (unsigned char)input_path[pos - bytes_to_remove] < 0xC0) {
+                                        while (pos - bytes_to_remove >= 0 && 
+                                               (unsigned char)input_path[pos - bytes_to_remove] >= 0x80 && 
+                                               (unsigned char)input_path[pos - bytes_to_remove] < 0xC0) {
                                             bytes_to_remove++;
                                         }
                                     }
                                     if (bytes_to_remove > pos) bytes_to_remove = pos;
                                     pos -= bytes_to_remove;
-                                    move(cy, cx - 1);
+                                    
+                                    // 根据字符宽度调整光标位置
+                                    if ((last_c & 0xF0) == 0xE0 || (last_c & 0xE0) == 0xC0) {
+                                        // 中文占两列，光标左移两格
+                                        move(cy, cx - 2);
+                                    } else {
+                                        move(cy, cx - 1);
+                                    }
                                 } else {
+                                    // ASCII 字符
                                     pos--;
                                     move(cy, cx - 1);
                                 }
                                 clrtoeol();
+                                // BUGFIX 2026.03.26: 每次删除后刷新，确保光标正确更新
+                                refresh();
+                            }
+                        } else if (ch >= 0x20 && ch <= 0x7E) {
+                            // ASCII 字符
+                            input_path[pos++] = (char)ch;
+                            addch(ch);
+                            // BUGFIX 2026.03.26: 每次按键后刷新，确保显示及时
+                            refresh();
+                        } else if ((ch & 0xC0) == 0x80 || ch >= 0x80) {
+                            // UTF-8 多字节字符
+                            if (pos < MAX_PATH_LEN - 1) {
+                                input_path[pos++] = (char)ch;
+                                // 只有字节序列开头才需要在屏幕显示
+                                if ((ch & 0xE0) == 0xC0 || (ch & 0xF0) == 0xE0) {
+                                    addch(ch);
+                                    refresh();
+                                }
                             }
                         } else {
+                            // 其他可打印字符
                             input_path[pos++] = (char)ch;
+                            addch(ch);
+                            refresh();
                         }
                     }
                     input_path[pos] = '\0';

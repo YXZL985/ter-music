@@ -121,13 +121,13 @@ URL:            https://gitee.com/yanxi-bamboo-forest/ter-music
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  gcc, make, cmake, pkg-config
-BuildRequires:  ffmpeg-free-devel, alsa-lib-devel, ncurses-devel
+BuildRequires:  ffmpeg-free-devel, libpulse-devel, ncurses-devel
 
-Requires:       libavcodec-free, libavformat-free, libavutil-free, libswresample-free, alsa-lib, ncurses-libs
+Requires:       libavcodec-free, libavformat-free, libavutil-free, libswresample-free, pulseaudio-libs, ncurses-libs
 
 %description
 Ter-Music is a lightweight terminal-based music player for Linux systems.
-It uses FFmpeg for audio decoding, ALSA for audio output, and ncursesw
+It uses FFmpeg for audio decoding, PulseAudio for audio output, and ncursesw
 for a beautiful text user interface.
 
 Features:
