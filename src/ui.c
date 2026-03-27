@@ -231,10 +231,14 @@ void create_layout() {
 }
 
 /**
- * 绘制播放列表内容
+ * 渲染播放列表内容
  * 包括歌曲列表和底部状态栏
  */
 void render_playlist_content() {
+    // 空指针检查：避免win_playlist未初始化时崩溃
+    if (!win_playlist) {
+        return;
+    }
     werase(win_playlist); // 清空窗口内容
     box(win_playlist, 0, 0);
     mvwprintw(win_playlist, 0, 2, " Play List ");
@@ -850,22 +854,29 @@ void run_event_loop() {
                     break;
                 case ' ':
                     // 执行当前选中的控件功能
+                    // 使用局部变量保存当前状态，避免在函数调用期间状态被其他线程改变
                     switch(g_current_control_idx) {
                         case 0: // 上一曲
                             prev_track();
                             break;
                         case 1: // 播放/暂停
-                            if (g_play_state == PLAY_STATE_PLAYING) {
-                                pause_audio();
-                            } else if (g_play_state == PLAY_STATE_PAUSED) {
-                                resume_audio();
-                            } else {
-                                // 停止状态，播放当前选中的歌曲
-                                if (g_playlist.is_loaded && g_playlist.count > 0) {
-                                    if (g_current_play_index >= 0) {
-                                        play_audio(g_current_play_index);
-                                    } else {
-                                        play_audio(g_selected_index);
+                            {
+                                // 捕获当前状态快照，确保一致性检查
+                                PlayState current_state = g_play_state;
+                                int is_thread_running = g_play_thread_running;
+                                
+                                if (current_state == PLAY_STATE_PLAYING && is_thread_running) {
+                                    pause_audio();
+                                } else if (current_state == PLAY_STATE_PAUSED && is_thread_running) {
+                                    resume_audio();
+                                } else if (current_state == PLAY_STATE_STOPPED) {
+                                    // 停止状态，播放当前选中的歌曲
+                                    if (g_playlist.is_loaded && g_playlist.count > 0) {
+                                        int target_index = (g_current_play_index >= 0) ? 
+                                                           g_current_play_index : g_selected_index;
+                                        if (target_index >= 0 && target_index < g_playlist.count) {
+                                            play_audio(target_index);
+                                        }
                                     }
                                 }
                             }
@@ -882,7 +893,7 @@ void run_event_loop() {
                         case 5: // 进度条（占位，无操作）
                             break;
                     }
-                    // 刷新UI以反映状态变化
+                    // 刷新 UI 以反映状态变化
                     render_playlist_content();
                     render_controls();
                     break;

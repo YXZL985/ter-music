@@ -65,6 +65,8 @@ char g_default_audio_device[128] = "default";
     } \
 } while(0)
 
+
+
 /**
  * 初始化FFmpeg库
  */
@@ -442,10 +444,15 @@ void *play_audio_thread(void *arg) {
                 g_current_position = g_seek_position;
 
                 // PulseAudio：清空缓冲区，丢弃旧数据避免爆音或延迟
-                if (pa_s && pa_stream_get_state(pa_s) == PA_STREAM_READY) {
-                    pa_stream_flush(pa_s, NULL, NULL);
-                    while (pa_mainloop_iterate(pa_ml, 1, NULL) > 0) {
-                        if (!pa_stream_is_corked(pa_s)) break;
+                // 空指针检查：必须同时检查 pa_s、pa_ml 和 pa_ctx 都有效才能执行操作
+                if (pa_s && pa_ml && pa_ctx) {
+                    // 再次检查流状态，避免多线程竞争导致状态在检查后调用前改变
+                    pa_stream_state_t state = pa_stream_get_state(pa_s);
+                    if (state == PA_STREAM_READY) {
+                        pa_operation *op = pa_stream_flush(pa_s, NULL, NULL);
+                        if (op) {
+                            pa_operation_unref(op);
+                        }
                     }
                 }
 
@@ -658,20 +665,47 @@ void play_audio(int index) {
  * 仅在播放状态下有效
  */
 void pause_audio() {
-    if (g_play_state == PLAY_STATE_PLAYING) {
-        g_play_state = PLAY_STATE_PAUSED;
-        // 暂停PulseAudio流
-        if (pa_s && pa_stream_get_state(pa_s) == PA_STREAM_READY) {
-            pa_stream_cork(pa_s, 1, NULL, NULL);
-            while (pa_mainloop_iterate(pa_ml, 1, NULL) > 0) {
-                if (pa_stream_is_corked(pa_s)) break;
-            }
-        }
-        // 不再调用update_controls_status，避免阻塞
-        // 通知进度跟踪器
-        progress_tracker_on_pause();
-        render_playlist_content();
+    pthread_mutex_lock(&g_play_mutex);
+    
+    // 二次验证：确保仍在播放状态且播放线程运行中
+    if (g_play_state != PLAY_STATE_PLAYING || !g_play_thread_running) {
+        pthread_mutex_unlock(&g_play_mutex);
+        return;
     }
+    
+    // 验证当前播放索引有效
+    if (g_current_play_index < 0 || g_current_play_index >= g_playlist.count) {
+        pthread_mutex_unlock(&g_play_mutex);
+        return;
+    }
+    
+    // 设置暂停状态
+    g_play_state = PLAY_STATE_PAUSED;
+    
+    // PulseAudio 流操作 - 只发起异步请求，不等待完成
+    // PulseAudio mainloop 处理由播放线程在 pa_mainloop_iterate 中完成
+    if (pa_s && pa_ml && pa_ctx) {
+        pa_stream_state_t state = pa_stream_get_state(pa_s);
+        
+        // 只对流处于 READY 状态执行 cork 操作
+        if (state == PA_STREAM_READY) {
+            if (!pa_stream_is_corked(pa_s)) {
+                pa_operation *op = pa_stream_cork(pa_s, 1, NULL, NULL);
+                if (op) {
+                    pa_operation_unref(op);
+                }
+            }
+        } else if (state == PA_STREAM_FAILED || state == PA_STREAM_TERMINATED) {
+            fprintf(stderr, "Pause: stream in invalid state %d\n", state);
+            pa_s = NULL;
+        }
+    }
+    
+    pthread_mutex_unlock(&g_play_mutex);
+    
+    // 通知进度跟踪器（在锁外调用，避免死锁）
+    progress_tracker_on_pause();
+    render_playlist_content();
 }
 
 /**
@@ -679,22 +713,51 @@ void pause_audio() {
  * 仅在暂停状态下有效
  */
 void resume_audio() {
-    if (g_play_state == PLAY_STATE_PAUSED) {
-        g_play_state = PLAY_STATE_PLAYING;
-        /* 恢复 PulseAudio 流 */
-        if (pa_s && pa_stream_get_state(pa_s) == PA_STREAM_READY) {
-            pa_stream_cork(pa_s, 0, NULL, NULL);
-            while (pa_mainloop_iterate(pa_ml, 1, NULL) > 0) {
-                if (!pa_stream_is_corked(pa_s)) break;
-            }
-        }
-        /* 不再调用 update_controls_status，避免阻塞 */
-        /* 通知进度跟踪器 */
-        progress_tracker_on_resume();
-        render_playlist_content();
-        update_progress_bar();   // 新增：确保进度条立刻同步
-        update_lyrics_display(); // 确保歌词从新位置高亮
+    pthread_mutex_lock(&g_play_mutex);
+    
+    // 二次验证：确保仍在暂停状态且播放线程运行中
+    if (g_play_state != PLAY_STATE_PAUSED || !g_play_thread_running) {
+        pthread_mutex_unlock(&g_play_mutex);
+        return;
     }
+    
+    // 验证当前播放索引有效
+    if (g_current_play_index < 0 || g_current_play_index >= g_playlist.count) {
+        pthread_mutex_unlock(&g_play_mutex);
+        return;
+    }
+    
+    // 设置播放状态
+    g_play_state = PLAY_STATE_PLAYING;
+    
+    /* 恢复 PulseAudio 流 - 只发起异步请求，不等待完成
+     * PulseAudio mainloop 处理由播放线程在 pa_mainloop_iterate 中完成
+     */
+    if (pa_s && pa_ml && pa_ctx) {
+        pa_stream_state_t state = pa_stream_get_state(pa_s);
+        
+        // 只对流处于 READY 状态执行 uncork 操作
+        if (state == PA_STREAM_READY) {
+            // 检查流是否已经被 cork（只有 corked 状态才能 uncork）
+            if (pa_stream_is_corked(pa_s)) {
+                pa_operation *op = pa_stream_cork(pa_s, 0, NULL, NULL);
+                if (op) {
+                    pa_operation_unref(op);
+                }
+            }
+        } else if (state == PA_STREAM_FAILED || state == PA_STREAM_TERMINATED) {
+            fprintf(stderr, "Resume: stream in invalid state %d\n", state);
+            pa_s = NULL;
+        }
+    }
+    
+    pthread_mutex_unlock(&g_play_mutex);
+    
+    /* 通知进度跟踪器（在锁外调用，避免死锁） */
+    progress_tracker_on_resume();
+    render_playlist_content();
+    update_progress_bar();   // 确保进度条立刻同步
+    update_lyrics_display(); // 确保歌词从新位置高亮
 }
 
 /**
