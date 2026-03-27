@@ -580,6 +580,10 @@ void update_progress_bar() {
  * 在控制栏底部显示临时消息
  */
 void update_controls_status(const char *msg) {
+    // 空指针检查：避免win_controls未初始化时崩溃
+    if (!win_controls) {
+        return;
+    }
     int h, w;
     getmaxyx(win_controls, h, w);
     mvwprintw(win_controls, h-1, 2, "%s", msg);
@@ -589,6 +593,10 @@ void update_controls_status(const char *msg) {
 }
 
 void prompt_open_folder() {
+    // 空指针检查：避免win_controls未初始化时崩溃
+    if (!win_controls) {
+        return;
+    }
     echo();
     curs_set(1);
     
