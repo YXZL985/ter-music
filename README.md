@@ -110,7 +110,7 @@ Ter-Music 遵循**简约、高效、原生**的设计理念：
 
 ```bash
 sudo dnf install cmake gcc make pkg-config
-sudo dnf install ffmpeg-free-devel libpulse-devel ncurses-devel
+sudo dnf install ffmpeg-free-devel pulseaudio-libs-devel ncurses-devel
 ```
 
 ### 3.3 Ubuntu / Debian / Linux Mint
@@ -209,7 +209,7 @@ rm -rf build
 
 **问题 1：找不到 PulseAudio 库**
 ```
-解决：安装 libpulse-devel（Fedora）或 libpulse-dev（Ubuntu）
+解决：安装 pulseaudio-libs-devel（Fedora）或 libpulse-dev（Ubuntu）
 ```
 
 **问题 2：找不到 ncursesw 库**

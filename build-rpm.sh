@@ -121,7 +121,7 @@ URL:            https://gitee.com/yanxi-bamboo-forest/ter-music
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  gcc, make, cmake, pkg-config
-BuildRequires:  ffmpeg-free-devel, libpulse-devel, ncurses-devel
+BuildRequires:  ffmpeg-free-devel, pulseaudio-libs-devel, ncurses-devel
 
 Requires:       libavcodec-free, libavformat-free, libavutil-free, libswresample-free, pulseaudio-libs, ncurses-libs
 
