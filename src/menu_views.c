@@ -207,6 +207,44 @@ void ensure_config_dir_exists(void) {
 void init_default_config(void) {
     memset(&g_app_config, 0, sizeof(AppConfig));
     
+    const char *xdg_music_home = getenv("XDG_MUSIC_HOME");
+    if (xdg_music_home && xdg_music_home[0] != '\0') {
+        strncpy(g_app_config.default_startup_path, xdg_music_home, MAX_PATH_LEN - 1);
+    } else {
+        const char *home = getenv("HOME");
+        if (home) {
+            struct stat st;
+            char candidate[MAX_PATH_LEN];
+            
+            snprintf(candidate, sizeof(candidate), "%s/Music", home);
+            if (stat(candidate, &st) == 0 && S_ISDIR(st.st_mode)) {
+                strncpy(g_app_config.default_startup_path, candidate, MAX_PATH_LEN - 1);
+            } else {
+                snprintf(candidate, sizeof(candidate), "%s/音乐", home);
+                if (stat(candidate, &st) == 0 && S_ISDIR(st.st_mode)) {
+                    strncpy(g_app_config.default_startup_path, candidate, MAX_PATH_LEN - 1);
+                } else {
+                    snprintf(candidate, sizeof(candidate), "%s/Música", home);
+                    if (stat(candidate, &st) == 0 && S_ISDIR(st.st_mode)) {
+                        strncpy(g_app_config.default_startup_path, candidate, MAX_PATH_LEN - 1);
+                    } else {
+                        snprintf(candidate, sizeof(candidate), "%s/Musique", home);
+                        if (stat(candidate, &st) == 0 && S_ISDIR(st.st_mode)) {
+                            strncpy(g_app_config.default_startup_path, candidate, MAX_PATH_LEN - 1);
+                        } else {
+                            snprintf(candidate, sizeof(candidate), "%s/Musik", home);
+                            if (stat(candidate, &st) == 0 && S_ISDIR(st.st_mode)) {
+                                strncpy(g_app_config.default_startup_path, candidate, MAX_PATH_LEN - 1);
+                            } else {
+                                snprintf(g_app_config.default_startup_path, MAX_PATH_LEN, "%s/Music", home);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
     g_app_config.theme.playlist_fg = COLOR_WHITE;
     g_app_config.theme.playlist_bg = COLOR_BLACK;
     g_app_config.theme.controls_fg = COLOR_YELLOW;
