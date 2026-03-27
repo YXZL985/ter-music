@@ -460,6 +460,13 @@ void *play_audio_thread(void *arg) {
                 snprintf(msg, sizeof(msg), "Seeked to %02d:%02d", g_seek_position / 60, g_seek_position % 60);
                 update_controls_status(msg);
                 
+                // 如果跳转到总时长位置，立即停止播放
+                if (g_seek_position >= g_total_duration) {
+                    pthread_mutex_unlock(&g_seek_mutex);
+                    g_play_thread_running = 0;
+                    break;
+                }
+                
                 // 重要：跳过本次循环，避免处理旧的 packet
                 pthread_mutex_unlock(&g_seek_mutex);
                 continue;

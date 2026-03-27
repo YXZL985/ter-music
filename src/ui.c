@@ -826,13 +826,13 @@ void run_event_loop() {
                     render_controls();
                     break;
                 case ',':
-                    // 后退 5 秒 - 增加前置条件检查
+                    // 后退 3 秒 - 增加前置条件检查
                     if (g_play_state != PLAY_STATE_STOPPED && 
                         g_total_duration > 0 && 
                         progress_tracker_is_ready()) {
                         
                         int current_pos = progress_tracker_get_position_seconds();
-                        int new_pos = current_pos - 5;
+                        int new_pos = current_pos - 3;
                         if (new_pos < 0) new_pos = 0;
                         
                         seek_audio(new_pos);
@@ -840,13 +840,13 @@ void run_event_loop() {
                     break;
 
                 case '.':
-                    // 前进 5 秒 - 增加前置条件检查
+                    // 前进 3 秒 - 增加前置条件检查
                     if (g_play_state != PLAY_STATE_STOPPED && 
                         g_total_duration > 0 && 
                         progress_tracker_is_ready()) {
                         
                         int current_pos = progress_tracker_get_position_seconds();
-                        int new_pos = current_pos + 5;
+                        int new_pos = current_pos + 3;
                         if (new_pos > g_total_duration) new_pos = g_total_duration;
                         
                         seek_audio(new_pos);
