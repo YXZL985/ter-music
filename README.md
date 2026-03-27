@@ -8,7 +8,7 @@
 
 ### 1.1 核心功能
 
-Ter-Music 是一个轻量级、基于终端的命令行音乐播放器，专为 Linux 系统设计。它利用 FFmpeg 进行音频解码，ALSA 进行音频输出，并通过 ncursesw 提供美观的文本用户界面。
+Ter-Music 是一个轻量级、基于终端的命令行音乐播放器，专为 Linux 系统设计。它利用 FFmpeg 进行音频解码，PulseAudio 进行音频输出，并通过 ncursesw 提供美观的文本用户界面。
 
 **主要功能包括：**
 
@@ -44,7 +44,7 @@ Ter-Music 遵循**简约、高效、原生**的设计理念：
 | 🎯 **多视图切换**：通过 F2-F7 功能键快速切换设置、历史、播放列表等视图 |
 | ⚡ **响应式 UI**：100 FPS 刷新率，进度条流畅更新 |
 | 🔧 **CMake 构建**：现代化构建系统，跨平台兼容性好 |
-| 🔊 **ALSA 音频后端**：稳定的低延迟音频输出 |
+| 🔊 **PulseAudio 音频后端**：稳定的低延迟音频输出 |
 
 ### 1.4 应用场景
 
@@ -77,7 +77,7 @@ Ter-Music 遵循**简约、高效、原生**的设计理念：
 | **CPU** | 单核 1GHz | 双核 2GHz 或更高 |
 | **内存** | 64MB 可用内存 | 128MB 可用内存或更高 |
 | **存储** | 5MB 可用磁盘空间 | 10MB 可用磁盘空间 |
-| **声卡** | ALSA 兼容声卡 | ALSA 兼容声卡 |
+| **声卡** | PulseAudio 服务运行 | PulseAudio 服务运行 |
 
 ### 2.3 编译器版本
 
@@ -98,7 +98,7 @@ Ter-Music 遵循**简约、高效、原生**的设计理念：
 | 依赖库 | 版本要求 | 用途 |
 |--------|----------|------|
 | `ffmpeg-libs` | 4.0+ | 音频解码（libavcodec, libavformat, libswresample, libavutil）|
-| `alsa-lib` | 1.1.0+ | ALSA 音频输出 |
+| `pulseaudio-libs` | 10.0+ | PulseAudio 音频输出 |
 | `ncursesw` | 6.0+ | 文本用户界面，宽字符支持 |
 | `pthread` | 系统自带 | 多线程支持 |
 | `cmake` | 3.10+ | 构建系统（编译时需要）|
@@ -110,7 +110,7 @@ Ter-Music 遵循**简约、高效、原生**的设计理念：
 
 ```bash
 sudo dnf install cmake gcc make pkg-config
-sudo dnf install ffmpeg-free-devel alsa-lib-devel ncurses-devel
+sudo dnf install ffmpeg-free-devel libpulse-devel ncurses-devel
 ```
 
 ### 3.3 Ubuntu / Debian / Linux Mint
@@ -119,7 +119,7 @@ sudo dnf install ffmpeg-free-devel alsa-lib-devel ncurses-devel
 sudo apt update
 sudo apt install cmake gcc make pkg-config
 sudo apt install libavcodec-dev libavformat-dev libswresample-dev libavutil-dev
-sudo apt install libalsa-ocaml-dev libncursesw5-dev
+sudo apt install libpulse-dev libncursesw5-dev
 ```
 
 **注意**：如果找不到 ffmpeg 开发包，您可能需要先启用 universe 仓库：
@@ -133,7 +133,7 @@ sudo apt update
 
 ```bash
 sudo pacman -S cmake gcc make pkg-config
-sudo pacman -S ffmpeg alsa-lib ncurses
+sudo pacman -S ffmpeg pulseaudio ncurses
 ```
 
 ## 4. 编译步骤
@@ -207,9 +207,9 @@ rm -rf build
 
 ### 4.8 常见编译问题
 
-**问题 1：找不到 ALSA 库**
+**问题 1：找不到 PulseAudio 库**
 ```
-解决：安装 alsa-lib-devel（Fedora）或 libalsa-ocaml-dev（Ubuntu）
+解决：安装 libpulse-devel（Fedora）或 libpulse-dev（Ubuntu）
 ```
 
 **问题 2：找不到 ncursesw 库**
@@ -523,9 +523,9 @@ Ter-Music 采用模块化设计，主要模块包括：
 ## 10. 故障排除
 
 **问题：声音无法播放**
-- 检查 ALSA 是否正确配置
+- 检查 PulseAudio 服务是否运行：`systemctl status pulseaudio`
 - 检查扬声器音量是否开启
-- 确认您的用户在 audio 用户组中：`groups | grep audio`
+- 确认 PulseAudio 已正确配置
 
 **问题：中文显示乱码**
 - 确保您的终端使用 UTF-8 编码
