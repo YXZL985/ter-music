@@ -54,6 +54,7 @@ int create_user_playlist(const char *name);
 int delete_user_playlist(int index);
 int add_track_to_playlist(int playlist_idx, Track *track);
 int remove_track_from_playlist(int playlist_idx, int track_idx);
+int rename_user_playlist(int index, const char *new_name);
 
 void ensure_config_dir_exists(void);
 void init_all_persistent_data(void);

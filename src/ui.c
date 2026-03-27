@@ -938,10 +938,73 @@ void run_event_loop() {
                     case 'A':
                         if (g_playlist.count > 0 && g_playlist_manager.count > 0) {
                             Track *t = &g_playlist.tracks[g_selected_index];
-                            add_track_to_playlist(0, t);
-                            update_controls_status("Added to first playlist!");
+
+                            int max_y, max_x;
+                            getmaxyx(stdscr, max_y, max_x);
+
+                            WINDOW *win_win = newwin(max_y - 4, max_x - 4, 2, 2);
+                            box(win_win, 0, 0);
+                            mvwprintw(win_win, 0, 2, " Select Playlist ");
+                            wbkgd(win_win, COLOR_PAIR(COLOR_PAIR_PLAYLIST));
+
+                            int start_y = 2;
+                            int visible_lines = max_y - 8;
+                            int selected = 0;
+                            int offset = 0;
+
+                             while (1) {
+                                for (int i = 0; i < visible_lines && (offset + i) < g_playlist_manager.count; i++) {
+                                    int idx = offset + i;
+                                    UserPlaylist *pl = &g_playlist_manager.playlists[idx];
+                                    if (idx == selected) {
+                                        wattron(win_win, A_REVERSE);
+                                        mvwprintw(win_win, start_y + i, 2, " %-30s (%d tracks)", pl->name, pl->track_count);
+                                        wattroff(win_win, A_REVERSE);
+                                    } else {
+                                        mvwprintw(win_win, start_y + i, 2, " %-30s (%d tracks)", pl->name, pl->track_count);
+                                    }
+                                }
+
+                                mvwprintw(win_win, max_y - 6, 2, "↑/↓: Navigate | ENTER: Select | ESC: Cancel");
+                                wrefresh(win_win);
+
+                                int c = wgetch(win_win);
+                                if (c == 27) {
+                                    break;
+                                } else if (c == KEY_UP) {
+                                    if (selected > 0) {
+                                        selected--;
+                                        if (selected < offset) {
+                                            offset = selected;
+                                        }
+                                    }
+                                } else if (c == KEY_DOWN) {
+                                    if (selected < g_playlist_manager.count - 1) {
+                                        selected++;
+                                        if (selected >= offset + visible_lines) {
+                                            offset = selected - visible_lines + 1;
+                                        }
+                                    }
+                                } else if (c == 10 || c == ' ') {
+                                    int result = add_track_to_playlist(selected, t);
+                                      if (result == 0) {
+                                          update_controls_status("Track added to playlist!");
+                                      } else if (result == -3) {
+                                          update_controls_status("Playlist is full");
+                                      } else {
+                                          update_controls_status("Track already in playlist");
+                                      }
+                                    break;
+                                }
+                             }
+
+                             delwin(win_win);
+                             create_layout();
+                             render_playlist_content();
+                             render_controls();
+                             render_lyrics();
                         } else if (g_playlist_manager.count == 0) {
-                            update_controls_status("No playlists. Create one in F3 menu.");
+                            update_controls_status("No playlists. Create one in F4 menu.");
                         }
                         break;
                 }

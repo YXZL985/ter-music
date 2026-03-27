@@ -852,6 +852,40 @@ int delete_user_playlist(int index) {
     return 0;
 }
 
+int rename_user_playlist(int index, const char *new_name) {
+    if (index < 0 || index >= g_playlist_manager.count) return -1;
+    if (!new_name || strlen(new_name) == 0) return -2;
+
+    UserPlaylist *pl = &g_playlist_manager.playlists[index];
+
+    char old_filename[MAX_PLAYLIST_NAME_LEN + 8];
+    char safe_old_name[MAX_PLAYLIST_NAME_LEN];
+    int j = 0;
+    for (const char *p = pl->name; *p && j < MAX_PLAYLIST_NAME_LEN - 1; p++) {
+        if ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+            (*p >= '0' && *p <= '9') || *p == '_' || *p == '-') {
+            safe_old_name[j++] = *p;
+        } else if (*p == ' ') {
+            safe_old_name[j++] = '_';
+        }
+    }
+    safe_old_name[j] = '\0';
+
+    if (j > 0) {
+        snprintf(old_filename, sizeof(old_filename), "%s.json", safe_old_name);
+        char old_filepath[MAX_PATH_LEN];
+        snprintf(old_filepath, sizeof(old_filepath), "%s/%s", playlists_dir, old_filename);
+        unlink(old_filepath);
+    }
+
+    strncpy(pl->name, new_name, MAX_PLAYLIST_NAME_LEN - 1);
+    pl->name[MAX_PLAYLIST_NAME_LEN - 1] = '\0';
+    pl->modified_time = time(NULL);
+
+    save_all_playlists();
+    return 0;
+}
+
 int add_track_to_playlist(int playlist_idx, Track *track) {
     if (playlist_idx < 0 || playlist_idx >= g_playlist_manager.count) return -1;
     if (!track) return -2;
@@ -1221,7 +1255,7 @@ void render_playlist_manager_content(void) {
             }
             
             int bottom_y = max_y - 3;
-            mvprintw(bottom_y, content_start_x, "ENTER: View tracks | D: Delete playlist");
+            mvprintw(bottom_y, content_start_x, "ENTER: View tracks | D: Delete playlist | R: Rename");
         }
     } else {
         if (g_playlist_selected_playlist >= 0 && g_playlist_selected_playlist < g_playlist_manager.count) {
@@ -1584,6 +1618,9 @@ static void handle_settings_input(int ch) {
                     mvprintw(max_y - 2, menu_width + 2, "Enter path: ");
                     clrtoeol();
                     refresh();
+
+                    move(max_y - 2, menu_width + 2 + 12);
+                    refresh();
                     
                     flushinp();
                     
@@ -1815,6 +1852,48 @@ static void handle_history_input(int ch) {
                 render_history_content();
             }
             break;
+
+        case 'r':
+        case 'R':
+            if (g_focus_area == FOCUS_CONTENT && g_playlist_view_mode == 0) {
+                if (g_content_selected_idx >= 0 && g_content_selected_idx < g_playlist_manager.count) {
+                    echo();
+                    curs_set(1);
+
+                    int max_y, max_x;
+                    getmaxyx(stdscr, max_y, max_x);
+                    int menu_width = max_x / 4;
+
+                    mvprintw(max_y - 2, menu_width + 2, "Enter new name: ");
+                    clrtoeol();
+                    refresh();
+
+                    move(max_y - 2, menu_width + 2 + 16);
+                    refresh();
+
+                    flushinp();
+
+                    char new_name[MAX_PLAYLIST_NAME_LEN];
+                    getnstr(new_name, MAX_PLAYLIST_NAME_LEN - 1);
+
+                    noecho();
+                    curs_set(0);
+
+                    if (strlen(new_name) > 0) {
+                        int result = rename_user_playlist(g_content_selected_idx, new_name);
+                        if (result == 0) {
+                            show_status_message("Playlist renamed!");
+                        } else {
+                            show_status_message("Failed to rename playlist");
+                        }
+                    }
+
+                    render_menu_frame("Play List [F4]");
+                    render_menu_sidebar(g_menu_selected_idx, playlist_sidebar_items, PLAYLIST_ITEM_COUNT);
+                    render_playlist_manager_content();
+                }
+            }
+            break;
     }
 }
 
@@ -1909,6 +1988,11 @@ static void handle_playlist_input(int ch) {
                     mvprintw(max_y - 2, menu_width + 2, "Enter playlist name: ");
                     clrtoeol();
                     refresh();
+
+                    move(max_y - 2, menu_width + 2 + 19);
+                    refresh();
+                    
+                    flushinp();
                     
                     char name[MAX_PLAYLIST_NAME_LEN];
                     getnstr(name, MAX_PLAYLIST_NAME_LEN - 1);
