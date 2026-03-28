@@ -84,10 +84,25 @@ check_dependencies() {
 detect_version() {
     local version="$DEFAULT_VERSION"
     
-    if [ -f "${SCRIPT_DIR}/CMakeLists.txt" ]; then
-        local cmake_version=$(grep -E "project\(|set\(VERSION" "${SCRIPT_DIR}/CMakeLists.txt" | head -1)
-        if [[ $cmake_version =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+    if [ -d "${SCRIPT_DIR}/.git" ] && command -v git >/dev/null 2>&1; then
+        local git_version=$(git describe --tags --abbrev=0 2>/dev/null || true)
+        if [[ $git_version =~ ^v?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
             version="${BASH_REMATCH[1]}"
+            echo "$version"
+            return
+        fi
+    fi
+    
+    if [ -f "${SCRIPT_DIR}/CMakeLists.txt" ]; then
+        local match
+        match=$(grep -E 'project.*VERSION' "${SCRIPT_DIR}/CMakeLists.txt" | head -1)
+        if [[ $match =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+            version="${BASH_REMATCH[1]}"
+        else
+            match=$(grep -E 'set.*VERSION' "${SCRIPT_DIR}/CMakeLists.txt" | head -1)
+            if [[ $match =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+                version="${BASH_REMATCH[1]}"
+            fi
         fi
     fi
     
@@ -171,15 +186,39 @@ create_source_tarball() {
     local version="$1"
     local tarball_name="${PROJECT_NAME}-${version}.tar.gz"
     local tarball_path="${TEMP_DIR}/SOURCES/${tarball_name}"
-    local source_dir="${TEMP_DIR}/source_package"
-    local package_dir="${source_dir}/${PROJECT_NAME}-${version}"
     
     log_info "创建源码压缩包..."
+    
+    if [ -d "${SCRIPT_DIR}/.git" ] && command -v git >/dev/null 2>&1; then
+        git -C "${SCRIPT_DIR}" archive --format=tar.gz --prefix="${PROJECT_NAME}-${version}/" HEAD > "$tarball_path"
+        if [ $? -eq 0 ]; then
+            log_info "源码压缩包已创建: $tarball_path (使用 git archive)"
+            return
+        fi
+        log_info "git archive 失败，回退到手动复制..."
+    fi
+    
+    local source_dir="${TEMP_DIR}/source_package"
+    local package_dir="${source_dir}/${PROJECT_NAME}-${version}"
     
     rm -rf "$source_dir"
     mkdir -p "$package_dir"
     
-    cp -r "${SCRIPT_DIR}"/{src,include,CMakeLists.txt,README.md,LICENSE} "$package_dir/" 2>/dev/null || true
+    local files=("src" "include" "CMakeLists.txt" "README.md" "LICENSE")
+    local missing_files=()
+    
+    for file in "${files[@]}"; do
+        if [ -e "${SCRIPT_DIR}/${file}" ]; then
+            cp -r "${SCRIPT_DIR}/${file}" "$package_dir/"
+        else
+            missing_files+=("$file")
+        fi
+    done
+    
+    if [ ${#missing_files[@]} -gt 0 ]; then
+        log_error "缺少必要的源文件: ${missing_files[*]}"
+        return 1
+    fi
     
     tar -czf "$tarball_path" -C "$source_dir" "${PROJECT_NAME}-${version}"
     
@@ -212,23 +251,21 @@ collect_results() {
     
     local found_rpms=0
     
-    # 收集二进制 RPM 包
-    find "${TEMP_DIR}/RPMS" -name "*.rpm" -type f -exec cp {} "${OUTPUT_DIR}/" \;
-    find "${TEMP_DIR}/RPMS" -name "*.rpm" -type f | while read -r rpm_file; do
+    # 收集所有 RPM 包
+    find "${TEMP_DIR}/RPMS" "${TEMP_DIR}/SRPMS" -name "*.rpm" -type f | while read -r rpm_file; do
+        cp "$rpm_file" "${OUTPUT_DIR}/"
         local filename=$(basename "$rpm_file")
         log_info "已复制: $filename -> ${OUTPUT_DIR}/"
         ((found_rpms++))
     done
     
-    # 收集源码 RPM 包
-    find "${TEMP_DIR}/SRPMS" -name "*.rpm" -type f -exec cp {} "${OUTPUT_DIR}/" \;
-    find "${TEMP_DIR}/SRPMS" -name "*.rpm" -type f | while read -r rpm_file; do
-        local filename=$(basename "$rpm_file")
-        log_info "已复制: $filename -> ${OUTPUT_DIR}/"
-        ((found_rpms++))
-    done
+    if [ $found_rpms -eq 0 ]; then
+        log_error "未找到任何构建好的 RPM 包"
+        return 1
+    fi
     
     log_info "构建结果已收集到: ${OUTPUT_DIR}/"
+    return 0
 }
 
 cleanup() {
@@ -305,14 +342,23 @@ main() {
     
     prepare_directories
     generate_spec_file "$version"
-    create_source_tarball "$version"
+    if ! create_source_tarball "$version"; then
+        log_error "创建源码压缩包失败"
+        cleanup "$keep_temp"
+        exit 1
+    fi
     
     if build_rpm; then
-        collect_results
-        cleanup "$keep_temp"
-        show_summary
+        if collect_results; then
+            cleanup "$keep_temp"
+            show_summary
+        else
+            log_error "收集构建结果失败"
+            cleanup "$keep_temp"
+            exit 1
+        fi
     else
-        log_error "构建过程失败，跳过收集结果和清理步骤"
+        log_error "RPM 构建过程失败"
         cleanup "$keep_temp"
         exit 1
     fi
