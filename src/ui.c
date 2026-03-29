@@ -624,7 +624,11 @@ void prompt_open_folder() {
     
     // BUGFIX 2026.03.26: 手动逐字符读取，正确处理 UTF-8 多字节中文输入
     // 使用 wgetnstr 无法正确处理 UTF-8 中文输入，改为手动读取
+    // BUGFIX 2026.03.29: 忽略 ERR，防止超时自动插入space字符
     while ((ch = getch()) != '\n' && ch != KEY_ENTER && pos < MAX_PATH_LEN - 1) {
+        if (ch == ERR) {
+            continue;
+        }
         if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
             // 处理 Backspace 删除
             if (pos > 0) {

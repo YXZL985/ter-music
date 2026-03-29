@@ -1668,7 +1668,11 @@ static void handle_settings_input(int ch) {
                     int ch;
                     
                     // BUGFIX 2026.03.26: 改进 UTF-8 中文输入处理，每次按键后刷新
+                    // BUGFIX 2026.03.29: 忽略 ERR，防止超时自动插入space字符
                     while ((ch = getch()) != '\n' && ch != KEY_ENTER && pos < MAX_PATH_LEN - 1) {
+                        if (ch == ERR) {
+                            continue;
+                        }
                         if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
                             // 处理 Backspace 删除
                             if (pos > 0) {
@@ -1912,7 +1916,66 @@ static void handle_history_input(int ch) {
                     flushinp();
 
                     char new_name[MAX_PLAYLIST_NAME_LEN];
-                    getnstr(new_name, MAX_PLAYLIST_NAME_LEN - 1);
+                    memset(new_name, 0, sizeof(new_name));
+                    int pos = 0;
+                    int ch;
+                    
+                    while ((ch = getch()) != '\n' && ch != KEY_ENTER && pos < MAX_PLAYLIST_NAME_LEN - 1) {
+                        if (ch == ERR) {
+                            continue;
+                        }
+                        if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
+                            if (pos > 0) {
+                                int cx = getcurx(stdscr);
+                                int cy = getcury(stdscr);
+                                unsigned char last_c = (unsigned char)new_name[pos - 1];
+                                if (last_c >= 0x80) {
+                                    int bytes_to_remove = 1;
+                                    if ((last_c & 0xE0) == 0xC0) bytes_to_remove = 2;
+                                    else if ((last_c & 0xF0) == 0xE0) bytes_to_remove = 3;
+                                    else if ((last_c & 0xF8) == 0xF0) bytes_to_remove = 4;
+                                    else if ((last_c & 0xC0) == 0x80) {
+                                        bytes_to_remove = 2;
+                                        while (pos - bytes_to_remove >= 0 && 
+                                               (unsigned char)new_name[pos - bytes_to_remove] >= 0x80 && 
+                                               (unsigned char)new_name[pos - bytes_to_remove] < 0xC0) {
+                                            bytes_to_remove++;
+                                        }
+                                    }
+                                    if (bytes_to_remove > pos) bytes_to_remove = pos;
+                                    pos -= bytes_to_remove;
+                                    
+                                    if ((last_c & 0xF0) == 0xE0 || (last_c & 0xE0) == 0xC0) {
+                                        move(cy, cx - 2);
+                                    } else {
+                                        move(cy, cx - 1);
+                                    }
+                                } else {
+                                    pos--;
+                                    move(cy, cx - 1);
+                                }
+                                clrtoeol();
+                                refresh();
+                            }
+                        } else if (ch >= 0x20 && ch <= 0x7E) {
+                            new_name[pos++] = (char)ch;
+                            addch(ch);
+                            refresh();
+                        } else if ((ch & 0xC0) == 0x80 || ch >= 0x80) {
+                            if (pos < MAX_PLAYLIST_NAME_LEN - 1) {
+                                new_name[pos++] = (char)ch;
+                                if ((ch & 0xE0) == 0xC0 || (ch & 0xF0) == 0xE0) {
+                                    addch(ch);
+                                    refresh();
+                                }
+                            }
+                        } else {
+                            new_name[pos++] = (char)ch;
+                            addch(ch);
+                            refresh();
+                        }
+                    }
+                    new_name[pos] = '\0';
 
                     noecho();
                     curs_set(0);
@@ -2033,7 +2096,66 @@ static void handle_playlist_input(int ch) {
                     flushinp();
                     
                     char name[MAX_PLAYLIST_NAME_LEN];
-                    getnstr(name, MAX_PLAYLIST_NAME_LEN - 1);
+                    memset(name, 0, sizeof(name));
+                    int pos = 0;
+                    int ch;
+                    
+                    while ((ch = getch()) != '\n' && ch != KEY_ENTER && pos < MAX_PLAYLIST_NAME_LEN - 1) {
+                        if (ch == ERR) {
+                            continue;
+                        }
+                        if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
+                            if (pos > 0) {
+                                int cx = getcurx(stdscr);
+                                int cy = getcury(stdscr);
+                                unsigned char last_c = (unsigned char)name[pos - 1];
+                                if (last_c >= 0x80) {
+                                    int bytes_to_remove = 1;
+                                    if ((last_c & 0xE0) == 0xC0) bytes_to_remove = 2;
+                                    else if ((last_c & 0xF0) == 0xE0) bytes_to_remove = 3;
+                                    else if ((last_c & 0xF8) == 0xF0) bytes_to_remove = 4;
+                                    else if ((last_c & 0xC0) == 0x80) {
+                                        bytes_to_remove = 2;
+                                        while (pos - bytes_to_remove >= 0 && 
+                                               (unsigned char)name[pos - bytes_to_remove] >= 0x80 && 
+                                               (unsigned char)name[pos - bytes_to_remove] < 0xC0) {
+                                            bytes_to_remove++;
+                                        }
+                                    }
+                                    if (bytes_to_remove > pos) bytes_to_remove = pos;
+                                    pos -= bytes_to_remove;
+                                    
+                                    if ((last_c & 0xF0) == 0xE0 || (last_c & 0xE0) == 0xC0) {
+                                        move(cy, cx - 2);
+                                    } else {
+                                        move(cy, cx - 1);
+                                    }
+                                } else {
+                                    pos--;
+                                    move(cy, cx - 1);
+                                }
+                                clrtoeol();
+                                refresh();
+                            }
+                        } else if (ch >= 0x20 && ch <= 0x7E) {
+                            name[pos++] = (char)ch;
+                            addch(ch);
+                            refresh();
+                        } else if ((ch & 0xC0) == 0x80 || ch >= 0x80) {
+                            if (pos < MAX_PLAYLIST_NAME_LEN - 1) {
+                                name[pos++] = (char)ch;
+                                if ((ch & 0xE0) == 0xC0 || (ch & 0xF0) == 0xE0) {
+                                    addch(ch);
+                                    refresh();
+                                }
+                            }
+                        } else {
+                            name[pos++] = (char)ch;
+                            addch(ch);
+                            refresh();
+                        }
+                    }
+                    name[pos] = '\0';
                     
                     noecho();
                     curs_set(0);
