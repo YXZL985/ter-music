@@ -281,8 +281,8 @@ void clear_lyrics(void) {
 }
 
 void update_lyrics_display(void) {
-    // 只在播放状态下更新
-    if (g_play_state == PLAY_STATE_STOPPED) {
+    // 只在播放状态且主界面下更新
+    if (g_play_state == PLAY_STATE_STOPPED || g_current_view != VIEW_MAIN) {
         return;
     }
     

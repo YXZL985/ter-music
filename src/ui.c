@@ -486,7 +486,7 @@ void render_controls() {
  */
 void update_progress_bar() {
     // 前置条件检查
-    if (g_play_state == PLAY_STATE_STOPPED || g_total_duration <= 0 || !win_controls) {
+    if (g_play_state == PLAY_STATE_STOPPED || g_total_duration <= 0 || !win_controls || g_current_view != VIEW_MAIN) {
         return;
     }
     
