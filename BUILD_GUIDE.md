@@ -109,6 +109,42 @@ cd ter-music-portable
 - 可以在任何兼容的 Linux 系统上运行
 - 不需要安装任何依赖
 
+### 4. build-linyaps.sh - 构建 Linyaps（如意玲珑）包
+
+直接从源码构建 Linyaps（如意玲珑）格式包，适合 deepin 等使用玲珑包管理的系统。
+
+**使用方法：**
+```bash
+# 使用默认版本号构建
+./build-linyaps.sh
+
+# 指定版本号构建
+./build-linyaps.sh -v 1.2.3
+
+# 保留临时文件用于调试
+./build-linyaps.sh --keep-temp
+
+# 显示帮助信息
+./build-linyaps.sh --help
+```
+
+**输出：**
+- UAB 包和 layer 文件将输出到 `build/linyaps/` 目录
+
+**安装：**
+```bash
+# 使用 ll-cli 安装
+ll-cli install build/linyaps/org.yxzl.ter-music_1.0.0_x86_64.uab
+
+# 运行
+ll-cli run org.yxzl.ter-music
+```
+
+**优点：**
+- 符合 Linyaps 打包规范
+- 自动处理依赖关系
+- 适合 deepin/UOS 系统用户
+
 ## 构建依赖
 
 ### build-rpm.sh 依赖：
@@ -132,6 +168,19 @@ cd ter-music-portable
 - `rpm2cpio`
 - `cpio`
 - `tar`
+
+### build-linyaps.sh 依赖：
+- `linglong-builder` (ll-builder)
+- `cmake`
+- `make`
+- `pkg-config`
+- `libncurses-dev`
+- `libavformat-dev`
+- `libavcodec-dev`
+- `libswresample-dev`
+- `libavutil-dev`
+- `libtag1-dev`
+- `libpulse-dev`
 
 ## 推荐的构建流程
 
