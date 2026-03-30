@@ -11,12 +11,12 @@
 #include <pulse/pulseaudio.h>
 
 // FFmpeg 头文件
-#include <ffmpeg/libavformat/avformat.h>
-#include <ffmpeg/libavcodec/avcodec.h>
-#include <ffmpeg/libswresample/swresample.h>
-#include <ffmpeg/libavutil/opt.h>
-#include <ffmpeg/libavutil/channel_layout.h>
-#include <ffmpeg/libavutil/samplefmt.h>
+#include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
+#include <libswresample/swresample.h>
+#include <libavutil/opt.h>
+#include <libavutil/channel_layout.h>
+#include <libavutil/samplefmt.h>
 
 // 确保DT_REG和DT_UNKNOWN被定义
 #ifndef DT_REG

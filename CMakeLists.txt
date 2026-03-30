@@ -42,7 +42,10 @@ add_executable(${PROJECT_NAME}
 # 包含头文件目录
 target_include_directories(${PROJECT_NAME} PRIVATE 
     include 
-    /usr/include/ffmpeg
+    ${AVCODEC_INCLUDE_DIRS}
+    ${AVFORMAT_INCLUDE_DIRS}
+    ${SWRESAMPLE_INCLUDE_DIRS}
+    ${AVUTIL_INCLUDE_DIRS}
     ${PULSE_INCLUDE_DIRS}
 )
 
@@ -69,4 +72,9 @@ target_compile_options(${PROJECT_NAME} PRIVATE
 # 添加预处理器定义
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     _GNU_SOURCE
+)
+
+# 安装规则
+install(TARGETS ${PROJECT_NAME}
+    RUNTIME DESTINATION bin
 )
