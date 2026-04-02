@@ -142,16 +142,27 @@ static int find_lyric_index(int timestamp_seconds) {
 static void render_lyric_line(int row, const char *text, int is_highlighted, int show_marker) {
     int h, w;
     getmaxyx(win_lyrics, h, w);
-    
+
+    // 检查窗口尺寸是否有效
+    if (h <= 2 || w <= 4) {
+        return;
+    }
+
     // 检查行号是否有效
     if (row < 1 || row >= h - 1) {
         return;
     }
-    
+
     // 计算最大可用宽度（减去边框和缩进）
     int max_width = w - 4;
+    if (max_width <= 0) {
+        return;
+    }
     if (show_marker) {
         max_width -= 2;  // 为 "> " 预留空间
+        if (max_width <= 0) {
+            return;
+        }
     }
     
     // 计算文本实际宽度

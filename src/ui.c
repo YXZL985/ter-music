@@ -174,17 +174,26 @@ void create_layout() {
         g_menu_selected_idx = 0;
         initialized = 1;
     }
-    
+
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
 
+    // 边界检查：确保最小尺寸，防止负数尺寸导致崩溃
+    if (max_y < 8) max_y = 8;
+    if (max_x < 20) max_x = 20;
+
     int lyrics_width = max_x / 3; // 歌词栏占宽度的 1/3
+    if (lyrics_width < 10) lyrics_width = 10;
     int main_width = max_x - lyrics_width;
+    if (main_width < 10) main_width = 10;
 
     // 计算高度比例 (5:2)，预留边框空间和底部提示条（预留1行给菜单提示条
     int total_inner_height = max_y - 5; // 上下留边距 + 底部提示条预留1行
+    if (total_inner_height < 3) total_inner_height = 3;
     int playlist_height = (total_inner_height * 5) / 7;
+    if (playlist_height < 1) playlist_height = 1;
     int controls_height = total_inner_height - playlist_height;
+    if (controls_height < 2) controls_height = 2;
 
     // 1. 创建播放列表窗口 (左上)
     win_playlist = newwin(playlist_height, main_width, 1, 1);
@@ -202,7 +211,9 @@ void create_layout() {
     wrefresh(win_controls);
 
     // 3. 创建歌词侧栏窗口 (右侧) - 高度减1为底部提示条预留空间
-    win_lyrics = newwin(max_y - 3, lyrics_width, 1, 1 + main_width);
+    int lyrics_height = max_y - 3;
+    if (lyrics_height < 3) lyrics_height = 3;
+    win_lyrics = newwin(lyrics_height, lyrics_width, 1, 1 + main_width);
     box(win_lyrics, 0, 0);
     mvwprintw(win_lyrics, 0, 2, " Lyrics ");
     wbkgd(win_lyrics, COLOR_PAIR(COLOR_PAIR_LYRICS));
@@ -214,11 +225,15 @@ void create_layout() {
 
     // 绘制左侧区域与右侧歌词区之间的垂直分隔线
     // 起点：(1, 1 + main_width), 长度：max_y - 3（给底部提示条预留空间）
-    mvvline(1, 1 + main_width, ACS_VLINE, max_y - 3);
+    int vline_len = max_y - 3;
+    if (vline_len < 1) vline_len = 1;
+    mvvline(1, 1 + main_width, ACS_VLINE, vline_len);
 
     // 绘制播放列表与控制栏之间的水平分隔线
     // 起点：(1 + playlist_height, 1), 长度：main_width
-    mvhline(1 + playlist_height, 1, ACS_HLINE, main_width);
+    int hline_len = main_width;
+    if (hline_len < 1) hline_len = 1;
+    mvhline(1 + playlist_height, 1, ACS_HLINE, hline_len);
     
     // 绘制交叉点字符，使分隔线连接更自然
     mvaddch(1 + playlist_height, 1 + main_width, ACS_PLUS);
@@ -1016,8 +1031,17 @@ void run_event_loop() {
         }
         
         if (ch == KEY_RESIZE) {
-            cleanup();
-            return; 
+            // 终端窗口大小改变，重新创建布局
+            // 先删除旧窗口再重新创建，避免内存泄漏和显示错乱
+            delwin(win_playlist);
+            delwin(win_controls);
+            delwin(win_lyrics);
+            clear();
+            create_layout();
+            render_playlist_content();
+            render_controls();
+            render_lyrics();
+            continue;
         }
     }
 }
