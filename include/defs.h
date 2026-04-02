@@ -161,6 +161,9 @@ extern int g_current_position;
 extern int g_total_duration;
 extern pthread_mutex_t g_seek_mutex;
 
+extern int g_lyric_cursor_mode;
+extern int g_lyric_cursor_index;
+
 void init_ffmpeg();
 void init_audio_device();
 int load_playlist(const char *folder_path);
@@ -173,7 +176,7 @@ void next_track();
 void toggle_loop_mode();
 const char *get_loop_mode_str();
 void cleanup();
-void seek_audio(int position);
+void seek_audio(double position);
 
 int utf8_str_truncate(char *dest, const char *src, int max_cols);
 int utf8_str_width(const char *src);

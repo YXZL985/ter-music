@@ -28,6 +28,10 @@ WINDOW *win_lyrics;
 // 控件标签文本
 const char *control_labels[] = {"<<", "Play/Pause", ">>", "Stop", "Loop", "Progress"};
 
+// 歌词光标操作模式全局变量
+int g_lyric_cursor_mode = 0;
+int g_lyric_cursor_index = -1;
+
 /**
  * 初始化ncurses环境
  * 设置本地化、终端模式和颜色对
@@ -205,7 +209,9 @@ void create_layout() {
     // 2. 创建控制栏窗口 (左下)
     win_controls = newwin(controls_height, main_width, 1 + playlist_height, 1);
     box(win_controls, 0, 0);
-    mvwprintw(win_controls, 0, 2, " Controls [Space:Act] [C:FocusCtrl] [L:FocusList] ");
+    const char *focus_hint = g_control_focus ? "[Ctrl Focus]" : "[List Focus]";
+    const char *lyric_hint = g_lyric_cursor_mode ? "[D:ExitLyric]" : "[D:LyricEdit]";
+    mvwprintw(win_controls, 0, 2, " Controls [Space:Act] [C:FocusCtrl] [L:FocusList] %s %s", focus_hint, lyric_hint);
     wbkgd(win_controls, COLOR_PAIR(COLOR_PAIR_CONTROLS));
     
     wrefresh(win_controls);
@@ -378,7 +384,8 @@ void render_controls() {
     box(win_controls, 0, 0);
     
     const char *focus_hint = g_control_focus ? "[Ctrl Focus]" : "[List Focus]";
-    mvwprintw(win_controls, 0, 2, " Controls [Space:Act] [C:FocusCtrl] [L:FocusList] %s", focus_hint);
+    const char *lyric_hint = g_lyric_cursor_mode ? "[D:ExitLyric]" : "[D:LyricEdit]";
+    mvwprintw(win_controls, 0, 2, " Controls [Space:Act] [C:FocusCtrl] [L:FocusList] %s %s", focus_hint, lyric_hint);
     wbkgd(win_controls, COLOR_PAIR(COLOR_PAIR_CONTROLS));
 
     int h, w;
@@ -831,6 +838,35 @@ void run_event_loop() {
             }
         }
 
+        // 歌词光标模式切换 (D键)
+        if (ch == 'D' || ch == 'd') {
+            // 严格遵循需求：按下大写D切换
+            if (ch == 'D' && g_current_view == VIEW_MAIN) {
+                pthread_mutex_lock(&g_lyrics.lock);
+                if (g_lyrics.has_lyrics && g_lyrics.count > 0 && g_lyrics.current_index >= 0) {
+                    g_lyric_cursor_mode = !g_lyric_cursor_mode;
+                    if (g_lyric_cursor_mode) {
+                        // 激活时，初始化光标位置为当前播放歌词行
+                        g_lyrics.cursor_index = g_lyrics.current_index;
+                        g_lyric_cursor_index = g_lyrics.cursor_index;
+                        update_controls_status("Lyric edit mode activated");
+                    } else {
+                        update_controls_status("Lyric edit mode deactivated");
+                    }
+                    pthread_mutex_unlock(&g_lyrics.lock);
+                    render_controls();
+                    render_lyrics();
+                    continue;
+                } else {
+                    pthread_mutex_unlock(&g_lyrics.lock);
+                    if (!g_lyrics.has_lyrics) {
+                        update_controls_status("No lyrics available for editing");
+                    }
+                    continue;
+                }
+            }
+        }
+
         if (g_control_focus == 1) {
             // === 控制区模式 ===
             switch (ch) {
@@ -851,7 +887,7 @@ void run_event_loop() {
                         progress_tracker_is_ready()) {
                         
                         int current_pos = progress_tracker_get_position_seconds();
-                        int new_pos = current_pos - 3;
+                        double new_pos = (double)(current_pos - 3);
                         if (new_pos < 0) new_pos = 0;
                         
                         seek_audio(new_pos);
@@ -865,7 +901,7 @@ void run_event_loop() {
                         progress_tracker_is_ready()) {
                         
                         int current_pos = progress_tracker_get_position_seconds();
-                        int new_pos = current_pos + 3;
+                        double new_pos = (double)(current_pos + 3);
                         if (new_pos > g_total_duration) new_pos = g_total_duration;
                         
                         seek_audio(new_pos);
@@ -921,15 +957,51 @@ void run_event_loop() {
             if (g_playlist.is_loaded) {
                 switch (ch) {
                     case KEY_UP:
-                        if (g_selected_index > 0) {
-                            g_selected_index--;
-                            render_playlist_content();
+                        if (g_lyric_cursor_mode && g_lyrics.has_lyrics) {
+                            // 歌词编辑模式下，方向键控制歌词光标
+                            pthread_mutex_lock(&g_lyrics.lock);
+                            if (g_lyrics.cursor_index > 0) {
+                                g_lyrics.cursor_index--;
+                                g_lyric_cursor_index = g_lyrics.cursor_index;
+                                double target_timestamp = g_lyrics.lines[g_lyrics.cursor_index].timestamp;
+                                pthread_mutex_unlock(&g_lyrics.lock);
+                                render_lyrics();
+                                if (g_play_state != PLAY_STATE_STOPPED && progress_tracker_is_ready()) {
+                                    seek_audio(target_timestamp);
+                                }
+                            } else {
+                                pthread_mutex_unlock(&g_lyrics.lock);
+                            }
+                        } else {
+                            // 正常模式下，方向键控制播放列表选中项
+                            if (g_selected_index > 0) {
+                                g_selected_index--;
+                                render_playlist_content();
+                            }
                         }
                         break;
                     case KEY_DOWN:
-                        if (g_selected_index < g_playlist.count - 1) {
-                            g_selected_index++;
-                            render_playlist_content();
+                        if (g_lyric_cursor_mode && g_lyrics.has_lyrics) {
+                            // 歌词编辑模式下，方向键控制歌词光标
+                            pthread_mutex_lock(&g_lyrics.lock);
+                            if (g_lyrics.cursor_index < g_lyrics.count - 1) {
+                                g_lyrics.cursor_index++;
+                                g_lyric_cursor_index = g_lyrics.cursor_index;
+                                double target_timestamp = g_lyrics.lines[g_lyrics.cursor_index].timestamp;
+                                pthread_mutex_unlock(&g_lyrics.lock);
+                                render_lyrics();
+                                if (g_play_state != PLAY_STATE_STOPPED && progress_tracker_is_ready()) {
+                                    seek_audio(target_timestamp);
+                                }
+                            } else {
+                                pthread_mutex_unlock(&g_lyrics.lock);
+                            }
+                        } else {
+                            // 正常模式下，方向键控制播放列表选中项
+                            if (g_selected_index < g_playlist.count - 1) {
+                                g_selected_index++;
+                                render_playlist_content();
+                            }
                         }
                         break;
                     case ' ':

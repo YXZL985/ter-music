@@ -876,7 +876,7 @@ void prev_track() {
  * 跳转到指定位置
  * 设置跳转请求标志和目标位置
  */
-void seek_audio(int position) {
+void seek_audio(double position) {
     // 参数校验
     if (position < 0) position = 0;
     if (g_total_duration > 0 && position > g_total_duration) position = g_total_duration;
@@ -884,14 +884,16 @@ void seek_audio(int position) {
     // 检查播放状态 - 使用统一的锁保护
     pthread_mutex_lock(&g_play_mutex);
     
+    int int_position = (int)position;
+    
     // 如果未在播放，仅更新 UI 状态
     if (g_play_state == PLAY_STATE_STOPPED || !g_play_thread_running) {
-        g_current_position = position;
+        g_current_position = int_position;
         pthread_mutex_unlock(&g_play_mutex);
         
         // 同步进度跟踪器（如果已初始化）
         if (progress_tracker_is_ready()) {
-            progress_tracker_seek(position);
+            progress_tracker_seek(int_position);
         }
         
         update_progress_bar();
@@ -903,12 +905,12 @@ void seek_audio(int position) {
     // 注意：保持锁顺序 play_mutex -> seek_mutex，避免死锁
     pthread_mutex_lock(&g_seek_mutex);
     
-    g_seek_position = position;
+    g_seek_position = int_position;
     g_seek_request = 1;
-    g_current_position = position;
+    g_current_position = int_position;
     
     // 同步进度跟踪器
-    progress_tracker_seek(position);
+    progress_tracker_seek(int_position);
     
     pthread_mutex_unlock(&g_seek_mutex);
     pthread_mutex_unlock(&g_play_mutex);

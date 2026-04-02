@@ -10,7 +10,7 @@
 
 // 歌词行结构
 typedef struct {
-    int timestamp;                  // 时间戳（秒）
+    double timestamp;                // 时间戳（秒，包含毫秒）
     char text[MAX_LYRIC_TEXT_LEN];  // 歌词文本
 } LyricLine;
 
@@ -21,6 +21,7 @@ typedef struct {
     int current_index;                  // 当前高亮的起始索引
     int highlight_count;                // 当前需要高亮的行数（最多 2 行）
     int has_lyrics;                     // 是否成功加载歌词
+    int cursor_index;                   // 光标位置索引（编辑模式下使用）
     pthread_mutex_t lock;               // 互斥锁
 } Lyrics;
 

@@ -13,6 +13,7 @@ Lyrics g_lyrics = {
     .current_index = -1,
     .highlight_count = 0,
     .has_lyrics = 0,
+    .cursor_index = -1,
     .lock = PTHREAD_MUTEX_INITIALIZER
 };
 
@@ -23,24 +24,24 @@ extern WINDOW *win_lyrics;
  * 解析 LRC 时间戳字符串
  * 格式：[mm:ss.xx]
  * @param time_str 时间戳字符串（不包含方括号）
- * @return 时间戳（秒）
+ * @return 时间戳（秒，包含毫秒）
  */
-static int parse_timestamp(const char *time_str) {
+static double parse_timestamp(const char *time_str) {
     int mm, ss, xx;
     if (sscanf(time_str, "%d:%d.%d", &mm, &ss, &xx) == 3) {
-        return mm * 60 + ss;  // 忽略毫秒，只取整秒
+        return mm * 60 + ss + xx / 100.0;  // 保留毫秒精度
     }
-    return -1;
+    return -1.0;
 }
 
 /**
  * 解析单行 LRC 内容
  * @param line LRC 文件的一行
- * @param timestamp 输出：时间戳（秒）
+ * @param timestamp 输出：时间戳（秒，包含毫秒）
  * @param text 输出：歌词文本
  * @return 1 表示成功，0 表示失败
  */
-static int parse_lrc_line(const char *line, int *timestamp, char *text) {
+static int parse_lrc_line(const char *line, double *timestamp, char *text) {
     if (!line || !timestamp || !text) {
         return 0;
     }
@@ -71,7 +72,7 @@ static int parse_lrc_line(const char *line, int *timestamp, char *text) {
     time_str[len] = '\0';
     
     // 解析时间戳
-    int ts = parse_timestamp(time_str);
+    double ts = parse_timestamp(time_str);
     if (ts < 0) {
         return 0;
     }
@@ -113,10 +114,10 @@ static int parse_lrc_line(const char *line, int *timestamp, char *text) {
 
 /**
  * 根据时间戳查找歌词索引
- * @param timestamp_seconds 时间戳（秒）
+ * @param timestamp_seconds 时间戳（秒，包含毫秒）
  * @return 歌词索引，-1 表示未找到
  */
-static int find_lyric_index(int timestamp_seconds) {
+static int find_lyric_index(double timestamp_seconds) {
     int i;
     int current_index = -1;
     
@@ -248,7 +249,7 @@ void load_lyrics(const char *audio_path) {
     
     char line[MAX_LYRIC_TEXT_LEN + 32];  // 额外空间用于时间标签
     while (fgets(line, sizeof(line), fp) && count < MAX_LYRIC_LINES) {
-        int timestamp;
+        double timestamp;
         char text[MAX_LYRIC_TEXT_LEN];
         
         if (parse_lrc_line(line, &timestamp, text)) {
@@ -305,7 +306,7 @@ void update_lyrics_display(void) {
     }
     
     // 根据当前播放位置找到对应的歌词行
-    int current_pos = g_current_position;
+    double current_pos = (double)g_current_position;
     int new_index = -1;
     int new_highlight_count = 0;
     
@@ -351,7 +352,11 @@ void render_lyrics(void) {
     
     // 重绘边框和标题
     box(win_lyrics, 0, 0);
-    mvwprintw(win_lyrics, 0, 2, " Lyrics ");
+    if (g_lyric_cursor_mode) {
+        mvwprintw(win_lyrics, 0, 2, " [Edit] Lyrics ");
+    } else {
+        mvwprintw(win_lyrics, 0, 2, " Lyrics ");
+    }
     wbkgd(win_lyrics, COLOR_PAIR(COLOR_PAIR_LYRICS));
     
     pthread_mutex_lock(&g_lyrics.lock);
@@ -363,7 +368,7 @@ void render_lyrics(void) {
         wrefresh(win_lyrics);
         return;
     }
-    
+
     // 如果有歌词但没有当前索引（刚开始播放）
     if (g_lyrics.current_index < 0) {
         mvwprintw(win_lyrics, h / 2 - 1, 2, "Playing...");
@@ -371,7 +376,7 @@ void render_lyrics(void) {
         wrefresh(win_lyrics);
         return;
     }
-    
+
     // 计算可视区域大小
     int visible_lines = h - 4;  // 减去边框和标题行
     if (visible_lines <= 0) {
@@ -380,8 +385,15 @@ void render_lyrics(void) {
         return;
     }
     
-    // 垂直居中策略：使当前高亮行居中显示
-    int start_idx = g_lyrics.current_index - (visible_lines / 2);
+    int current_center_idx;
+    if (g_lyric_cursor_mode && g_lyrics.cursor_index >= 0) {
+        current_center_idx = g_lyrics.cursor_index;
+    } else {
+        current_center_idx = g_lyrics.current_index;
+    }
+    
+    // 垂直居中策略：使当前高亮/光标行居中显示
+    int start_idx = current_center_idx - (visible_lines / 2);
     if (start_idx < 0) start_idx = 0;
     if (start_idx + visible_lines > g_lyrics.count) {
         start_idx = g_lyrics.count - visible_lines;
@@ -393,9 +405,17 @@ void render_lyrics(void) {
         int lyric_idx = start_idx + i;
         int row = i + 1;  // 窗口内行号（从 1 开始，避开边框）
         
-        int is_highlighted = (lyric_idx >= g_lyrics.current_index && 
+        int is_highlighted;
+        int show_marker;
+        
+        if (g_lyric_cursor_mode) {
+            is_highlighted = (lyric_idx == g_lyrics.cursor_index);
+            show_marker = (lyric_idx == g_lyrics.cursor_index);
+        } else {
+            is_highlighted = (lyric_idx >= g_lyrics.current_index && 
                               lyric_idx < g_lyrics.current_index + g_lyrics.highlight_count);
-        int show_marker = (lyric_idx == g_lyrics.current_index);
+            show_marker = (lyric_idx == g_lyrics.current_index);
+        }
         
         render_lyric_line(row, g_lyrics.lines[lyric_idx].text, 
                          is_highlighted, show_marker);
