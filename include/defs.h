@@ -6,7 +6,7 @@
 #include <time.h>
 
 #define APP_NAME "ter-music"
-#define APP_VERSION "v1.1.2"
+#define APP_VERSION "v1.2.0"
 #define APP_AUTHOR "燕戏竹林"
 #define APP_EMAIL "yxzl666xx@outlook.com"
 #define APP_REPO "https://gitee.com/yanxi-bamboo-forest/ter-music.git"
