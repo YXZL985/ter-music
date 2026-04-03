@@ -1,8 +1,8 @@
 # Ter-Music - 终端音乐播放器
 
-[!\[License: GPL v3\](https://img.shields.io/badge/License-GPLv3-blue.svg null)](https://www.gnu.org/licenses/gpl-3.0)
-!\[Language: C]\(<https://img.shields.io/badge/Language-C-blue.svg> null)
-!\[Platform: Linux]\(<https://img.shields.io/badge/Platform-Linux-green.svg> null)
+![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)
+![Language: C](https://img.shields.io/badge/Language-C-blue.svg)
+![Platform: Linux](https://img.shields.io/badge/Platform-Linux-green.svg)
 
 ## 1. 项目介绍
 
