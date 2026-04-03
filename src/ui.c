@@ -783,9 +783,10 @@ void run_event_loop() {
         // 每帧都更新进度条（当播放状态为播放或暂停时）
         if (g_play_state == PLAY_STATE_PLAYING || g_play_state == PLAY_STATE_PAUSED) {
             update_progress_bar();
+            update_lyrics_display();
         }
         
-        // 如果用户没有按键，继续循环以允许进度条更新
+        // 如果用户没有按键，继续循环以允许进度条和歌词更新
         if (ch == ERR) {
             continue;
         }

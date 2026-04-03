@@ -159,6 +159,7 @@ extern FocusArea g_focus_area;
 
 extern int g_current_position;
 extern int g_total_duration;
+extern int g_initial_seek_position;
 extern pthread_mutex_t g_seek_mutex;
 
 extern int g_lyric_cursor_mode;
@@ -177,6 +178,7 @@ void toggle_loop_mode();
 const char *get_loop_mode_str();
 void cleanup();
 void seek_audio(double position);
+int get_and_clear_initial_seek_position(void);
 
 int utf8_str_truncate(char *dest, const char *src, int max_cols);
 int utf8_str_width(const char *src);
