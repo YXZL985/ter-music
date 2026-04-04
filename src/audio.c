@@ -51,6 +51,10 @@ static int buffer_size = 0;
 static int buffer_pos = 0;
 static pthread_mutex_t audio_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+static const char *audio_text(const char *utf8, const char *ascii) {
+    return use_ascii_fallback_ui() ? ascii : utf8;
+}
+
 // 全局变量定义
 PlayState g_play_state = PLAY_STATE_STOPPED; // 当前播放状态
 int g_current_play_index = -1; // 当前播放的歌曲索引
@@ -95,7 +99,7 @@ static void ffmpeg_log_callback(void *ptr, int level, const char *fmt, va_list v
 static int audio_backend_prepare_stream(void) {
 #if defined(HAVE_PULSE)
     if (!pa_connected || !pa_ctx) {
-        update_controls_status("PulseAudio 未连接");
+        update_controls_status(audio_text("PulseAudio 未连接", "PulseAudio disconnected"));
         return -1;
     }
 
@@ -105,7 +109,7 @@ static int audio_backend_prepare_stream(void) {
 
     pa_stream *new_stream = pa_stream_new(pa_ctx, "playback", &pa_ss, NULL);
     if (!new_stream) {
-        update_controls_status("无法创建 PulseAudio 播放流");
+        update_controls_status(audio_text("无法创建 PulseAudio 播放流", "Cannot create PulseAudio stream"));
         return -1;
     }
 
@@ -118,7 +122,7 @@ static int audio_backend_prepare_stream(void) {
     ba.fragsize = (uint32_t)-1;
 
     if (pa_stream_connect_playback(new_stream, NULL, &ba, PA_STREAM_NOFLAGS, NULL, NULL) < 0) {
-        update_controls_status("无法连接 PulseAudio 播放流");
+        update_controls_status(audio_text("无法连接 PulseAudio 播放流", "Cannot connect PulseAudio stream"));
         pa_stream_unref(new_stream);
         return -1;
     }
@@ -126,7 +130,7 @@ static int audio_backend_prepare_stream(void) {
     while (pa_stream_get_state(new_stream) != PA_STREAM_READY) {
         if (pa_stream_get_state(new_stream) == PA_STREAM_FAILED ||
             pa_stream_get_state(new_stream) == PA_STREAM_TERMINATED) {
-            update_controls_status("PulseAudio 播放流初始化失败");
+            update_controls_status(audio_text("PulseAudio 播放流初始化失败", "PulseAudio stream init failed"));
             pa_stream_unref(new_stream);
             return -1;
         }
@@ -137,12 +141,12 @@ static int audio_backend_prepare_stream(void) {
     return 0;
 #else
     if (!alsa_ready) {
-        update_controls_status("ALSA 后端未就绪");
+        update_controls_status(audio_text("ALSA 后端未就绪", "ALSA backend not ready"));
         return -1;
     }
 
     if (snd_pcm_open(&alsa_pcm, g_default_audio_device, SND_PCM_STREAM_PLAYBACK, 0) < 0) {
-        update_controls_status("无法打开 ALSA 设备");
+        update_controls_status(audio_text("无法打开 ALSA 设备", "Cannot open ALSA device"));
         alsa_pcm = NULL;
         return -1;
     }
@@ -154,7 +158,7 @@ static int audio_backend_prepare_stream(void) {
                            44100,
                            1,
                            500000) < 0) {
-        update_controls_status("无法配置 ALSA 设备");
+        update_controls_status(audio_text("无法配置 ALSA 设备", "Cannot configure ALSA device"));
         snd_pcm_close(alsa_pcm);
         alsa_pcm = NULL;
         return -1;
@@ -285,13 +289,13 @@ void init_audio_device() {
 #if defined(HAVE_PULSE)
     pa_ml = pa_mainloop_new();
     if (!pa_ml) {
-        printf("警告：无法创建 PulseAudio 主循环\n");
+        printf("%s\n", audio_text("警告：无法创建 PulseAudio 主循环", "Warning: cannot create PulseAudio mainloop"));
         return;
     }
     
     pa_ctx = pa_context_new(pa_mainloop_get_api(pa_ml), APP_NAME);
     if (!pa_ctx) {
-        printf("警告：无法创建 PulseAudio 上下文\n");
+        printf("%s\n", audio_text("警告：无法创建 PulseAudio 上下文", "Warning: cannot create PulseAudio context"));
         pa_mainloop_free(pa_ml);
         pa_ml = NULL;
         return;
@@ -301,7 +305,7 @@ void init_audio_device() {
     while (pa_context_get_state(pa_ctx) != PA_CONTEXT_READY) {
         if (pa_context_get_state(pa_ctx) == PA_CONTEXT_FAILED ||
             pa_context_get_state(pa_ctx) == PA_CONTEXT_TERMINATED) {
-            printf("警告：无法连接 PulseAudio 服务\n");
+            printf("%s\n", audio_text("警告：无法连接 PulseAudio 服务", "Warning: cannot connect PulseAudio"));
             pa_context_unref(pa_ctx);
             pa_mainloop_free(pa_ml);
             pa_ctx = NULL;
@@ -313,10 +317,10 @@ void init_audio_device() {
     }
     
     pa_connected = 1;
-    printf("已连接到 PulseAudio 服务\n");
+    printf("%s\n", audio_text("已连接到 PulseAudio 服务", "Connected to PulseAudio"));
 #else
     alsa_ready = 1;
-    printf("当前使用 ALSA 音频后端\n");
+    printf("%s\n", audio_text("当前使用 ALSA 音频后端", "Using ALSA backend"));
 #endif
 }
 
@@ -329,15 +333,15 @@ extern void render_controls();
 const char *get_loop_mode_str() {
     switch(g_loop_mode) {
         case LOOP_OFF:
-            return "关闭";
+            return audio_text("关闭", "Off");
         case LOOP_SINGLE:
-            return "单曲";
+            return audio_text("单曲", "Single");
         case LOOP_LIST:
-            return "列表";
+            return audio_text("列表", "List");
         case LOOP_RANDOM:
-            return "随机";
+            return audio_text("随机", "Random");
         default:
-            return "关闭";
+            return audio_text("关闭", "Off");
     }
 }
 
@@ -412,12 +416,12 @@ void *play_audio_thread(void *arg) {
     AVPacket *packet = NULL;
     AVFrame *frame = NULL;
     if (avformat_open_input(&fmt_ctx, file_path, NULL, NULL) != 0) {
-        update_controls_status("无法打开音频文件");
+        update_controls_status(audio_text("无法打开音频文件", "Cannot open audio file"));
         goto cleanup;
     }
     
     if (avformat_find_stream_info(fmt_ctx, NULL) < 0) {
-        update_controls_status("无法读取音频流信息");
+        update_controls_status(audio_text("无法读取音频流信息", "Cannot read stream info"));
         goto cleanup;
     }
 
@@ -466,7 +470,7 @@ void *play_audio_thread(void *arg) {
     }
     
     if (audio_stream_index == -1) {
-        update_controls_status("未找到音频流");
+        update_controls_status(audio_text("未找到音频流", "No audio stream found"));
         goto cleanup;
     }
     
@@ -474,31 +478,31 @@ void *play_audio_thread(void *arg) {
     AVCodecParameters *codec_par = fmt_ctx->streams[audio_stream_index]->codecpar;
     const AVCodec *codec = avcodec_find_decoder(codec_par->codec_id);
     if (!codec) {
-        update_controls_status("当前编解码器不受支持");
+        update_controls_status(audio_text("当前编解码器不受支持", "Unsupported codec"));
         goto cleanup;
     }
     
     // 创建解码器上下文
     codec_ctx = avcodec_alloc_context3(codec);
     if (!codec_ctx) {
-        update_controls_status("无法分配解码器上下文");
+        update_controls_status(audio_text("无法分配解码器上下文", "Cannot allocate codec context"));
         goto cleanup;
     }
     
     if (avcodec_parameters_to_context(codec_ctx, codec_par) < 0) {
-        update_controls_status("无法复制编解码参数");
+        update_controls_status(audio_text("无法复制编解码参数", "Cannot copy codec parameters"));
         goto cleanup;
     }
     
     if (avcodec_open2(codec_ctx, codec, NULL) < 0) {
-        update_controls_status("无法打开编解码器");
+        update_controls_status(audio_text("无法打开编解码器", "Cannot open codec"));
         goto cleanup;
     }
     
     // 音频重采样
     swr_ctx = swr_alloc();
     if (!swr_ctx) {
-        update_controls_status("无法分配重采样器");
+        update_controls_status(audio_text("无法分配重采样器", "Cannot allocate resampler"));
         goto cleanup;
     }
     
@@ -514,7 +518,7 @@ void *play_audio_thread(void *arg) {
     av_opt_set_sample_fmt(swr_ctx, "out_sample_fmt", AV_SAMPLE_FMT_S16, 0);
     
     if (swr_init(swr_ctx) < 0) {
-        update_controls_status("无法初始化重采样器");
+        update_controls_status(audio_text("无法初始化重采样器", "Cannot initialize resampler"));
         goto cleanup;
     }
     
@@ -522,14 +526,14 @@ void *play_audio_thread(void *arg) {
     packet = av_packet_alloc();
     frame = av_frame_alloc();
     if (!packet || !frame) {
-        update_controls_status("无法分配解码数据结构");
+        update_controls_status(audio_text("无法分配解码数据结构", "Cannot allocate decode structures"));
         goto cleanup;
     }
     
     // 创建音频缓冲区
     audio_buffer = malloc(MAX_AUDIO_BUFFER_SIZE);
     if (!audio_buffer) {
-        update_controls_status("无法分配音频缓冲区");
+        update_controls_status(audio_text("无法分配音频缓冲区", "Cannot allocate audio buffer"));
         goto cleanup;
     }
     buffer_size = 0;
@@ -584,7 +588,7 @@ void *play_audio_thread(void *arg) {
             if (ret < 0) {
                 char errbuf[128];
                 av_strerror(ret, errbuf, sizeof(errbuf));
-                update_controls_status("跳转失败");
+                update_controls_status(audio_text("跳转失败", "Seek failed"));
                 // 失败时不重置 UI
             } else {
                 // 成功：flush 解码器缓冲，避免残留旧帧
@@ -602,7 +606,9 @@ void *play_audio_thread(void *arg) {
                 audio_backend_flush_stream();
 
                 char msg[64];
-                snprintf(msg, sizeof(msg), "已跳转到 %02d:%02d", target_position / 60, target_position % 60);
+                snprintf(msg, sizeof(msg),
+                         use_ascii_fallback_ui() ? "Seek to %02d:%02d" : "已跳转到 %02d:%02d",
+                         target_position / 60, target_position % 60);
                 update_controls_status(msg);
                 
                 // 如果跳转到总时长位置，立即停止播放
@@ -676,7 +682,8 @@ void *play_audio_thread(void *arg) {
                     int16_t *samples = (int16_t*)output_data;
                     if (audio_backend_write_samples(samples, converted_samples) < 0) {
                         char err_msg[128];
-                        snprintf(err_msg, sizeof(err_msg), "写入音频设备失败");
+                        snprintf(err_msg, sizeof(err_msg), "%s",
+                                 audio_text("写入音频设备失败", "Audio device write failed"));
                         update_controls_status(err_msg);
                     }
                 }
@@ -822,7 +829,8 @@ void play_audio(int index) {
     pthread_mutex_unlock(&g_play_mutex);
     
     char msg[64];
-    snprintf(msg, sizeof(msg), "正在播放：%s - %s",
+    snprintf(msg, sizeof(msg), "%s%s - %s",
+        audio_text("正在播放：", "Playing: "),
         g_playlist.tracks[index].title, g_playlist.tracks[index].artist);
     update_controls_status(msg);
     add_history_entry(&g_playlist.tracks[index]);

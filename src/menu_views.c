@@ -20,6 +20,7 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <errno.h>
+#include <ctype.h>
 
 extern WINDOW *win_playlist;
 extern WINDOW *win_controls;
@@ -86,6 +87,37 @@ static const char *info_sidebar_items[] = {
 };
 #define INFO_ITEM_COUNT 3
 
+static const char *settings_sidebar_items_ascii[] = {
+    "Theme",
+    "Default Path",
+    "Playback",
+    "Hotkeys",
+    "<- Back"
+};
+
+static const char *history_sidebar_items_ascii[] = {
+    "Folder History",
+    "Clear History",
+    "<- Back"
+};
+
+static const char *playlist_sidebar_items_ascii[] = {
+    "All Playlists",
+    "New Playlist",
+    "<- Back"
+};
+
+static const char *favorites_sidebar_items_ascii[] = {
+    "All Favorites",
+    "<- Back"
+};
+
+static const char *info_sidebar_items_ascii[] = {
+    "About",
+    "Repository",
+    "<- Back"
+};
+
 static const char *color_names[] = {
     "黑色", "红色", "绿色", "黄色",
     "蓝色", "洋红", "青色", "白色"
@@ -95,6 +127,86 @@ static int ncurses_colors[] = {
     COLOR_BLACK, COLOR_RED, COLOR_GREEN, COLOR_YELLOW,
     COLOR_BLUE, COLOR_MAGENTA, COLOR_CYAN, COLOR_WHITE
 };
+
+static void sanitize_ascii_menu_text(char *dest, size_t dest_size, const char *src) {
+    if (!dest || dest_size == 0) {
+        return;
+    }
+
+    dest[0] = '\0';
+    if (!src || src[0] == '\0') {
+        return;
+    }
+
+    size_t write = 0;
+    int prev_space = 1;
+    int saw_non_ascii = 0;
+
+    for (size_t read = 0; src[read] != '\0' && write + 1 < dest_size; read++) {
+        unsigned char c = (unsigned char)src[read];
+
+        if (c < 0x80) {
+            if (isspace(c)) {
+                if (!prev_space) {
+                    dest[write++] = ' ';
+                    prev_space = 1;
+                }
+            } else if (isprint(c)) {
+                dest[write++] = (char)c;
+                prev_space = 0;
+            }
+        } else {
+            saw_non_ascii = 1;
+            if (!prev_space && write + 1 < dest_size) {
+                dest[write++] = ' ';
+                prev_space = 1;
+            }
+        }
+    }
+
+    while (write > 0 && dest[write - 1] == ' ') {
+        write--;
+    }
+    dest[write] = '\0';
+
+    if (write == 0 && saw_non_ascii) {
+        snprintf(dest, dest_size, "[status]");
+    }
+}
+
+static const char **resolve_sidebar_items(const char **items) {
+    if (!use_ascii_fallback_ui()) {
+        return items;
+    }
+    if (items == settings_sidebar_items) {
+        return settings_sidebar_items_ascii;
+    }
+    if (items == history_sidebar_items) {
+        return history_sidebar_items_ascii;
+    }
+    if (items == playlist_sidebar_items) {
+        return playlist_sidebar_items_ascii;
+    }
+    if (items == favorites_sidebar_items) {
+        return favorites_sidebar_items_ascii;
+    }
+    if (items == info_sidebar_items) {
+        return info_sidebar_items_ascii;
+    }
+    return items;
+}
+
+static const char *resolve_menu_title(const char *title) {
+    if (!use_ascii_fallback_ui() || !title) {
+        return title;
+    }
+    if (strcmp(title, "设置 [F2]") == 0) return "Settings [F2]";
+    if (strcmp(title, "历史 [F3]") == 0) return "History [F3]";
+    if (strcmp(title, "歌单 [F4]") == 0) return "Playlists [F4]";
+    if (strcmp(title, "收藏 [F5]") == 0) return "Favorites [F5]";
+    if (strcmp(title, "信息 [F6]") == 0) return "Info [F6]";
+    return title;
+}
 
 static char* extract_json_string(const char *json, const char *key, char *output, size_t output_size) {
     char search_key[128];
@@ -845,7 +957,10 @@ void render_menu_hint_bar(void) {
     
     attron(COLOR_PAIR(COLOR_PAIR_BORDER));
     mvhline(max_y - 1, 0, ' ', max_x);
-    mvprintw(max_y - 1, 2, "F1:主页  F2:设置  F3:历史  F4:歌单  F5:收藏  F6:信息  F7:退出");
+    mvprintw(max_y - 1, 2, "%s",
+             use_ascii_fallback_ui()
+                 ? "F1:Home  F2:Settings  F3:History  F4:Playlists  F5:Favorites  F6:Info  F7:Quit"
+                 : "F1:主页  F2:设置  F3:历史  F4:歌单  F5:收藏  F6:信息  F7:退出");
     attroff(COLOR_PAIR(COLOR_PAIR_BORDER));
     refresh();
 }
@@ -982,7 +1097,12 @@ void init_all_persistent_data(void) {
 }
 
 void show_status_message(const char *msg) {
-    strncpy(g_status_message, msg, sizeof(g_status_message) - 1);
+    if (use_ascii_fallback_ui()) {
+        sanitize_ascii_menu_text(g_status_message, sizeof(g_status_message), msg);
+    } else {
+        strncpy(g_status_message, msg, sizeof(g_status_message) - 1);
+        g_status_message[sizeof(g_status_message) - 1] = '\0';
+    }
     g_status_message_time = time(NULL);
 }
 
@@ -1003,7 +1123,7 @@ void render_menu_frame(const char *title) {
     
     attron(COLOR_PAIR(COLOR_PAIR_BORDER));
     box(stdscr, 0, 0);
-    mvprintw(0, 2, " %s ", title);
+    mvprintw(0, 2, " %s ", resolve_menu_title(title));
     attroff(COLOR_PAIR(COLOR_PAIR_BORDER));
     
     int menu_width = max_x / 4;
@@ -1026,6 +1146,7 @@ void render_menu_sidebar(int selected_idx, const char **items, int item_count) {
     
     int menu_width = max_x / 4;
     int start_y = 2;
+    items = resolve_sidebar_items(items);
     
     attron(COLOR_PAIR(COLOR_PAIR_SIDEBAR));
     

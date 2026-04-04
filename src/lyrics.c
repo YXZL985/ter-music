@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <ncursesw/ncurses.h>
 #include <libgen.h>
 #include <time.h>
@@ -19,6 +20,56 @@ Lyrics g_lyrics = {
 
 // 外部窗口变量声明
 extern WINDOW *win_lyrics;
+
+static const char *lyric_text(const char *utf8, const char *ascii) {
+    return use_ascii_fallback_ui() ? ascii : utf8;
+}
+
+static void sanitize_ascii_lyric(char *dest, size_t dest_size, const char *src) {
+    if (!dest || dest_size == 0) {
+        return;
+    }
+
+    dest[0] = '\0';
+    if (!src || src[0] == '\0') {
+        return;
+    }
+
+    size_t write = 0;
+    int prev_space = 1;
+    int saw_non_ascii = 0;
+
+    for (size_t read = 0; src[read] != '\0' && write + 1 < dest_size; read++) {
+        unsigned char c = (unsigned char)src[read];
+
+        if (c < 0x80) {
+            if (isspace(c)) {
+                if (!prev_space) {
+                    dest[write++] = ' ';
+                    prev_space = 1;
+                }
+            } else if (isprint(c)) {
+                dest[write++] = (char)c;
+                prev_space = 0;
+            }
+        } else {
+            saw_non_ascii = 1;
+            if (!prev_space && write + 1 < dest_size) {
+                dest[write++] = ' ';
+                prev_space = 1;
+            }
+        }
+    }
+
+    while (write > 0 && dest[write - 1] == ' ') {
+        write--;
+    }
+    dest[write] = '\0';
+
+    if (write == 0 && saw_non_ascii) {
+        snprintf(dest, dest_size, "[non-ASCII]");
+    }
+}
 
 /**
  * 解析 LRC 时间戳字符串
@@ -106,7 +157,7 @@ static int parse_lrc_line(const char *line, double *timestamp, char *text) {
     
     // 如果歌词文本为空，使用占位符
     if (len == 0) {
-        strcpy(text, "(纯音乐)");
+        snprintf(text, MAX_LYRIC_TEXT_LEN, "%s", lyric_text("(纯音乐)", "(Instrumental)"));
     }
     
     return 1;
@@ -166,8 +217,15 @@ static void render_lyric_line(int row, const char *text, int is_highlighted, int
         }
     }
     
+    char ascii_text[MAX_LYRIC_TEXT_LEN];
+    const char *display_src = text ? text : "";
+    if (use_ascii_fallback_ui()) {
+        sanitize_ascii_lyric(ascii_text, sizeof(ascii_text), display_src);
+        display_src = ascii_text;
+    }
+
     // 计算文本实际宽度
-    int text_width = utf8_str_width(text);
+    int text_width = utf8_str_width(display_src);
     
     // 确定起始列偏移（用于水平滚动）
     static time_t last_scroll_time = 0;
@@ -190,10 +248,10 @@ static void render_lyric_line(int row, const char *text, int is_highlighted, int
         }
         
         // 使用偏移量截取文本
-        utf8_str_substring(display_text, text, scroll_offset, max_width);
+        utf8_str_substring(display_text, display_src, scroll_offset, max_width);
     } else {
         // 非高亮或文本不超长，使用普通截断
-        utf8_str_truncate(display_text, text, max_width);
+        utf8_str_truncate(display_text, display_src, max_width);
     }
     
     // 应用高亮并显示
@@ -353,9 +411,9 @@ void render_lyrics(void) {
     // 重绘边框和标题
     box(win_lyrics, 0, 0);
     if (g_lyric_cursor_mode) {
-        mvwprintw(win_lyrics, 0, 2, " [定位] 歌词 ");
+        mvwprintw(win_lyrics, 0, 2, "%s", lyric_text(" [定位] 歌词 ", " [Seek] Lyrics "));
     } else {
-        mvwprintw(win_lyrics, 0, 2, " 歌词 ");
+        mvwprintw(win_lyrics, 0, 2, "%s", lyric_text(" 歌词 ", " Lyrics "));
     }
     wbkgd(win_lyrics, COLOR_PAIR(COLOR_PAIR_LYRICS));
     
@@ -363,7 +421,7 @@ void render_lyrics(void) {
     
     if (!g_lyrics.has_lyrics || g_lyrics.count == 0) {
         // 没有歌词时显示提示
-        mvwprintw(win_lyrics, h / 2 - 1, 2, "没有可用歌词");
+        mvwprintw(win_lyrics, h / 2 - 1, 2, "%s", lyric_text("没有可用歌词", "No lyrics available"));
         pthread_mutex_unlock(&g_lyrics.lock);
         wrefresh(win_lyrics);
         return;
@@ -371,7 +429,7 @@ void render_lyrics(void) {
 
     // 如果有歌词但没有当前索引（刚开始播放）
     if (g_lyrics.current_index < 0) {
-        mvwprintw(win_lyrics, h / 2 - 1, 2, "播放中...");
+        mvwprintw(win_lyrics, h / 2 - 1, 2, "%s", lyric_text("播放中...", "Playing..."));
         pthread_mutex_unlock(&g_lyrics.lock);
         wrefresh(win_lyrics);
         return;

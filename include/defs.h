@@ -190,6 +190,7 @@ int utf8_str_width(const char *src);
 int utf8_str_substring(char *dest, const char *src, int start_col, int max_cols);
 int utf8_str_pad(char *dest, size_t dest_size, const char *src, int width);
 void decode_html_entities(char *str);
+int use_ascii_fallback_ui(void);
 
 void update_progress_bar();
 void update_controls_status(const char *msg);
