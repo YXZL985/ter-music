@@ -62,7 +62,7 @@ typedef enum {
 #define MAX_DIR_HISTORY_COUNT 50
 #define MAX_PLAYLISTS_COUNT 50
 #define MAX_PLAYLIST_NAME_LEN 64
-#define VISUALIZER_BAND_COUNT 16
+#define VISUALIZER_BAND_COUNT 24
 
 typedef struct {
     char path[MAX_PATH_LEN];

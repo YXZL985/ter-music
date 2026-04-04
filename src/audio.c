@@ -151,9 +151,9 @@ void push_visualizer_samples(const int16_t *samples, int frame_count, int channe
 
         int previous = g_visualizer_levels[i];
         if (scaled_level > previous) {
-            g_visualizer_levels[i] = (previous * 2 + scaled_level * 6) / 8;
+            g_visualizer_levels[i] = (previous + scaled_level * 3) / 4;
         } else {
-            g_visualizer_levels[i] = (previous * 6 + scaled_level * 2) / 8;
+            g_visualizer_levels[i] = (previous * 3 + scaled_level) / 4;
         }
 
         if (g_visualizer_levels[i] < 2) {

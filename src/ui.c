@@ -146,22 +146,28 @@ static void render_wave_particle_visualizer(void) {
         mvwhline(win_controls, row, 1, ' ', w - 2);
     }
 
-    int band_slots = VISUALIZER_BAND_COUNT;
     int graph_width = w - 4;
-    int cell_width = graph_width / band_slots;
-    if (cell_width < 2) {
+    int band_slots = VISUALIZER_BAND_COUNT;
+    int max_slots = graph_width / 2;
+    if (max_slots < 6) {
         return;
     }
-
-    int bar_width = cell_width - 1;
-    if (bar_width < 1) {
-        bar_width = 1;
+    if (band_slots > max_slots) {
+        band_slots = max_slots;
     }
+
+    int cell_width = graph_width / band_slots;
+    if (cell_width < 2) {
+        cell_width = 2;
+    }
+
+    int bar_width = 1;
 
     int levels[VISUALIZER_BAND_COUNT] = {0};
     int peaks[VISUALIZER_BAND_COUNT] = {0};
     uint64_t last_update_ms = 0;
     get_visualizer_snapshot(levels, peaks, VISUALIZER_BAND_COUNT, &last_update_ms);
+    (void)peaks;
 
     uint64_t now_ms = get_ui_time_ms();
     int inactive_decay = 0;
@@ -176,24 +182,12 @@ static void render_wave_particle_visualizer(void) {
         }
 
         int level = levels[src] - inactive_decay * 7;
-        int peak = peaks[src] - inactive_decay * 5;
         if (level < 0) {
             level = 0;
         }
-        if (peak < 0) {
-            peak = 0;
-        }
-        if (peak < level) {
-            peak = level;
-        }
 
         int bar_height = (level * viz_height + 99) / 100;
-        int peak_height = (peak * viz_height + 99) / 100;
-        if (peak_height > viz_height) {
-            peak_height = viz_height;
-        }
-
-        int bar_col = 2 + slot * cell_width;
+        int bar_col = 2 + slot * cell_width + (cell_width / 2);
         if (bar_col >= w - 1) {
             continue;
         }
@@ -204,24 +198,10 @@ static void render_wave_particle_visualizer(void) {
                 break;
             }
 
-            chtype bar_char = use_ascii_fallback_ui() ? '#' : ACS_CKBOARD;
+            chtype bar_char = use_ascii_fallback_ui() ? '|' : ACS_VLINE;
             for (int dx = 0; dx < bar_width && bar_col + dx < w - 1; dx++) {
                 mvwaddch(win_controls, row, bar_col + dx, bar_char);
             }
-        }
-
-        if (peak_height > 0) {
-            int peak_row = viz_bottom - peak_height;
-            if (peak_row < viz_top) {
-                peak_row = viz_top;
-            }
-            wattron(win_controls, A_BOLD);
-            int peak_col = bar_col + (bar_width / 2);
-            if (peak_col >= w - 1) {
-                peak_col = w - 2;
-            }
-            mvwaddch(win_controls, peak_row, peak_col, use_ascii_fallback_ui() ? 'o' : '*');
-            wattroff(win_controls, A_BOLD);
         }
     }
 }
