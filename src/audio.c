@@ -7,6 +7,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <time.h>
 
 // 音频后端头文件
 #if defined(HAVE_PULSE)
@@ -48,14 +49,24 @@ static int alsa_ready = 0;
 
 static pthread_mutex_t audio_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t g_volume_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t g_visualizer_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_play_control_cond = PTHREAD_COND_INITIALIZER;
 static int g_volume_percent = 100;
 static int g_pending_volume_sync = 0;
 static int g_output_sample_rate = 44100;
 static int g_output_channels = 2;
+static int g_visualizer_levels[VISUALIZER_BAND_COUNT] = {0};
+static int g_visualizer_peaks[VISUALIZER_BAND_COUNT] = {0};
+static uint64_t g_visualizer_last_update_ms = 0;
 
 static const char *audio_text(const char *utf8, const char *ascii) {
     return use_ascii_fallback_ui() ? ascii : utf8;
+}
+
+static uint64_t audio_now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)(ts.tv_nsec / 1000000ULL);
 }
 
 #define PCM_QUEUE_CAPACITY 12
@@ -93,6 +104,88 @@ static int get_configured_latency_ms(void) {
         latency_ms = 250;
     }
     return latency_ms;
+}
+
+void reset_visualizer_state(void) {
+    pthread_mutex_lock(&g_visualizer_mutex);
+    memset(g_visualizer_levels, 0, sizeof(g_visualizer_levels));
+    memset(g_visualizer_peaks, 0, sizeof(g_visualizer_peaks));
+    g_visualizer_last_update_ms = audio_now_ms();
+    pthread_mutex_unlock(&g_visualizer_mutex);
+}
+
+void push_visualizer_samples(const int16_t *samples, int frame_count, int channels) {
+    if (!samples || frame_count <= 0 || channels <= 0) {
+        return;
+    }
+
+    int64_t sums[VISUALIZER_BAND_COUNT] = {0};
+    int counts[VISUALIZER_BAND_COUNT] = {0};
+
+    for (int frame = 0; frame < frame_count; frame++) {
+        int mixed = 0;
+        for (int ch = 0; ch < channels; ch++) {
+            int sample = samples[frame * channels + ch];
+            mixed += sample >= 0 ? sample : -sample;
+        }
+        mixed /= channels;
+
+        int band = (frame * VISUALIZER_BAND_COUNT) / frame_count;
+        if (band >= VISUALIZER_BAND_COUNT) {
+            band = VISUALIZER_BAND_COUNT - 1;
+        }
+        sums[band] += mixed;
+        counts[band]++;
+    }
+
+    pthread_mutex_lock(&g_visualizer_mutex);
+    for (int i = 0; i < VISUALIZER_BAND_COUNT; i++) {
+        int raw_level = counts[i] > 0 ? (int)(sums[i] / counts[i]) : 0;
+        int scaled_level = (raw_level * 100) / 14000;
+        if (scaled_level < 0) {
+            scaled_level = 0;
+        }
+        if (scaled_level > 100) {
+            scaled_level = 100;
+        }
+
+        int previous = g_visualizer_levels[i];
+        if (scaled_level > previous) {
+            g_visualizer_levels[i] = (previous * 2 + scaled_level * 6) / 8;
+        } else {
+            g_visualizer_levels[i] = (previous * 6 + scaled_level * 2) / 8;
+        }
+
+        if (g_visualizer_levels[i] < 2) {
+            g_visualizer_levels[i] = 0;
+        }
+
+        if (g_visualizer_levels[i] > g_visualizer_peaks[i]) {
+            g_visualizer_peaks[i] = g_visualizer_levels[i];
+        } else if (g_visualizer_peaks[i] > 0) {
+            g_visualizer_peaks[i] -= 1;
+        }
+    }
+    g_visualizer_last_update_ms = audio_now_ms();
+    pthread_mutex_unlock(&g_visualizer_mutex);
+}
+
+void get_visualizer_snapshot(int *levels, int *peaks, int max_levels, uint64_t *last_update_ms) {
+    if (!levels || !peaks || max_levels <= 0) {
+        return;
+    }
+
+    int copy_count = max_levels < VISUALIZER_BAND_COUNT ? max_levels : VISUALIZER_BAND_COUNT;
+
+    pthread_mutex_lock(&g_visualizer_mutex);
+    for (int i = 0; i < copy_count; i++) {
+        levels[i] = g_visualizer_levels[i];
+        peaks[i] = g_visualizer_peaks[i];
+    }
+    if (last_update_ms) {
+        *last_update_ms = g_visualizer_last_update_ms;
+    }
+    pthread_mutex_unlock(&g_visualizer_mutex);
 }
 
 static void signal_playback_thread(void) {
@@ -914,6 +1007,7 @@ void *play_audio_thread(void *arg) {
     
     // 重置当前播放位置为 0
     g_current_position = 0;
+    reset_visualizer_state();
     
     // 检查是否需要跳转到特定位置（在开始播放之前）
     // 如果是重启跳转，从全局变量获取目标位置
@@ -1067,6 +1161,7 @@ void *play_audio_thread(void *arg) {
         }
 
         apply_volume_to_samples(chunk->data, chunk->frame_count * output_channels);
+        push_visualizer_samples(chunk->data, chunk->frame_count, output_channels);
         if (audio_backend_write_samples(chunk->data, chunk->frame_count) < 0) {
             update_controls_status(audio_text("写入音频设备失败", "Audio device write failed"));
             playback_error = 1;
@@ -1091,6 +1186,7 @@ cleanup:
     avcodec_free_context(&codec_ctx);
     avformat_close_input(&fmt_ctx);
     progress_tracker_on_stop();
+    reset_visualizer_state();
 
     if (!reached_end_of_stream) {
         g_current_position = 0;
@@ -1320,6 +1416,7 @@ void stop_audio() {
     
     // 清空歌词
     clear_lyrics();
+    reset_visualizer_state();
     
     render_playlist_content();
     render_controls();  // 新增：更新控制栏

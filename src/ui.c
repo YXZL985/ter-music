@@ -81,65 +81,6 @@ static const char *get_control_label(int index) {
     return g_ascii_fallback_ui ? control_labels_ascii[index] : control_labels[index];
 }
 
-static void build_wave_particle_line(char *dest, size_t dest_size, int width, uint64_t tick) {
-    if (!dest || dest_size == 0 || width <= 0) {
-        return;
-    }
-
-    int usable = width;
-    if ((size_t)usable >= dest_size) {
-        usable = (int)dest_size - 1;
-    }
-    if (usable <= 0) {
-        dest[0] = '\0';
-        return;
-    }
-
-    for (int i = 0; i < usable; i++) {
-        dest[i] = ' ';
-    }
-    dest[usable] = '\0';
-
-    if (g_play_state == PLAY_STATE_STOPPED) {
-        snprintf(dest, dest_size, "%s", ui_text("等待播放...", "Idle..."));
-        return;
-    }
-
-    int motion = (int)(tick % 29);
-    int paused = (g_play_state == PLAY_STATE_PAUSED);
-
-    for (int i = 0; i < usable; i++) {
-        int phase = (i * 3 + motion + (g_current_position % 17)) % 18;
-        int amplitude = phase <= 9 ? phase : 18 - phase;
-
-        char c = ' ';
-        if (amplitude >= 8) {
-            c = paused ? ':' : '~';
-        } else if (amplitude >= 6) {
-            c = paused ? '.' : '=';
-        } else if (amplitude >= 4) {
-            c = '-';
-        } else if (amplitude >= 2) {
-            c = '.';
-        }
-        dest[i] = c;
-    }
-
-    int particle_count = usable / 7;
-    if (particle_count < 3) {
-        particle_count = 3;
-    }
-    if (particle_count > 14) {
-        particle_count = 14;
-    }
-
-    for (int i = 0; i < particle_count; i++) {
-        int pos = (int)((tick / 2 + i * 11 + g_current_position * 5) % usable);
-        const char *particle_chars = paused ? "o.." : "*o+.";
-        dest[pos] = particle_chars[i % (int)strlen(particle_chars)];
-    }
-}
-
 static void render_wave_particle_visualizer(void) {
     if (!win_controls || g_current_view != VIEW_MAIN) {
         return;
@@ -147,32 +88,97 @@ static void render_wave_particle_visualizer(void) {
 
     int h, w;
     getmaxyx(win_controls, h, w);
-    if (h < 6 || w < 24) {
+    if (h < 7 || w < 24) {
         return;
     }
 
-    int row = h / 2 - 1;
-    if (row < 1 || row >= h - 2) {
+    int button_row = h / 2;
+    int viz_top = button_row + 1;
+    int viz_bottom = h - 3;
+    int viz_height = viz_bottom - viz_top + 1;
+    if (viz_height < 2) {
         return;
     }
 
-    const char *label = ui_text("波粒二象", "Wave-Particle");
-    int label_width = utf8_str_width(label);
-    int canvas_col = 2 + label_width + 1;
-    int canvas_width = w - canvas_col - 2;
-    if (canvas_width < 8) {
-        return;
+    for (int row = viz_top; row <= viz_bottom; row++) {
+        mvwhline(win_controls, row, 1, ' ', w - 2);
     }
 
-    mvwhline(win_controls, row, 1, ' ', w - 2);
-    mvwprintw(win_controls, row, 2, "%s", label);
+    int band_slots = (w - 4) / 4;
+    if (band_slots < 8) {
+        band_slots = 8;
+    }
+    if (band_slots > VISUALIZER_BAND_COUNT) {
+        band_slots = VISUALIZER_BAND_COUNT;
+    }
 
-    char line[256];
-    build_wave_particle_line(line, sizeof(line), canvas_width, get_ui_time_ms() / 80);
+    int levels[VISUALIZER_BAND_COUNT] = {0};
+    int peaks[VISUALIZER_BAND_COUNT] = {0};
+    uint64_t last_update_ms = 0;
+    get_visualizer_snapshot(levels, peaks, VISUALIZER_BAND_COUNT, &last_update_ms);
 
-    char display_line[256];
-    format_display_text(display_line, sizeof(display_line), line, canvas_width, 1);
-    mvwprintw(win_controls, row, canvas_col, "%s", display_line);
+    uint64_t now_ms = get_ui_time_ms();
+    int inactive_decay = 0;
+    if (last_update_ms > 0 && now_ms > last_update_ms) {
+        inactive_decay = (int)((now_ms - last_update_ms) / 90ULL);
+    }
+
+    int cell_width = (w - 4) / band_slots;
+    if (cell_width < 2) {
+        cell_width = 2;
+    }
+
+    for (int slot = 0; slot < band_slots; slot++) {
+        int src = (slot * VISUALIZER_BAND_COUNT) / band_slots;
+        if (src >= VISUALIZER_BAND_COUNT) {
+            src = VISUALIZER_BAND_COUNT - 1;
+        }
+
+        int level = levels[src] - inactive_decay * 7;
+        int peak = peaks[src] - inactive_decay * 5;
+        if (level < 0) {
+            level = 0;
+        }
+        if (peak < 0) {
+            peak = 0;
+        }
+        if (peak < level) {
+            peak = level;
+        }
+
+        int bar_height = (level * viz_height + 99) / 100;
+        int peak_height = (peak * viz_height + 99) / 100;
+        if (peak_height > viz_height) {
+            peak_height = viz_height;
+        }
+
+        int bar_col = 2 + slot * cell_width + (cell_width / 2);
+        if (bar_col >= w - 1) {
+            continue;
+        }
+
+        for (int fill = 0; fill < bar_height; fill++) {
+            int row = viz_bottom - fill;
+            if (row < viz_top) {
+                break;
+            }
+            char bar_char = use_ascii_fallback_ui() ? '|' : '#';
+            mvwaddch(win_controls, row, bar_col, bar_char);
+            if (bar_col + 1 < w - 1 && cell_width >= 3) {
+                mvwaddch(win_controls, row, bar_col + 1, bar_char);
+            }
+        }
+
+        if (peak_height > 0) {
+            int peak_row = viz_bottom - peak_height;
+            if (peak_row < viz_top) {
+                peak_row = viz_top;
+            }
+            wattron(win_controls, A_BOLD);
+            mvwaddch(win_controls, peak_row, bar_col, use_ascii_fallback_ui() ? 'o' : '*');
+            wattroff(win_controls, A_BOLD);
+        }
+    }
 }
 
 static void build_control_label(int index, char *dest, size_t dest_size) {

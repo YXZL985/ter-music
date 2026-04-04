@@ -2,6 +2,7 @@
 #define DEFS_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <pthread.h>
 #include "progress.h"
 #include <time.h>
@@ -61,6 +62,7 @@ typedef enum {
 #define MAX_DIR_HISTORY_COUNT 50
 #define MAX_PLAYLISTS_COUNT 50
 #define MAX_PLAYLIST_NAME_LEN 64
+#define VISUALIZER_BAND_COUNT 16
 
 typedef struct {
     char path[MAX_PATH_LEN];
@@ -203,6 +205,9 @@ void request_ui_refresh(int dirty_mask);
 void process_pending_ui_refresh(void);
 void reap_finished_playback_thread(void);
 void process_pending_playback_action(void);
+void reset_visualizer_state(void);
+void push_visualizer_samples(const int16_t *samples, int frame_count, int channels);
+void get_visualizer_snapshot(int *levels, int *peaks, int max_levels, uint64_t *last_update_ms);
 
 void apply_color_theme(void);
 
