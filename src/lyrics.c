@@ -106,7 +106,7 @@ static int parse_lrc_line(const char *line, double *timestamp, char *text) {
     
     // 如果歌词文本为空，使用占位符
     if (len == 0) {
-        strcpy(text, "(Instrumental)");
+        strcpy(text, "(纯音乐)");
     }
     
     return 1;
@@ -353,9 +353,9 @@ void render_lyrics(void) {
     // 重绘边框和标题
     box(win_lyrics, 0, 0);
     if (g_lyric_cursor_mode) {
-        mvwprintw(win_lyrics, 0, 2, " [Edit] Lyrics ");
+        mvwprintw(win_lyrics, 0, 2, " [定位] 歌词 ");
     } else {
-        mvwprintw(win_lyrics, 0, 2, " Lyrics ");
+        mvwprintw(win_lyrics, 0, 2, " 歌词 ");
     }
     wbkgd(win_lyrics, COLOR_PAIR(COLOR_PAIR_LYRICS));
     
@@ -363,7 +363,7 @@ void render_lyrics(void) {
     
     if (!g_lyrics.has_lyrics || g_lyrics.count == 0) {
         // 没有歌词时显示提示
-        mvwprintw(win_lyrics, h / 2 - 1, 2, "No lyrics available");
+        mvwprintw(win_lyrics, h / 2 - 1, 2, "没有可用歌词");
         pthread_mutex_unlock(&g_lyrics.lock);
         wrefresh(win_lyrics);
         return;
@@ -371,7 +371,7 @@ void render_lyrics(void) {
 
     // 如果有歌词但没有当前索引（刚开始播放）
     if (g_lyrics.current_index < 0) {
-        mvwprintw(win_lyrics, h / 2 - 1, 2, "Playing...");
+        mvwprintw(win_lyrics, h / 2 - 1, 2, "播放中...");
         pthread_mutex_unlock(&g_lyrics.lock);
         wrefresh(win_lyrics);
         return;

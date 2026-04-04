@@ -12,6 +12,7 @@
 #include <limits.h>
 #include <wchar.h>
 #include <locale.h>
+#include <langinfo.h>
 #include <pthread.h>
 
 extern WINDOW *win_playlist;
@@ -20,25 +21,155 @@ extern WINDOW *win_lyrics;
 
 extern const char *control_labels[];
 
+void render_playlist_content(void);
+void render_controls(void);
+
 // 全局窗口变量
 WINDOW *win_playlist;
 WINDOW *win_controls;
 WINDOW *win_lyrics;
 
 // 控件标签文本
-const char *control_labels[] = {"<<", "Play/Pause", ">>", "Stop", "Loop", "Progress"};
+const char *control_labels[] = {"上一曲", "播放/暂停", "下一曲", "停止", "循环", "进度"};
 
 // 歌词光标操作模式全局变量
 int g_lyric_cursor_mode = 0;
 int g_lyric_cursor_index = -1;
+
+static pthread_mutex_t g_ui_request_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int g_pending_ui_mask = 0;
+static char g_controls_status_message[256] = "";
+static time_t g_controls_status_time = 0;
+
+#define SEEK_STEP_SECONDS 5
+
+static int locale_uses_utf8(void) {
+    const char *codeset = nl_langinfo(CODESET);
+    if (!codeset) {
+        return 0;
+    }
+
+    return strcasecmp(codeset, "UTF-8") == 0 || strcasecmp(codeset, "UTF8") == 0;
+}
+
+static void ensure_utf8_locale(void) {
+    const char *fallbacks[] = {"C.UTF-8", "zh_CN.UTF-8", "en_US.UTF-8", NULL};
+
+    setlocale(LC_ALL, "");
+    if (locale_uses_utf8()) {
+        return;
+    }
+
+    for (int i = 0; fallbacks[i] != NULL; i++) {
+        if (setlocale(LC_ALL, fallbacks[i]) && locale_uses_utf8()) {
+            return;
+        }
+    }
+
+    setlocale(LC_CTYPE, "");
+}
+
+static size_t utf8_next_char(const char *src, wchar_t *wc_out, int *width_out) {
+    mbstate_t state;
+    memset(&state, 0, sizeof(state));
+
+    wchar_t wc = 0;
+    size_t char_len = mbrtowc(&wc, src, MB_CUR_MAX, &state);
+    if (char_len == (size_t)-1 || char_len == (size_t)-2) {
+        wc = (unsigned char)src[0];
+        char_len = 1;
+    } else if (char_len == 0) {
+        if (wc_out) {
+            *wc_out = L'\0';
+        }
+        if (width_out) {
+            *width_out = 0;
+        }
+        return 0;
+    }
+
+    int width = wcwidth(wc);
+    if (width < 0) {
+        width = 1;
+    }
+
+    if (wc_out) {
+        *wc_out = wc;
+    }
+    if (width_out) {
+        *width_out = width;
+    }
+    return char_len;
+}
+
+static void render_controls_status_line(void) {
+    if (!win_controls) {
+        return;
+    }
+
+    int h, w;
+    getmaxyx(win_controls, h, w);
+    if (h <= 2 || w <= 3) {
+        return;
+    }
+
+    char status_msg[sizeof(g_controls_status_message)];
+    time_t status_time = 0;
+
+    pthread_mutex_lock(&g_ui_request_mutex);
+    snprintf(status_msg, sizeof(status_msg), "%s", g_controls_status_message);
+    status_time = g_controls_status_time;
+    pthread_mutex_unlock(&g_ui_request_mutex);
+
+    int status_row = h - 2;
+    mvwhline(win_controls, status_row, 1, ' ', w - 2);
+
+    if (status_msg[0] != '\0' && (time(NULL) - status_time) < 3) {
+        char display_msg[sizeof(g_controls_status_message)];
+        utf8_str_truncate(display_msg, status_msg, w - 4);
+        mvwprintw(win_controls, status_row, 2, "%s", display_msg);
+    }
+}
+
+void request_ui_refresh(int dirty_mask) {
+    if (dirty_mask == 0) {
+        return;
+    }
+
+    pthread_mutex_lock(&g_ui_request_mutex);
+    g_pending_ui_mask |= dirty_mask;
+    pthread_mutex_unlock(&g_ui_request_mutex);
+}
+
+void process_pending_ui_refresh(void) {
+    int dirty_mask = 0;
+
+    pthread_mutex_lock(&g_ui_request_mutex);
+    dirty_mask = g_pending_ui_mask;
+    g_pending_ui_mask = 0;
+    pthread_mutex_unlock(&g_ui_request_mutex);
+
+    if (dirty_mask == 0 || g_current_view != VIEW_MAIN) {
+        return;
+    }
+
+    if (dirty_mask & UI_DIRTY_PLAYLIST) {
+        render_playlist_content();
+    }
+    if (dirty_mask & UI_DIRTY_CONTROLS) {
+        render_controls();
+    }
+    if (dirty_mask & UI_DIRTY_LYRICS) {
+        render_lyrics();
+    }
+}
 
 /**
  * 初始化ncurses环境
  * 设置本地化、终端模式和颜色对
  */
 void init_ncurses() {
-    setlocale(LC_ALL, "");
-    setlocale(LC_CTYPE, "");
+    ensure_utf8_locale();
 
     initscr();
     cbreak();
@@ -67,24 +198,30 @@ int utf8_str_truncate(char *dest, const char *src, int max_cols) {
         if (dest) *dest = '\0';
         return 0;
     }
+
     int cols = 0;
     char *d = dest;
     const char *s = src;
-    while (*s && cols < max_cols) {
-        unsigned char c = *s;
-        int char_len = 0, char_width = 1;
-        if (c < 0x80) { char_len = 1; char_width = 1; }
-        else if ((c & 0xE0) == 0xC0) { char_len = 2; char_width = 2; }
-        else if ((c & 0xF0) == 0xE0) { char_len = 3; char_width = 2; }
-        else if ((c & 0xF8) == 0xF0) { char_len = 4; char_width = 2; }
-        else { char_len = 1; char_width = 1; }
 
-        if (cols + char_width > max_cols) break;
-        for (int i=0; i<char_len; i++) *d++ = *s++;
+    while (*s && cols < max_cols) {
+        int char_width = 1;
+        size_t char_len = utf8_next_char(s, NULL, &char_width);
+        if (char_len == 0 || cols + char_width > max_cols) {
+            break;
+        }
+
+        memcpy(d, s, char_len);
+        d += char_len;
+        s += char_len;
         cols += char_width;
     }
-    if (*s && cols + 3 <= max_cols) strcpy(d, "...");
-    else *d = '\0';
+
+    if (*s && cols + 3 <= max_cols) {
+        memcpy(d, "...", 4);
+    } else {
+        *d = '\0';
+    }
+
     return cols;
 }
 
@@ -95,16 +232,15 @@ int utf8_str_width(const char *src) {
     if (!src) return 0;
     int cols = 0;
     const char *s = src;
+
     while (*s) {
-        unsigned char c = *s;
-        int char_len = 0, char_width = 1;
-        if (c < 0x80) { char_len = 1; char_width = 1; }
-        else if ((c & 0xE0) == 0xC0) { char_len = 2; char_width = 2; }
-        else if ((c & 0xF0) == 0xE0) { char_len = 3; char_width = 2; }
-        else if ((c & 0xF8) == 0xF0) { char_len = 4; char_width = 2; }
-        else { char_len = 1; char_width = 1; }
-        
-        for (int i = 0; i < char_len; i++) s++;
+        int char_width = 1;
+        size_t char_len = utf8_next_char(s, NULL, &char_width);
+        if (char_len == 0) {
+            break;
+        }
+
+        s += char_len;
         cols += char_width;
     }
     return cols;
@@ -123,47 +259,72 @@ int utf8_str_substring(char *dest, const char *src, int start_col, int max_cols)
         if (dest) *dest = '\0';
         return 0;
     }
-    
+
     int cols = 0;
     char *d = dest;
     const char *s = src;
-    
-    // 跳过 start_col 列
+    int result_cols = 0;
+    int leading_padding = 0;
+
     while (*s && cols < start_col) {
-        unsigned char c = *s;
-        int char_len = 0, char_width = 1;
-        if (c < 0x80) { char_len = 1; char_width = 1; }
-        else if ((c & 0xE0) == 0xC0) { char_len = 2; char_width = 2; }
-        else if ((c & 0xF0) == 0xE0) { char_len = 3; char_width = 2; }
-        else if ((c & 0xF8) == 0xF0) { char_len = 4; char_width = 2; }
-        else { char_len = 1; char_width = 1; }
-        
-        if (cols + char_width > start_col) {
-            // 部分进入可视区域，从这个字符开始
+        int char_width = 1;
+        size_t char_len = utf8_next_char(s, NULL, &char_width);
+        if (char_len == 0) {
             break;
         }
-        for (int i = 0; i < char_len; i++) s++;
+
+        if (cols + char_width > start_col) {
+            leading_padding = cols + char_width - start_col;
+            s += char_len;
+            break;
+        }
+
+        s += char_len;
         cols += char_width;
     }
-    
-    // 从当前位置开始复制最多 max_cols 列的字符
-    int result_cols = 0;
+
+    while (leading_padding > 0 && result_cols < max_cols) {
+        *d++ = ' ';
+        leading_padding--;
+        result_cols++;
+    }
+
     while (*s && result_cols < max_cols) {
-        unsigned char c = *s;
-        int char_len = 0, char_width = 1;
-        if (c < 0x80) { char_len = 1; char_width = 1; }
-        else if ((c & 0xE0) == 0xC0) { char_len = 2; char_width = 2; }
-        else if ((c & 0xF0) == 0xE0) { char_len = 3; char_width = 2; }
-        else if ((c & 0xF8) == 0xF0) { char_len = 4; char_width = 2; }
-        else { char_len = 1; char_width = 1; }
-        
-        if (result_cols + char_width > max_cols) break;
-        for (int i = 0; i < char_len; i++) *d++ = *s++;
+        int char_width = 1;
+        size_t char_len = utf8_next_char(s, NULL, &char_width);
+        if (char_len == 0 || result_cols + char_width > max_cols) {
+            break;
+        }
+
+        memcpy(d, s, char_len);
+        d += char_len;
+        s += char_len;
         result_cols += char_width;
     }
+
     *d = '\0';
-    
+
     return result_cols;
+}
+
+int utf8_str_pad(char *dest, size_t dest_size, const char *src, int width) {
+    if (!dest || dest_size == 0 || width <= 0) {
+        if (dest && dest_size > 0) {
+            dest[0] = '\0';
+        }
+        return 0;
+    }
+
+    utf8_str_truncate(dest, src ? src : "", width);
+
+    int current_width = utf8_str_width(dest);
+    size_t len = strlen(dest);
+    while (current_width < width && len + 1 < dest_size) {
+        dest[len++] = ' ';
+        current_width++;
+    }
+    dest[len] = '\0';
+    return current_width;
 }
 
 /**
@@ -202,16 +363,16 @@ void create_layout() {
     // 1. 创建播放列表窗口 (左上)
     win_playlist = newwin(playlist_height, main_width, 1, 1);
     box(win_playlist, 0, 0);
-    mvwprintw(win_playlist, 0, 2, " Play List ");
+    mvwprintw(win_playlist, 0, 2, " 播放列表 ");
     wbkgd(win_playlist, COLOR_PAIR(COLOR_PAIR_PLAYLIST));
     wrefresh(win_playlist);
 
     // 2. 创建控制栏窗口 (左下)
     win_controls = newwin(controls_height, main_width, 1 + playlist_height, 1);
     box(win_controls, 0, 0);
-    const char *focus_hint = g_control_focus ? "[Ctrl Focus]" : "[List Focus]";
-    const char *lyric_hint = g_lyric_cursor_mode ? "[D:ExitLyric]" : "[D:LyricEdit]";
-    mvwprintw(win_controls, 0, 2, " Controls [Space:Act] [C:FocusCtrl] [L:FocusList] %s %s", focus_hint, lyric_hint);
+    const char *focus_hint = g_control_focus ? "[控件焦点]" : "[列表焦点]";
+    const char *lyric_hint = g_lyric_cursor_mode ? "[D:退出定位]" : "[D:歌词定位]";
+    mvwprintw(win_controls, 0, 2, " 控制区 [空格:执行] [C:控件] [L:列表] %s %s", focus_hint, lyric_hint);
     wbkgd(win_controls, COLOR_PAIR(COLOR_PAIR_CONTROLS));
     
     wrefresh(win_controls);
@@ -221,10 +382,10 @@ void create_layout() {
     if (lyrics_height < 3) lyrics_height = 3;
     win_lyrics = newwin(lyrics_height, lyrics_width, 1, 1 + main_width);
     box(win_lyrics, 0, 0);
-    mvwprintw(win_lyrics, 0, 2, " Lyrics ");
+    mvwprintw(win_lyrics, 0, 2, " 歌词 ");
     wbkgd(win_lyrics, COLOR_PAIR(COLOR_PAIR_LYRICS));
     
-    mvwprintw(win_lyrics, 2, 2, "No lyrics loaded.");
+    mvwprintw(win_lyrics, 2, 2, "未加载歌词。");
     wrefresh(win_lyrics);
 
     // --- 新增：绘制分隔线 ---
@@ -262,7 +423,7 @@ void render_playlist_content() {
     }
     werase(win_playlist); // 清空窗口内容
     box(win_playlist, 0, 0);
-    mvwprintw(win_playlist, 0, 2, " Play List ");
+    mvwprintw(win_playlist, 0, 2, " 播放列表 ");
     wbkgd(win_playlist, COLOR_PAIR(COLOR_PAIR_PLAYLIST));
 
     int h, w;
@@ -271,9 +432,9 @@ void render_playlist_content() {
     
     // 如果未加载，显示提示信息
     if (!g_playlist.is_loaded) {
-        mvwprintw(win_playlist, h/2 - 1, 2, "Playlist is empty.");
-        mvwprintw(win_playlist, h/2, 2, "Press 'O' to open music folder.");
-        mvwprintw(win_playlist, h/2 + 1, 2, "Current Path: %s", g_playlist.folder_path[0] ? g_playlist.folder_path : "(None)");
+        mvwprintw(win_playlist, h/2 - 1, 2, "播放列表为空。");
+        mvwprintw(win_playlist, h/2, 2, "按 'O' 打开音乐目录。");
+        mvwprintw(win_playlist, h/2 + 1, 2, "当前路径：%s", g_playlist.folder_path[0] ? g_playlist.folder_path : "(无)");
     } else {
         int start_idx = 0;
         int visible_lines = content_height - 5; // 预留 5 行给底部状态栏
@@ -295,20 +456,20 @@ void render_playlist_content() {
             char truncated_title[MAX_META_LEN];
             char truncated_artist[MAX_META_LEN];
             
-            utf8_str_truncate(truncated_title, t->title, title_width - 1);
-            utf8_str_truncate(truncated_artist, t->artist, artist_width - 1);
+            utf8_str_pad(truncated_title, sizeof(truncated_title), t->title, title_width - 1);
+            utf8_str_pad(truncated_artist, sizeof(truncated_artist), t->artist, artist_width - 1);
 
             if (idx == g_selected_index && g_control_focus == 0) {
                 wattron(win_playlist, A_REVERSE);
-                mvwprintw(win_playlist, i + 1, 1, " %-*s %-*s ", title_width, truncated_title, artist_width, truncated_artist);
+                mvwprintw(win_playlist, i + 1, 1, " %s %s ", truncated_title, truncated_artist);
                 wattroff(win_playlist, A_REVERSE);
             } else {
-                mvwprintw(win_playlist, i + 1, 2, "%-*s %-*s", title_width, truncated_title, artist_width, truncated_artist);
+                mvwprintw(win_playlist, i + 1, 2, "%s %s", truncated_title, truncated_artist);
             }
         }
         
         if (g_playlist.count == 0) {
-             mvwprintw(win_playlist, 1, 2, "No audio files found in this directory.");
+             mvwprintw(win_playlist, 1, 2, "当前目录下没有音频文件。");
         }
 
         // --- 新增：在播放列表底部绘制状态栏 ---
@@ -319,14 +480,14 @@ void render_playlist_content() {
         char status_msg[MAX_META_LEN];
         switch (g_play_state) {
             case PLAY_STATE_PLAYING:
-                strcpy(status_msg, "Playing");
+                strcpy(status_msg, "播放中");
                 break;
             case PLAY_STATE_PAUSED:
-                strcpy(status_msg, "Paused");
+                strcpy(status_msg, "已暂停");
                 break;
             case PLAY_STATE_STOPPED:
             default:
-                strcpy(status_msg, "Stopped");
+                strcpy(status_msg, "已停止");
                 break;
         }
         
@@ -356,15 +517,15 @@ void render_playlist_content() {
             utf8_str_truncate(truncated_artist, t->artist, artist_width - 1);
             utf8_str_truncate(truncated_album, t->album, album_width - 1);
             
-            mvwprintw(win_playlist, status_line + 1, 2, "Status: %s | Loop: %s", status_msg, get_loop_mode_str());
-            mvwprintw(win_playlist, status_line + 2, 2, "Title: %s", truncated_title); 
-            mvwprintw(win_playlist, status_line + 3, 2, "Artist: %s", truncated_artist);
-            mvwprintw(win_playlist, status_line + 4, 2, "Album: %s", truncated_album);
+            mvwprintw(win_playlist, status_line + 1, 2, "状态：%s | 循环：%s", status_msg, get_loop_mode_str());
+            mvwprintw(win_playlist, status_line + 2, 2, "标题：%s", truncated_title);
+            mvwprintw(win_playlist, status_line + 3, 2, "艺术家：%s", truncated_artist);
+            mvwprintw(win_playlist, status_line + 4, 2, "专辑：%s", truncated_album);
         } else {
-             mvwprintw(win_playlist, status_line + 1, 2, "Status: %s | Track: --", status_msg);
-             mvwprintw(win_playlist, status_line + 2, 2, "Title: --");
-             mvwprintw(win_playlist, status_line + 3, 2, "Artist: --");
-             mvwprintw(win_playlist, status_line + 4, 2, "Album: --");
+             mvwprintw(win_playlist, status_line + 1, 2, "状态：%s | 曲目：--", status_msg);
+             mvwprintw(win_playlist, status_line + 2, 2, "标题：--");
+             mvwprintw(win_playlist, status_line + 3, 2, "艺术家：--");
+             mvwprintw(win_playlist, status_line + 4, 2, "专辑：--");
         }
     }
     wrefresh(win_playlist);
@@ -383,9 +544,9 @@ void render_controls() {
     werase(win_controls);
     box(win_controls, 0, 0);
     
-    const char *focus_hint = g_control_focus ? "[Ctrl Focus]" : "[List Focus]";
-    const char *lyric_hint = g_lyric_cursor_mode ? "[D:ExitLyric]" : "[D:LyricEdit]";
-    mvwprintw(win_controls, 0, 2, " Controls [Space:Act] [C:FocusCtrl] [L:FocusList] %s %s", focus_hint, lyric_hint);
+    const char *focus_hint = g_control_focus ? "[控件焦点]" : "[列表焦点]";
+    const char *lyric_hint = g_lyric_cursor_mode ? "[D:退出定位]" : "[D:歌词定位]";
+    mvwprintw(win_controls, 0, 2, " 控制区 [空格:执行] [C:控件] [L:列表] %s %s", focus_hint, lyric_hint);
     wbkgd(win_controls, COLOR_PAIR(COLOR_PAIR_CONTROLS));
 
     int h, w;
@@ -472,7 +633,13 @@ void render_controls() {
     // 计算按钮总宽度以便居中
     int total_len = 0;
     for(int i=0; i<CONTROL_COUNT-1; i++) { // 不包括进度条
-        total_len += strlen(control_labels[i]) + 4; // 标签 + [ ] + 空格
+        char display_label[32];
+        if (i == 4) {
+            snprintf(display_label, sizeof(display_label), "%s:%s", control_labels[i], get_loop_mode_str());
+        } else {
+            utf8_str_truncate(display_label, control_labels[i], sizeof(display_label) - 1);
+        }
+        total_len += utf8_str_width(display_label) + 4;
     }
     int start_col = (w - total_len) / 2;
     if (start_col < 1) start_col = 1;
@@ -485,7 +652,7 @@ void render_controls() {
         } else {
             utf8_str_truncate(display_label, control_labels[i], sizeof(display_label) - 1);
         }
-        int len = strlen(display_label);
+        int len = utf8_str_width(display_label);
         
         if (i == g_current_control_idx && g_control_focus == 1) {
             // 高亮当前选中的控件
@@ -499,6 +666,7 @@ void render_controls() {
         current_col += len + 4; // 移动到下一个按钮位置
     }
 
+    render_controls_status_line();
     wrefresh(win_controls);
 }
 
@@ -606,16 +774,30 @@ void update_progress_bar() {
  * 在控制栏底部显示临时消息
  */
 void update_controls_status(const char *msg) {
-    // 空指针检查：避免win_controls未初始化时崩溃
-    if (!win_controls) {
+    pthread_mutex_lock(&g_ui_request_mutex);
+    snprintf(g_controls_status_message, sizeof(g_controls_status_message), "%s", msg ? msg : "");
+    g_controls_status_time = time(NULL);
+    g_pending_ui_mask |= UI_DIRTY_CONTROLS;
+    pthread_mutex_unlock(&g_ui_request_mutex);
+}
+
+static void seek_relative_seconds(int delta_seconds) {
+    if (delta_seconds == 0 || g_play_state == PLAY_STATE_STOPPED || g_total_duration <= 0) {
         return;
     }
-    int h, w;
-    getmaxyx(win_controls, h, w);
-    mvwprintw(win_controls, h-1, 2, "%s", msg);
-    wclrtoeol(win_controls);
-    wrefresh(win_controls);
-    // 移除阻塞的sleep调用，让状态信息自然显示
+
+    int current_pos = g_current_position;
+    int new_pos = current_pos + delta_seconds;
+    if (new_pos < 0) {
+        new_pos = 0;
+    }
+    if (new_pos > g_total_duration) {
+        new_pos = g_total_duration;
+    }
+
+    if (new_pos != current_pos) {
+        seek_audio((double)new_pos);
+    }
 }
 
 void prompt_open_folder() {
@@ -629,13 +811,9 @@ void prompt_open_folder() {
     int max_y, max_x;
     getmaxyx(win_controls, max_y, max_x);
     
-    mvwprintw(win_controls, 4, 2, "Enter folder path: ");
+    mvwprintw(win_controls, 4, 2, "输入目录路径：");
     wclrtoeol(win_controls);
     wrefresh(win_controls);
-    
-    // 获取提示文本后的起始光标位置
-    int prompt_len = 18; // "Enter folder path: " 的长度
-    int start_x = 2 + prompt_len;
     
     char input_path[MAX_PATH_LEN];
     memset(input_path, 0, sizeof(input_path));
@@ -732,10 +910,10 @@ void prompt_open_folder() {
             if (home) {
                 snprintf(expanded_path, sizeof(expanded_path), "%s%s", home, input_path + 1);
             } else {
-                utf8_str_truncate(expanded_path, input_path, sizeof(expanded_path) - 1);
+                snprintf(expanded_path, sizeof(expanded_path), "%s", input_path);
             }
         } else {
-            utf8_str_truncate(expanded_path, input_path, sizeof(expanded_path) - 1);
+            snprintf(expanded_path, sizeof(expanded_path), "%s", input_path);
         }
         
         struct stat s;
@@ -745,20 +923,20 @@ void prompt_open_folder() {
                 add_dir_history_entry(expanded_path);
                 
                 if (g_app_config.remember_last_path) {
-                    strncpy(g_app_config.last_opened_path, expanded_path, MAX_PATH_LEN - 1);
+                    snprintf(g_app_config.last_opened_path, sizeof(g_app_config.last_opened_path), "%s", expanded_path);
                     save_config();
                 }
                 
-                update_controls_status("Folder loaded successfully");
+                update_controls_status("目录加载成功");
                 g_selected_index = 0;
                 render_playlist_content();
             } else {
-                update_controls_status("No audio files found");
+                update_controls_status("未找到音频文件");
                 g_playlist.is_loaded = 0;
                 render_playlist_content();
             }
         } else {
-            update_controls_status("Invalid path!");
+            update_controls_status("路径无效");
             g_playlist.is_loaded = 0;
             render_playlist_content();
         }
@@ -775,16 +953,24 @@ void run_event_loop() {
     // 初始渲染
     render_playlist_content();
     render_controls(); // 初始绘制控件
+    render_lyrics();
     
     // 设置输入超时为 10ms（100 FPS 刷新率，确保进度条流畅）
     timeout(10);
     
-    while ((ch = getch()) != 'q') {
+    while (1) {
+        reap_finished_playback_thread();
+        process_pending_playback_action();
+        process_pending_ui_refresh();
+
+        ch = getch();
+
         // 每帧都更新进度条（当播放状态为播放或暂停时）
         if (g_play_state == PLAY_STATE_PLAYING || g_play_state == PLAY_STATE_PAUSED) {
             update_progress_bar();
-            update_lyrics_display();
         }
+
+        process_pending_ui_refresh();
         
         // 如果用户没有按键，继续循环以允许进度条和歌词更新
         if (ch == ERR) {
@@ -850,9 +1036,9 @@ void run_event_loop() {
                         // 激活时，初始化光标位置为当前播放歌词行
                         g_lyrics.cursor_index = g_lyrics.current_index;
                         g_lyric_cursor_index = g_lyrics.cursor_index;
-                        update_controls_status("Lyric edit mode activated");
+                        update_controls_status("已进入歌词定位模式");
                     } else {
-                        update_controls_status("Lyric edit mode deactivated");
+                        update_controls_status("已退出歌词定位模式");
                     }
                     pthread_mutex_unlock(&g_lyrics.lock);
                     render_controls();
@@ -861,7 +1047,7 @@ void run_event_loop() {
                 } else {
                     pthread_mutex_unlock(&g_lyrics.lock);
                     if (!g_lyrics.has_lyrics) {
-                        update_controls_status("No lyrics available for editing");
+                        update_controls_status("当前没有可定位的歌词");
                     }
                     continue;
                 }
@@ -882,31 +1068,11 @@ void run_event_loop() {
                     render_controls();
                     break;
                 case ',':
-                    // 后退 3 秒 - 增加前置条件检查
-                    if (g_play_state != PLAY_STATE_STOPPED && 
-                        g_total_duration > 0 && 
-                        progress_tracker_is_ready()) {
-                        
-                        int current_pos = progress_tracker_get_position_seconds();
-                        double new_pos = (double)(current_pos - 3);
-                        if (new_pos < 0) new_pos = 0;
-                        
-                        seek_audio(new_pos);
-                    }
+                    seek_relative_seconds(-SEEK_STEP_SECONDS);
                     break;
 
                 case '.':
-                    // 前进 3 秒 - 增加前置条件检查
-                    if (g_play_state != PLAY_STATE_STOPPED && 
-                        g_total_duration > 0 && 
-                        progress_tracker_is_ready()) {
-                        
-                        int current_pos = progress_tracker_get_position_seconds();
-                        double new_pos = (double)(current_pos + 3);
-                        if (new_pos > g_total_duration) new_pos = g_total_duration;
-                        
-                        seek_audio(new_pos);
-                    }
+                    seek_relative_seconds(SEEK_STEP_SECONDS);
                     break;
                 case ' ':
                     // 执行当前选中的控件功能
@@ -1020,9 +1186,9 @@ void run_event_loop() {
                             Track *t = &g_playlist.tracks[g_selected_index];
                             int result = add_to_favorites(t);
                             if (result == 0) {
-                                update_controls_status("Added to favorites!");
+                                update_controls_status("已添加到收藏");
                             } else {
-                                update_controls_status("Already in favorites or full");
+                                update_controls_status("收藏已存在或已满");
                             }
                         }
                         break;
@@ -1036,7 +1202,7 @@ void run_event_loop() {
 
                             WINDOW *win_win = newwin(max_y - 4, max_x - 4, 2, 2);
                             box(win_win, 0, 0);
-                            mvwprintw(win_win, 0, 2, " Select Playlist ");
+                            mvwprintw(win_win, 0, 2, " 选择歌单 ");
                             wbkgd(win_win, COLOR_PAIR(COLOR_PAIR_PLAYLIST));
 
                             int start_y = 2;
@@ -1050,14 +1216,18 @@ void run_event_loop() {
                                     UserPlaylist *pl = &g_playlist_manager.playlists[idx];
                                     if (idx == selected) {
                                         wattron(win_win, A_REVERSE);
-                                        mvwprintw(win_win, start_y + i, 2, " %-30s (%d tracks)", pl->name, pl->track_count);
+                                        char playlist_name[MAX_PLAYLIST_NAME_LEN + 8];
+                                        utf8_str_pad(playlist_name, sizeof(playlist_name), pl->name, 30);
+                                        mvwprintw(win_win, start_y + i, 2, " %s (%d 首)", playlist_name, pl->track_count);
                                         wattroff(win_win, A_REVERSE);
                                     } else {
-                                        mvwprintw(win_win, start_y + i, 2, " %-30s (%d tracks)", pl->name, pl->track_count);
+                                        char playlist_name[MAX_PLAYLIST_NAME_LEN + 8];
+                                        utf8_str_pad(playlist_name, sizeof(playlist_name), pl->name, 30);
+                                        mvwprintw(win_win, start_y + i, 2, " %s (%d 首)", playlist_name, pl->track_count);
                                     }
                                 }
 
-                                mvwprintw(win_win, max_y - 6, 2, "↑/↓: Navigate | ENTER: Select | ESC: Cancel");
+                                mvwprintw(win_win, max_y - 6, 2, "↑/↓: 选择 | ENTER: 确认 | ESC: 取消");
                                 wrefresh(win_win);
 
                                 int c = wgetch(win_win);
@@ -1080,11 +1250,11 @@ void run_event_loop() {
                                 } else if (c == 10 || c == ' ') {
                                     int result = add_track_to_playlist(selected, t);
                                       if (result == 0) {
-                                          update_controls_status("Track added to playlist!");
+                                          update_controls_status("已添加到歌单");
                                       } else if (result == -3) {
-                                          update_controls_status("Playlist is full");
+                                          update_controls_status("歌单已满");
                                       } else {
-                                          update_controls_status("Track already in playlist");
+                                          update_controls_status("歌曲已在歌单中");
                                       }
                                     break;
                                 }
@@ -1096,7 +1266,7 @@ void run_event_loop() {
                              render_controls();
                              render_lyrics();
                         } else if (g_playlist_manager.count == 0) {
-                            update_controls_status("No playlists. Create one in F4 menu.");
+                            update_controls_status("还没有歌单，请先到 F4 新建");
                         }
                         break;
                 }
@@ -1124,8 +1294,19 @@ void run_event_loop() {
  * 释放窗口并结束ncurses模式
  */
 void cleanup() {
-    delwin(win_playlist);
-    delwin(win_controls);
-    delwin(win_lyrics);
+    stop_audio();
+
+    if (win_playlist) {
+        delwin(win_playlist);
+        win_playlist = NULL;
+    }
+    if (win_controls) {
+        delwin(win_controls);
+        win_controls = NULL;
+    }
+    if (win_lyrics) {
+        delwin(win_lyrics);
+        win_lyrics = NULL;
+    }
     endwin(); // 结束 ncurses 模式
 }

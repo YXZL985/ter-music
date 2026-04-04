@@ -14,7 +14,24 @@ pkg_check_modules(AVCODEC REQUIRED libavcodec)
 pkg_check_modules(AVFORMAT REQUIRED libavformat)
 pkg_check_modules(SWRESAMPLE REQUIRED libswresample)
 pkg_check_modules(AVUTIL REQUIRED libavutil)
-pkg_check_modules(PULSE REQUIRED libpulse)
+pkg_check_modules(PULSE libpulse)
+
+if(PULSE_FOUND)
+    set(AUDIO_BACKEND_NAME "PulseAudio")
+    set(AUDIO_BACKEND_INCLUDE_DIRS ${PULSE_INCLUDE_DIRS})
+    set(AUDIO_BACKEND_LIBRARIES ${PULSE_LIBRARIES})
+    set(AUDIO_BACKEND_CFLAGS ${PULSE_CFLAGS_OTHER})
+    set(AUDIO_BACKEND_DEFINES HAVE_PULSE=1)
+else()
+    pkg_check_modules(ALSA REQUIRED alsa)
+    set(AUDIO_BACKEND_NAME "ALSA")
+    set(AUDIO_BACKEND_INCLUDE_DIRS ${ALSA_INCLUDE_DIRS})
+    set(AUDIO_BACKEND_LIBRARIES ${ALSA_LIBRARIES})
+    set(AUDIO_BACKEND_CFLAGS ${ALSA_CFLAGS_OTHER})
+    set(AUDIO_BACKEND_DEFINES HAVE_ALSA=1)
+endif()
+
+message(STATUS "Using audio backend: ${AUDIO_BACKEND_NAME}")
 
 # 查找ncursesw库
 find_library(NCURSESW_LIBRARY NAMES ncursesw)
@@ -46,7 +63,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${AVFORMAT_INCLUDE_DIRS}
     ${SWRESAMPLE_INCLUDE_DIRS}
     ${AVUTIL_INCLUDE_DIRS}
-    ${PULSE_INCLUDE_DIRS}
+    ${AUDIO_BACKEND_INCLUDE_DIRS}
 )
 
 # 链接库
@@ -55,7 +72,7 @@ target_link_libraries(${PROJECT_NAME}
     ${AVFORMAT_LIBRARIES}
     ${SWRESAMPLE_LIBRARIES}
     ${AVUTIL_LIBRARIES}
-    ${PULSE_LIBRARIES}
+    ${AUDIO_BACKEND_LIBRARIES}
     ${NCURSESW_LIBRARY}
     ${PTHREAD_LIBRARY}
 )
@@ -66,12 +83,13 @@ target_compile_options(${PROJECT_NAME} PRIVATE
     ${AVFORMAT_CFLAGS_OTHER}
     ${SWRESAMPLE_CFLAGS_OTHER}
     ${AVUTIL_CFLAGS_OTHER}
-    ${PULSE_CFLAGS_OTHER}
+    ${AUDIO_BACKEND_CFLAGS}
 )
 
 # 添加预处理器定义
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     _GNU_SOURCE
+    ${AUDIO_BACKEND_DEFINES}
 )
 
 # 安装规则
