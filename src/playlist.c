@@ -28,6 +28,59 @@ int g_control_focus = 0;
 // 当前选中的控件索引 (0:上一曲，1:播放/暂停，2:下一曲，3:停止，4:循环)
 int g_current_control_idx = 1;
 
+void decode_html_entities(char *str) {
+    if (!str) {
+        return;
+    }
+
+    char *read = str;
+    char *write = str;
+
+    while (*read) {
+        if (*read == '&') {
+            if (strncmp(read, "&amp;", 5) == 0) {
+                *write++ = '&';
+                read += 5;
+                continue;
+            }
+            if (strncmp(read, "&lt;", 4) == 0) {
+                *write++ = '<';
+                read += 4;
+                continue;
+            }
+            if (strncmp(read, "&gt;", 4) == 0) {
+                *write++ = '>';
+                read += 4;
+                continue;
+            }
+            if (strncmp(read, "&quot;", 6) == 0) {
+                *write++ = '"';
+                read += 6;
+                continue;
+            }
+            if (strncmp(read, "&apos;", 6) == 0) {
+                *write++ = '\'';
+                read += 6;
+                continue;
+            }
+            if (strncmp(read, "&#39;", 5) == 0) {
+                *write++ = '\'';
+                read += 5;
+                continue;
+            }
+            if (strncmp(read, "&nbsp;", 6) == 0) {
+                *write++ = ' ';
+                read += 6;
+                continue;
+            }
+        }
+
+        *write++ = *read++;
+    }
+
+    *write = '\0';
+}
+
 /**
  * 检查文件是否为支持的音频格式
  * 通过文件扩展名判断
@@ -48,7 +101,7 @@ int is_audio_file(const char *filename) {
  * 获取音频元数据
  * 从文件路径提取基本元数据信息
  * 注意：实际项目中应在此处调用 taglib 或其他库读取 ID3 标签
- * 此处若无真实标签，则默认标题为文件名，艺术家为 "Unknown Artist"
+ * 此处若无真实标签，则默认标题为文件名，艺术家为“未知艺术家”
  */
 void get_audio_metadata(const char *path, char *title, char *artist, char *album) {
     // 提取文件名作为默认标题
@@ -63,8 +116,8 @@ void get_audio_metadata(const char *path, char *title, char *artist, char *album
 
     // 初始化默认值
     utf8_str_truncate(title, temp_title, MAX_META_LEN - 1);
-    utf8_str_truncate(artist, "Unknown Artist", MAX_META_LEN - 1);
-    utf8_str_truncate(album, "Unknown Album", MAX_META_LEN - 1);
+    utf8_str_truncate(artist, "未知艺术家", MAX_META_LEN - 1);
+    utf8_str_truncate(album, "未知专辑", MAX_META_LEN - 1);
     
     // 尝试从文件名中提取元数据（格式：Artist - Title）
     char *dash_pos = strstr(temp_title, " - ");
@@ -73,6 +126,10 @@ void get_audio_metadata(const char *path, char *title, char *artist, char *album
         utf8_str_truncate(artist, temp_title, MAX_META_LEN - 1);
         utf8_str_truncate(title, dash_pos + 3, MAX_META_LEN - 1);
     }
+
+    decode_html_entities(title);
+    decode_html_entities(artist);
+    decode_html_entities(album);
     
     // TODO: 集成 taglib_c 示例 (需链接 -ltag_c)
     /*
@@ -120,7 +177,7 @@ int load_playlist(const char *path) {
             
             if (is_audio_file(entry->d_name)) {
                 Track *t = &g_playlist.tracks[g_playlist.count];
-                utf8_str_truncate(t->path, full_path, MAX_PATH_LEN - 1);
+                snprintf(t->path, sizeof(t->path), "%s", full_path);
                 
                 // 读取元数据
                 get_audio_metadata(full_path, t->title, t->artist, t->album);
@@ -131,7 +188,7 @@ int load_playlist(const char *path) {
     }
     closedir(dir);
     
-    utf8_str_truncate(g_playlist.folder_path, path, MAX_PATH_LEN - 1);
+    snprintf(g_playlist.folder_path, sizeof(g_playlist.folder_path), "%s", path);
     g_playlist.is_loaded = (g_playlist.count > 0);
     
     return g_playlist.count;

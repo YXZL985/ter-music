@@ -20,8 +20,29 @@ extern void prompt_open_folder();
 
 void crash_handler(int sig) {
     endwin();
-    fprintf(stderr, "Fatal error: signal %d\n", sig);
+    fprintf(stderr, "致命错误：收到信号 %d\n", sig);
     exit(1);
+}
+
+static void expand_user_path(const char *input, char *output, size_t output_size) {
+    if (!output || output_size == 0) {
+        return;
+    }
+
+    output[0] = '\0';
+    if (!input || input[0] == '\0') {
+        return;
+    }
+
+    if (input[0] == '~') {
+        const char *home = getenv("HOME");
+        if (home) {
+            snprintf(output, output_size, "%s%s", home, input + 1);
+            return;
+        }
+    }
+
+    snprintf(output, output_size, "%s", input);
 }
 
 static int has_audio_files(const char *path) {
@@ -56,13 +77,77 @@ static int has_audio_files(const char *path) {
     return found;
 }
 
+static int load_startup_playlist(const char *path, char *final_path, size_t final_path_size) {
+    struct stat s;
+    if (!path || path[0] == '\0') {
+        return 0;
+    }
+
+    if (stat(path, &s) != 0 || !S_ISDIR(s.st_mode)) {
+        return 0;
+    }
+
+    if (!has_audio_files(path)) {
+        return 0;
+    }
+
+    if (load_playlist(path) <= 0) {
+        return 0;
+    }
+
+    g_selected_index = 0;
+    snprintf(final_path, final_path_size, "%s", path);
+    return 1;
+}
+
+static int find_audio_directory_recursive(const char *path, char *found_path, size_t found_path_size, int depth) {
+    if (!path || !found_path || found_path_size == 0 || depth > 8) {
+        return 0;
+    }
+
+    if (has_audio_files(path)) {
+        snprintf(found_path, found_path_size, "%s", path);
+        return 1;
+    }
+
+    DIR *dir = opendir(path);
+    if (!dir) {
+        return 0;
+    }
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.') {
+            continue;
+        }
+
+        char child_path[MAX_PATH_LEN];
+        if (snprintf(child_path, sizeof(child_path), "%s/%s", path, entry->d_name) >= (int)sizeof(child_path)) {
+            continue;
+        }
+
+        struct stat st;
+        if (lstat(child_path, &st) != 0 || !S_ISDIR(st.st_mode) || S_ISLNK(st.st_mode)) {
+            continue;
+        }
+
+        if (find_audio_directory_recursive(child_path, found_path, found_path_size, depth + 1)) {
+            closedir(dir);
+            return 1;
+        }
+    }
+
+    closedir(dir);
+    return 0;
+}
+
 static void print_usage(const char *prog_name) {
-    printf("Usage: %s [OPTIONS]\n\n", prog_name);
-    printf("Options:\n");
-    printf("  -o, --open <path>    Open a music directory at startup\n");
-    printf("  -h, --help           Show this help message\n");
+    printf("用法：%s [选项]\n\n", prog_name);
+    printf("选项：\n");
+    printf("  -o, --open <path>    启动时打开指定音乐目录\n");
+    printf("  -h, --help           显示帮助信息\n");
     printf("\n");
-    printf("Examples:\n");
+    printf("示例：\n");
     printf("  %s -o ~/Music\n", prog_name);
     printf("  %s --open /path/to/music\n", prog_name);
 }
@@ -70,13 +155,7 @@ static void print_usage(const char *prog_name) {
 int main(int argc, char *argv[]) {
     signal(SIGSEGV, crash_handler);
     signal(SIGABRT, crash_handler);
-    
-    if (!isatty(STDOUT_FILENO)) {
-        fprintf(stderr, "Error: ter-music requires a terminal to run.\n");
-        fprintf(stderr, "Please run ter-music directly in a terminal, not piped to another command.\n");
-        return 1;
-    }
-    
+
     char *open_path = NULL;
     int opt;
     struct option long_options[] = {
@@ -98,6 +177,12 @@ int main(int argc, char *argv[]) {
                 return 1;
         }
     }
+
+    if (!isatty(STDOUT_FILENO)) {
+        fprintf(stderr, "错误：ter-music 需要在终端里直接运行。\n");
+        fprintf(stderr, "请不要把它通过管道重定向到其他命令。\n");
+        return 1;
+    }
     
     init_ncurses();
     
@@ -114,87 +199,72 @@ int main(int argc, char *argv[]) {
     create_layout();
     
     g_playlist.is_loaded = 0;
-    strcpy(g_playlist.folder_path, "");
+    g_playlist.folder_path[0] = '\0';
     
     int loaded = 0;
     int used_fallback = 0;
-    char *final_path = NULL;
+    char final_path[MAX_PATH_LEN] = "";
     
     if (open_path && strlen(open_path) > 0) {
         char expanded_path[MAX_PATH_LEN];
-        
-        if (open_path[0] == '~') {
-            const char *home = getenv("HOME");
-            if (home) {
-                snprintf(expanded_path, sizeof(expanded_path), "%s%s", home, open_path + 1);
-            } else {
-                strncpy(expanded_path, open_path, MAX_PATH_LEN - 1);
-            }
-        } else {
-            strncpy(expanded_path, open_path, MAX_PATH_LEN - 1);
-        }
-        
+        expand_user_path(open_path, expanded_path, sizeof(expanded_path));
+
         struct stat s;
         if (stat(expanded_path, &s) == 0 && S_ISDIR(s.st_mode)) {
-            if (has_audio_files(expanded_path)) {
-                int count = load_playlist(expanded_path);
-                if (count > 0) {
-                    g_selected_index = 0;
-                    loaded = 1;
-                    final_path = expanded_path;
-                }
+            if (load_startup_playlist(expanded_path, final_path, sizeof(final_path))) {
+                loaded = 1;
             } else {
-                mvprintw(2, 2, "Warning: No audio files in specified directory");
-                mvprintw(3, 2, "Falling back to default startup path...");
+                mvprintw(2, 2, "警告：指定目录中没有可播放的音频文件");
+                mvprintw(3, 2, "将继续尝试当前目录和默认启动路径...");
                 refresh();
                 used_fallback = 1;
             }
         } else {
-            mvprintw(2, 2, "Warning: Invalid path specified: %s", open_path);
-            mvprintw(3, 2, "Falling back to default startup path...");
+            mvprintw(2, 2, "警告：指定路径无效：%s", open_path);
+            mvprintw(3, 2, "将继续尝试当前目录和默认启动路径...");
             refresh();
             used_fallback = 1;
         }
     }
+
+    if (!loaded) {
+        char current_dir[MAX_PATH_LEN];
+        char auto_found_path[MAX_PATH_LEN];
+
+        if (getcwd(current_dir, sizeof(current_dir)) &&
+            find_audio_directory_recursive(current_dir, auto_found_path, sizeof(auto_found_path), 0) &&
+            load_startup_playlist(auto_found_path, final_path, sizeof(final_path))) {
+            loaded = 1;
+
+            if (used_fallback) {
+                mvprintw(4, 2, "已从当前目录自动找到音乐目录：%s", auto_found_path);
+                refresh();
+            }
+        }
+    }
     
     if (!loaded && g_app_config.default_startup_path[0] != '\0') {
-        struct stat s;
-        if (stat(g_app_config.default_startup_path, &s) == 0 && S_ISDIR(s.st_mode)) {
-            if (has_audio_files(g_app_config.default_startup_path)) {
-                int count = load_playlist(g_app_config.default_startup_path);
-                if (count > 0) {
-                    g_selected_index = 0;
-                    loaded = 1;
-                    final_path = g_app_config.default_startup_path;
-                    
-                    if (used_fallback) {
-                        mvprintw(4, 2, "Loaded from default path: %s", g_app_config.default_startup_path);
-                        refresh();
-                    }
-                }
+        if (load_startup_playlist(g_app_config.default_startup_path, final_path, sizeof(final_path))) {
+            loaded = 1;
+
+            if (used_fallback) {
+                mvprintw(4, 2, "已从默认路径加载：%s", g_app_config.default_startup_path);
+                refresh();
             }
         }
     }
     
     if (!loaded && g_app_config.remember_last_path && g_app_config.last_opened_path[0] != '\0') {
-        struct stat s;
-        if (stat(g_app_config.last_opened_path, &s) == 0 && S_ISDIR(s.st_mode)) {
-            if (has_audio_files(g_app_config.last_opened_path)) {
-                int count = load_playlist(g_app_config.last_opened_path);
-                if (count > 0) {
-                    g_selected_index = 0;
-                    loaded = 1;
-                    final_path = g_app_config.last_opened_path;
-                }
-            }
+        if (load_startup_playlist(g_app_config.last_opened_path, final_path, sizeof(final_path))) {
+            loaded = 1;
         }
     }
     
-    if (loaded && final_path) {
+    if (loaded && final_path[0] != '\0') {
         add_dir_history_entry(final_path);
         
         if (g_app_config.remember_last_path) {
-            strncpy(g_app_config.last_opened_path, final_path, MAX_PATH_LEN - 1);
+            snprintf(g_app_config.last_opened_path, sizeof(g_app_config.last_opened_path), "%s", final_path);
             save_config();
         }
         
@@ -207,6 +277,6 @@ int main(int argc, char *argv[]) {
     
     cleanup();
     
-    printf("ter-music exited gracefully.\n");
+    printf("ter-music 已正常退出。\n");
     return 0;
 }

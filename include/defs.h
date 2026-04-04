@@ -1,6 +1,7 @@
 #ifndef DEFS_H
 #define DEFS_H
 
+#include <stddef.h>
 #include <pthread.h>
 #include "progress.h"
 #include <time.h>
@@ -44,6 +45,10 @@ typedef enum {
 #define COLOR_PAIR_LYRICS 4
 #define COLOR_PAIR_SIDEBAR 5
 #define COLOR_PAIR_HIGHLIGHT 6
+
+#define UI_DIRTY_PLAYLIST 0x01
+#define UI_DIRTY_CONTROLS 0x02
+#define UI_DIRTY_LYRICS 0x04
 
 #define CONTROL_COUNT 6
 #define MAX_AUDIO_BUFFER_SIZE (44100 * 2 * sizeof(int16_t))
@@ -183,8 +188,16 @@ int get_and_clear_initial_seek_position(void);
 int utf8_str_truncate(char *dest, const char *src, int max_cols);
 int utf8_str_width(const char *src);
 int utf8_str_substring(char *dest, const char *src, int start_col, int max_cols);
+int utf8_str_pad(char *dest, size_t dest_size, const char *src, int width);
+void decode_html_entities(char *str);
+int use_ascii_fallback_ui(void);
 
 void update_progress_bar();
+void update_controls_status(const char *msg);
+void request_ui_refresh(int dirty_mask);
+void process_pending_ui_refresh(void);
+void reap_finished_playback_thread(void);
+void process_pending_playback_action(void);
 
 void apply_color_theme(void);
 

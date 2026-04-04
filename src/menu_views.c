@@ -10,6 +10,7 @@
  */
 
 #include "../include/defs.h"
+#include "../include/lyrics.h"
 #include "../include/menu_views.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +20,7 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <errno.h>
+#include <ctype.h>
 
 extern WINDOW *win_playlist;
 extern WINDOW *win_controls;
@@ -50,50 +52,161 @@ static char g_status_message[256] = "";
 static time_t g_status_message_time = 0;
 
 static const char *settings_sidebar_items[] = {
-    "Color Theme",
-    "Default Path",
-    "Playback",
-    "Shortcuts",
-    "← Back"
+    "颜色主题",
+    "默认路径",
+    "播放设置",
+    "快捷键",
+    "← 返回"
 };
 #define SETTINGS_ITEM_COUNT 5
 
 static const char *history_sidebar_items[] = {
-    "Directory History",
-    "Clear History",
-    "← Back"
+    "目录历史",
+    "清空历史",
+    "← 返回"
 };
 #define HISTORY_ITEM_COUNT 3
 
 static const char *playlist_sidebar_items[] = {
-    "All Playlists",
-    "Create New",
-    "← Back"
+    "全部歌单",
+    "新建歌单",
+    "← 返回"
 };
 #define PLAYLIST_ITEM_COUNT 3
 
 static const char *favorites_sidebar_items[] = {
-    "All Favorites",
-    "← Back"
+    "全部收藏",
+    "← 返回"
 };
 #define FAVORITES_ITEM_COUNT 2
 
 static const char *info_sidebar_items[] = {
-    "About",
-    "Repository",
-    "← Back"
+    "关于",
+    "仓库地址",
+    "← 返回"
 };
 #define INFO_ITEM_COUNT 3
 
+static const char *settings_sidebar_items_ascii[] = {
+    "Theme",
+    "Default Path",
+    "Playback",
+    "Hotkeys",
+    "<- Back"
+};
+
+static const char *history_sidebar_items_ascii[] = {
+    "Folder History",
+    "Clear History",
+    "<- Back"
+};
+
+static const char *playlist_sidebar_items_ascii[] = {
+    "All Playlists",
+    "New Playlist",
+    "<- Back"
+};
+
+static const char *favorites_sidebar_items_ascii[] = {
+    "All Favorites",
+    "<- Back"
+};
+
+static const char *info_sidebar_items_ascii[] = {
+    "About",
+    "Repository",
+    "<- Back"
+};
+
 static const char *color_names[] = {
-    "Black", "Red", "Green", "Yellow", 
-    "Blue", "Magenta", "Cyan", "White"
+    "黑色", "红色", "绿色", "黄色",
+    "蓝色", "洋红", "青色", "白色"
 };
 
 static int ncurses_colors[] = {
     COLOR_BLACK, COLOR_RED, COLOR_GREEN, COLOR_YELLOW,
     COLOR_BLUE, COLOR_MAGENTA, COLOR_CYAN, COLOR_WHITE
 };
+
+static void sanitize_ascii_menu_text(char *dest, size_t dest_size, const char *src) {
+    if (!dest || dest_size == 0) {
+        return;
+    }
+
+    dest[0] = '\0';
+    if (!src || src[0] == '\0') {
+        return;
+    }
+
+    size_t write = 0;
+    int prev_space = 1;
+    int saw_non_ascii = 0;
+
+    for (size_t read = 0; src[read] != '\0' && write + 1 < dest_size; read++) {
+        unsigned char c = (unsigned char)src[read];
+
+        if (c < 0x80) {
+            if (isspace(c)) {
+                if (!prev_space) {
+                    dest[write++] = ' ';
+                    prev_space = 1;
+                }
+            } else if (isprint(c)) {
+                dest[write++] = (char)c;
+                prev_space = 0;
+            }
+        } else {
+            saw_non_ascii = 1;
+            if (!prev_space && write + 1 < dest_size) {
+                dest[write++] = ' ';
+                prev_space = 1;
+            }
+        }
+    }
+
+    while (write > 0 && dest[write - 1] == ' ') {
+        write--;
+    }
+    dest[write] = '\0';
+
+    if (write == 0 && saw_non_ascii) {
+        snprintf(dest, dest_size, "[status]");
+    }
+}
+
+static const char **resolve_sidebar_items(const char **items) {
+    if (!use_ascii_fallback_ui()) {
+        return items;
+    }
+    if (items == settings_sidebar_items) {
+        return settings_sidebar_items_ascii;
+    }
+    if (items == history_sidebar_items) {
+        return history_sidebar_items_ascii;
+    }
+    if (items == playlist_sidebar_items) {
+        return playlist_sidebar_items_ascii;
+    }
+    if (items == favorites_sidebar_items) {
+        return favorites_sidebar_items_ascii;
+    }
+    if (items == info_sidebar_items) {
+        return info_sidebar_items_ascii;
+    }
+    return items;
+}
+
+static const char *resolve_menu_title(const char *title) {
+    if (!use_ascii_fallback_ui() || !title) {
+        return title;
+    }
+    if (strcmp(title, "设置 [F2]") == 0) return "Settings [F2]";
+    if (strcmp(title, "历史 [F3]") == 0) return "History [F3]";
+    if (strcmp(title, "歌单 [F4]") == 0) return "Playlists [F4]";
+    if (strcmp(title, "收藏 [F5]") == 0) return "Favorites [F5]";
+    if (strcmp(title, "信息 [F6]") == 0) return "Info [F6]";
+    return title;
+}
 
 static char* extract_json_string(const char *json, const char *key, char *output, size_t output_size) {
     char search_key[128];
@@ -428,6 +541,8 @@ void load_history(void) {
         extract_json_string(obj, "path", g_play_history.entries[g_play_history.count].path, MAX_PATH_LEN);
         extract_json_string(obj, "title", g_play_history.entries[g_play_history.count].title, MAX_META_LEN);
         extract_json_string(obj, "artist", g_play_history.entries[g_play_history.count].artist, MAX_META_LEN);
+        decode_html_entities(g_play_history.entries[g_play_history.count].title);
+        decode_html_entities(g_play_history.entries[g_play_history.count].artist);
         g_play_history.entries[g_play_history.count].play_time = (time_t)extract_json_int(obj, "play_time");
         
         g_play_history.count++;
@@ -524,6 +639,9 @@ void load_favorites(void) {
         extract_json_string(obj, "title", g_favorites.tracks[g_favorites.count].title, MAX_META_LEN);
         extract_json_string(obj, "artist", g_favorites.tracks[g_favorites.count].artist, MAX_META_LEN);
         extract_json_string(obj, "album", g_favorites.tracks[g_favorites.count].album, MAX_META_LEN);
+        decode_html_entities(g_favorites.tracks[g_favorites.count].title);
+        decode_html_entities(g_favorites.tracks[g_favorites.count].artist);
+        decode_html_entities(g_favorites.tracks[g_favorites.count].album);
         
         g_favorites.count++;
         free(obj);
@@ -717,6 +835,7 @@ void load_all_playlists(void) {
         memset(pl, 0, sizeof(UserPlaylist));
         
         extract_json_string(json, "name", pl->name, MAX_PLAYLIST_NAME_LEN);
+        decode_html_entities(pl->name);
         pl->created_time = (time_t)extract_json_int(json, "created_time");
         pl->modified_time = (time_t)extract_json_int(json, "modified_time");
         
@@ -746,6 +865,9 @@ void load_all_playlists(void) {
                     extract_json_string(obj, "title", pl->tracks[pl->track_count].title, MAX_META_LEN);
                     extract_json_string(obj, "artist", pl->tracks[pl->track_count].artist, MAX_META_LEN);
                     extract_json_string(obj, "album", pl->tracks[pl->track_count].album, MAX_META_LEN);
+                    decode_html_entities(pl->tracks[pl->track_count].title);
+                    decode_html_entities(pl->tracks[pl->track_count].artist);
+                    decode_html_entities(pl->tracks[pl->track_count].album);
                     
                     pl->track_count++;
                     free(obj);
@@ -835,7 +957,10 @@ void render_menu_hint_bar(void) {
     
     attron(COLOR_PAIR(COLOR_PAIR_BORDER));
     mvhline(max_y - 1, 0, ' ', max_x);
-    mvprintw(max_y - 1, 2, "F1:Main  F2:Settings  F3:History  F4:PlayList  F5:Favorites  F6:Info  F7:Quit");
+    mvprintw(max_y - 1, 2, "%s",
+             use_ascii_fallback_ui()
+                 ? "F1:Home  F2:Settings  F3:History  F4:Playlists  F5:Favorites  F6:Info  F7:Quit"
+                 : "F1:主页  F2:设置  F3:历史  F4:歌单  F5:收藏  F6:信息  F7:退出");
     attroff(COLOR_PAIR(COLOR_PAIR_BORDER));
     refresh();
 }
@@ -972,7 +1097,12 @@ void init_all_persistent_data(void) {
 }
 
 void show_status_message(const char *msg) {
-    strncpy(g_status_message, msg, sizeof(g_status_message) - 1);
+    if (use_ascii_fallback_ui()) {
+        sanitize_ascii_menu_text(g_status_message, sizeof(g_status_message), msg);
+    } else {
+        strncpy(g_status_message, msg, sizeof(g_status_message) - 1);
+        g_status_message[sizeof(g_status_message) - 1] = '\0';
+    }
     g_status_message_time = time(NULL);
 }
 
@@ -993,7 +1123,7 @@ void render_menu_frame(const char *title) {
     
     attron(COLOR_PAIR(COLOR_PAIR_BORDER));
     box(stdscr, 0, 0);
-    mvprintw(0, 2, " %s ", title);
+    mvprintw(0, 2, " %s ", resolve_menu_title(title));
     attroff(COLOR_PAIR(COLOR_PAIR_BORDER));
     
     int menu_width = max_x / 4;
@@ -1016,6 +1146,7 @@ void render_menu_sidebar(int selected_idx, const char **items, int item_count) {
     
     int menu_width = max_x / 4;
     int start_y = 2;
+    items = resolve_sidebar_items(items);
     
     attron(COLOR_PAIR(COLOR_PAIR_SIDEBAR));
     
@@ -1099,22 +1230,22 @@ static int g_settings_color_editing = 0;
 static int g_settings_color_which = 0;
 
 static const char *settings_options[] = {
-    "Playlist Color (FG)",
-    "Playlist Color (BG)",
-    "Controls Color (FG)",
-    "Controls Color (BG)",
-    "Lyrics Color (FG)",
-    "Lyrics Color (BG)",
-    "Sidebar Color (FG)",
-    "Sidebar Color (BG)",
-    "Highlight Color (FG)",
-    "Highlight Color (BG)",
-    "Border Color (FG)",
-    "Border Color (BG)",
-    "Default Startup Path",
-    "Auto Play on Start",
-    "Remember Last Path",
-    "Clear History on Startup"
+    "播放列表前景色",
+    "播放列表背景色",
+    "控制区前景色",
+    "控制区背景色",
+    "歌词前景色",
+    "歌词背景色",
+    "侧边栏前景色",
+    "侧边栏背景色",
+    "高亮前景色",
+    "高亮背景色",
+    "边框前景色",
+    "边框背景色",
+    "默认启动路径",
+    "启动后自动播放",
+    "记住上次路径",
+    "启动时清空历史"
 };
 #define SETTINGS_OPTION_COUNT 16
 
@@ -1128,7 +1259,7 @@ void render_settings_content(void) {
     
     attron(COLOR_PAIR(COLOR_PAIR_PLAYLIST));
     
-    mvprintw(start_y, content_start_x, "Settings - Use UP/DOWN to navigate, LEFT/RIGHT to change values");
+    mvprintw(start_y, content_start_x, "设置：↑/↓ 选择，←/→ 修改，ENTER 编辑");
     start_y += 2;
     
     int *color_values[] = {
@@ -1151,20 +1282,20 @@ void render_settings_content(void) {
         
         if (i < 12) {
             int color_val = *color_values[i];
-            const char *color_name = (color_val >= 0 && color_val < 8) ? color_names[color_val] : "Unknown";
-            snprintf(line, sizeof(line), "%-25s: %s (%d)", settings_options[i], color_name, color_val);
+            const char *color_name = (color_val >= 0 && color_val < 8) ? color_names[color_val] : "未知";
+            snprintf(line, sizeof(line), "%s：%s (%d)", settings_options[i], color_name, color_val);
         } else if (i == 12) {
-            snprintf(line, sizeof(line), "%-25s: %s", settings_options[i], 
-                    g_app_config.default_startup_path[0] ? g_app_config.default_startup_path : "(Not Set)");
+            snprintf(line, sizeof(line), "%s：%s", settings_options[i],
+                    g_app_config.default_startup_path[0] ? g_app_config.default_startup_path : "(未设置)");
         } else if (i == 13) {
-            snprintf(line, sizeof(line), "%-25s: %s", settings_options[i], 
-                    g_app_config.auto_play_on_start ? "Yes" : "No");
+            snprintf(line, sizeof(line), "%s：%s", settings_options[i],
+                    g_app_config.auto_play_on_start ? "是" : "否");
         } else if (i == 14) {
-            snprintf(line, sizeof(line), "%-25s: %s", settings_options[i], 
-                    g_app_config.remember_last_path ? "Yes" : "No");
+            snprintf(line, sizeof(line), "%s：%s", settings_options[i],
+                    g_app_config.remember_last_path ? "是" : "否");
         } else {
-            snprintf(line, sizeof(line), "%-25s: %s", settings_options[i], 
-                    g_app_config.clear_history_on_startup ? "Yes" : "No");
+            snprintf(line, sizeof(line), "%s：%s", settings_options[i],
+                    g_app_config.clear_history_on_startup ? "是" : "否");
         }
         
         move(start_y + i, content_start_x);
@@ -1181,8 +1312,8 @@ void render_settings_content(void) {
     
     start_y += SETTINGS_OPTION_COUNT + 2;
     
-    mvprintw(start_y, content_start_x, "Press ENTER to edit Default Startup Path");
-    mvprintw(start_y + 1, content_start_x, "Press 'S' to save settings");
+    mvprintw(start_y, content_start_x, "按 ENTER 编辑默认启动路径");
+    mvprintw(start_y + 1, content_start_x, "按 'S' 保存设置");
     
     attroff(COLOR_PAIR(COLOR_PAIR_PLAYLIST));
     
@@ -1201,13 +1332,13 @@ void render_history_content(void) {
     
     attron(COLOR_PAIR(COLOR_PAIR_PLAYLIST));
     
-    mvprintw(start_y, content_start_x, "Directory History (%d directories)", g_dir_history.count);
+    mvprintw(start_y, content_start_x, "目录历史（%d 个目录）", g_dir_history.count);
     mvprintw(start_y + 1, content_start_x, "----------------------------------------");
     start_y += 3;
     
     if (g_dir_history.count == 0) {
-        mvprintw(start_y, content_start_x, "No directory history yet.");
-        mvprintw(start_y + 1, content_start_x, "Open a music folder to add to history.");
+        mvprintw(start_y, content_start_x, "还没有目录历史。");
+        mvprintw(start_y + 1, content_start_x, "打开音乐目录后会自动记录。");
     } else {
         int visible_lines = max_y - start_y - 2;
         
@@ -1245,8 +1376,8 @@ void render_history_content(void) {
         }
         
         int bottom_y = max_y - 3;
-        mvprintw(bottom_y, content_start_x, "Press ENTER to open selected directory");
-        mvprintw(bottom_y + 1, content_start_x, "Press 'D' to delete selected, 'C' to clear all");
+        mvprintw(bottom_y, content_start_x, "按 ENTER 打开选中的目录");
+        mvprintw(bottom_y + 1, content_start_x, "按 'D' 删除当前项，按 'C' 清空全部");
     }
     
     attroff(COLOR_PAIR(COLOR_PAIR_PLAYLIST));
@@ -1270,42 +1401,44 @@ void render_playlist_manager_content(void) {
     attron(COLOR_PAIR(COLOR_PAIR_LYRICS));
     
     if (g_playlist_view_mode == 0) {
-        mvprintw(start_y, content_start_x, "User Playlists (%d playlists)", g_playlist_manager.count);
+        mvprintw(start_y, content_start_x, "用户歌单（%d 个）", g_playlist_manager.count);
         mvprintw(start_y + 1, content_start_x, "----------------------------------------");
         start_y += 3;
         
         if (g_playlist_manager.count == 0) {
-            mvprintw(start_y, content_start_x, "No playlists created yet.");
-            mvprintw(start_y + 1, content_start_x, "Select 'Create New' from sidebar to create one.");
+            mvprintw(start_y, content_start_x, "还没有创建歌单。");
+            mvprintw(start_y + 1, content_start_x, "请从左侧选择“新建歌单”。");
         } else {
             int visible_lines = max_y - start_y - 2;
             
             for (int i = 0; i < visible_lines && i < g_playlist_manager.count; i++) {
                 UserPlaylist *pl = &g_playlist_manager.playlists[i];
+                char display_name[MAX_PLAYLIST_NAME_LEN + 8];
+                utf8_str_pad(display_name, sizeof(display_name), pl->name, 30);
                 
                 if (i == g_content_selected_idx && g_focus_area == FOCUS_CONTENT) {
                     attron(A_REVERSE);
-                    mvprintw(start_y + i, content_start_x, " %-30s (%d tracks)", pl->name, pl->track_count);
+                    mvprintw(start_y + i, content_start_x, " %s (%d 首)", display_name, pl->track_count);
                     attroff(A_REVERSE);
                 } else {
-                    mvprintw(start_y + i, content_start_x, " %-30s (%d tracks)", pl->name, pl->track_count);
+                    mvprintw(start_y + i, content_start_x, " %s (%d 首)", display_name, pl->track_count);
                 }
             }
             
             int bottom_y = max_y - 3;
-            mvprintw(bottom_y, content_start_x, "ENTER: View tracks | D: Delete playlist | R: Rename");
+            mvprintw(bottom_y, content_start_x, "ENTER: 查看歌曲 | D: 删除歌单 | R: 重命名");
         }
     } else {
         if (g_playlist_selected_playlist >= 0 && g_playlist_selected_playlist < g_playlist_manager.count) {
             UserPlaylist *pl = &g_playlist_manager.playlists[g_playlist_selected_playlist];
             
-            mvprintw(start_y, content_start_x, "Playlist: %s (%d tracks)", pl->name, pl->track_count);
+            mvprintw(start_y, content_start_x, "歌单：%s（%d 首）", pl->name, pl->track_count);
             mvprintw(start_y + 1, content_start_x, "----------------------------------------");
             start_y += 3;
             
             if (pl->track_count == 0) {
-                mvprintw(start_y, content_start_x, "This playlist is empty.");
-                mvprintw(start_y + 1, content_start_x, "Add tracks from the main player.");
+                mvprintw(start_y, content_start_x, "这个歌单还是空的。");
+                mvprintw(start_y + 1, content_start_x, "请从主界面把歌曲加入歌单。");
             } else {
                 int visible_lines = max_y - start_y - 2;
                 
@@ -1325,20 +1458,22 @@ void render_playlist_manager_content(void) {
                     Track *t = &pl->tracks[idx];
                     
                     char truncated_title[MAX_META_LEN];
+                    char display_title[MAX_META_LEN + 32];
                     int title_width = max_x - menu_width - 30;
                     utf8_str_truncate(truncated_title, t->title, title_width > 0 ? title_width : 30);
+                    utf8_str_pad(display_title, sizeof(display_title), truncated_title, title_width > 0 ? title_width : 30);
                     
                     if (idx == g_content_selected_idx && g_focus_area == FOCUS_CONTENT) {
                         attron(A_REVERSE);
-                        mvprintw(start_y + i, content_start_x, " %s - %s", truncated_title, t->artist);
+                        mvprintw(start_y + i, content_start_x, " %s - %s", display_title, t->artist);
                         attroff(A_REVERSE);
                     } else {
-                        mvprintw(start_y + i, content_start_x, " %s - %s", truncated_title, t->artist);
+                        mvprintw(start_y + i, content_start_x, " %s - %s", display_title, t->artist);
                     }
                 }
                 
                 int bottom_y = max_y - 3;
-                mvprintw(bottom_y, content_start_x, "ENTER: Play | D: Remove from playlist | ESC: Back");
+                mvprintw(bottom_y, content_start_x, "ENTER: 播放 | D: 从歌单移除 | ESC: 返回");
             }
         }
     }
@@ -1360,13 +1495,13 @@ void render_favorites_content(void) {
     
     attron(COLOR_PAIR(COLOR_PAIR_LYRICS));
     
-    mvprintw(start_y, content_start_x, "Favorites (%d songs)", g_favorites.count);
+    mvprintw(start_y, content_start_x, "收藏夹（%d 首）", g_favorites.count);
     mvprintw(start_y + 1, content_start_x, "----------------------------------------");
     start_y += 3;
     
     if (g_favorites.count == 0) {
-        mvprintw(start_y, content_start_x, "No favorites yet.");
-        mvprintw(start_y + 1, content_start_x, "Press 'F' in main player to add songs.");
+        mvprintw(start_y, content_start_x, "还没有收藏。");
+        mvprintw(start_y + 1, content_start_x, "在主界面按 'F' 可加入收藏。");
     } else {
         int visible_lines = max_y - start_y - 2;
         
@@ -1387,23 +1522,27 @@ void render_favorites_content(void) {
             
             char truncated_title[MAX_META_LEN];
             char truncated_artist[MAX_META_LEN];
+            char display_title[MAX_META_LEN + 32];
+            char display_artist[MAX_META_LEN + 32];
             int title_width = (max_x - menu_width - 10) * 3 / 5;
             int artist_width = (max_x - menu_width - 10) * 2 / 5;
             
             utf8_str_truncate(truncated_title, t->title, title_width > 0 ? title_width : 30);
             utf8_str_truncate(truncated_artist, t->artist, artist_width > 0 ? artist_width : 20);
+            utf8_str_pad(display_title, sizeof(display_title), truncated_title, title_width > 0 ? title_width : 30);
+            utf8_str_pad(display_artist, sizeof(display_artist), truncated_artist, artist_width > 0 ? artist_width : 20);
             
             if (idx == g_content_selected_idx && g_focus_area == FOCUS_CONTENT) {
                 attron(A_REVERSE);
-                mvprintw(start_y + i, content_start_x, " %-30s - %-20s", truncated_title, truncated_artist);
+                mvprintw(start_y + i, content_start_x, " %s - %s", display_title, display_artist);
                 attroff(A_REVERSE);
             } else {
-                mvprintw(start_y + i, content_start_x, " %-30s - %-20s", truncated_title, truncated_artist);
+                mvprintw(start_y + i, content_start_x, " %s - %s", display_title, display_artist);
             }
         }
         
         int bottom_y = max_y - 3;
-        mvprintw(bottom_y, content_start_x, "ENTER: Play | D: Remove from favorites");
+        mvprintw(bottom_y, content_start_x, "ENTER: 播放 | D: 移出收藏");
     }
     
     attroff(COLOR_PAIR(COLOR_PAIR_LYRICS));
@@ -1421,30 +1560,30 @@ void render_info_content(void) {
     
     attron(COLOR_PAIR(COLOR_PAIR_BORDER));
     
-    mvprintw(start_y, content_start_x, "About %s", APP_NAME);
+    mvprintw(start_y, content_start_x, "关于 %s", APP_NAME);
     mvprintw(start_y + 1, content_start_x, "========================================");
     start_y += 3;
     
-    mvprintw(start_y, content_start_x, "Name:     %s", APP_NAME);
-    mvprintw(start_y + 1, content_start_x, "Version:  %s", APP_VERSION);
-    mvprintw(start_y + 2, content_start_x, "Author:   %s", APP_AUTHOR);
-    mvprintw(start_y + 3, content_start_x, "Email:    %s", APP_EMAIL);
+    mvprintw(start_y, content_start_x, "名称：%s", APP_NAME);
+    mvprintw(start_y + 1, content_start_x, "版本：%s", APP_VERSION);
+    mvprintw(start_y + 2, content_start_x, "作者：%s", APP_AUTHOR);
+    mvprintw(start_y + 3, content_start_x, "邮箱：%s", APP_EMAIL);
     start_y += 5;
     
-    mvprintw(start_y, content_start_x, "Description:");
-    mvprintw(start_y + 1, content_start_x, "  A terminal-based music player with ncurses UI.");
-    mvprintw(start_y + 2, content_start_x, "  Supports various audio formats via FFmpeg.");
-    mvprintw(start_y + 3, content_start_x, "  Features: playlists, favorites, lyrics display.");
+    mvprintw(start_y, content_start_x, "简介：");
+    mvprintw(start_y + 1, content_start_x, "  基于 ncurses 的终端音乐播放器。");
+    mvprintw(start_y + 2, content_start_x, "  通过 FFmpeg 支持多种音频格式。");
+    mvprintw(start_y + 3, content_start_x, "  提供歌单、收藏和歌词显示。");
     start_y += 5;
     
-    mvprintw(start_y, content_start_x, "Repository:");
+    mvprintw(start_y, content_start_x, "仓库地址：");
     mvprintw(start_y + 1, content_start_x, "  %s", APP_REPO);
     start_y += 3;
     
-    mvprintw(start_y, content_start_x, "License: GPL v3");
+    mvprintw(start_y, content_start_x, "许可证：GPL v3");
     start_y += 2;
     
-    mvprintw(start_y, content_start_x, "This is read-only information.");
+    mvprintw(start_y, content_start_x, "这里的信息为只读。");
     
     attroff(COLOR_PAIR(COLOR_PAIR_BORDER));
     
@@ -1465,31 +1604,31 @@ void switch_to_view(ViewMode view) {
     
     switch (view) {
         case VIEW_SETTINGS:
-            render_menu_frame("Settings [F2]");
+            render_menu_frame("设置 [F2]");
             render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
             render_settings_content();
             render_menu_hint_bar();
             break;
         case VIEW_HISTORY:
-            render_menu_frame("History [F3]");
+            render_menu_frame("历史 [F3]");
             render_menu_sidebar(g_menu_selected_idx, history_sidebar_items, HISTORY_ITEM_COUNT);
             render_history_content();
             render_menu_hint_bar();
             break;
         case VIEW_PLAYLIST:
-            render_menu_frame("Play List [F4]");
+            render_menu_frame("歌单 [F4]");
             render_menu_sidebar(g_menu_selected_idx, playlist_sidebar_items, PLAYLIST_ITEM_COUNT);
             render_playlist_manager_content();
             render_menu_hint_bar();
             break;
         case VIEW_FAVORITES:
-            render_menu_frame("Favorites [F5]");
+            render_menu_frame("收藏 [F5]");
             render_menu_sidebar(g_menu_selected_idx, favorites_sidebar_items, FAVORITES_ITEM_COUNT);
             render_favorites_content();
             render_menu_hint_bar();
             break;
         case VIEW_INFO:
-            render_menu_frame("Info [F6]");
+            render_menu_frame("信息 [F6]");
             render_menu_sidebar(g_menu_selected_idx, info_sidebar_items, INFO_ITEM_COUNT);
             render_info_content();
             render_menu_hint_bar();
@@ -1508,6 +1647,7 @@ void exit_current_view(void) {
     create_layout();
     render_playlist_content();
     render_controls();
+    render_lyrics();
 }
 
 void handle_function_keys(int fkey) {
@@ -1532,7 +1672,7 @@ void handle_function_keys(int fkey) {
             break;
         case KEY_F(7):
             cleanup();
-            printf("ter-music exited gracefully.\n");
+            printf("ter-music 已正常退出。\n");
             exit(0);
             break;
         default:
@@ -1653,11 +1793,12 @@ static void handle_settings_input(int ch) {
                     getmaxyx(stdscr, max_y, max_x);
                     int menu_width = max_x / 4;
                     
-                    mvprintw(max_y - 2, menu_width + 2, "Enter path: ");
+                    const char *path_prompt = "输入路径：";
+                    mvprintw(max_y - 2, menu_width + 2, "%s", path_prompt);
                     clrtoeol();
                     refresh();
 
-                    move(max_y - 2, menu_width + 2 + 12);
+                    move(max_y - 2, menu_width + 2 + utf8_str_width(path_prompt));
                     refresh();
                     
                     flushinp();
@@ -1751,10 +1892,10 @@ static void handle_settings_input(int ch) {
                             strncpy(g_app_config.default_startup_path, input_path, MAX_PATH_LEN - 1);
                         }
                         save_config();
-                        show_status_message("Default startup path saved");
+                        show_status_message("默认启动路径已保存");
                     }
                     
-                    render_menu_frame("Settings [F1]");
+                    render_menu_frame("设置 [F2]");
                     render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
                     render_settings_content();
                 } else if (g_settings_current_option >= 13) {
@@ -1774,8 +1915,8 @@ static void handle_settings_input(int ch) {
         case 's':
         case 'S':
             save_config();
-            show_status_message("Settings saved!");
-            render_menu_frame("Settings [F1]");
+            show_status_message("设置已保存");
+            render_menu_frame("设置 [F2]");
             render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
             render_settings_content();
             break;
@@ -1838,8 +1979,8 @@ static void handle_history_input(int ch) {
                 } else if (g_menu_selected_idx == 1) {
                     clear_dir_history();
                     g_content_selected_idx = 0;
-                    show_status_message("History cleared!");
-                    render_menu_frame("History [F2]");
+                    show_status_message("历史记录已清空");
+                    render_menu_frame("历史 [F3]");
                     render_menu_sidebar(g_menu_selected_idx, history_sidebar_items, HISTORY_ITEM_COUNT);
                     render_history_content();
                 } else if (g_menu_selected_idx == HISTORY_ITEM_COUNT - 1) {
@@ -1856,9 +1997,9 @@ static void handle_history_input(int ch) {
                         g_selected_index = 0;
                         add_dir_history_entry(path);
                         exit_current_view();
-                        show_status_message("Directory loaded successfully");
+                        show_status_message("目录加载成功");
                     } else {
-                        show_status_message("No audio files found in directory");
+                        show_status_message("目录中没有音频文件");
                         render_history_content();
                     }
                 }
@@ -1880,7 +2021,7 @@ static void handle_history_input(int ch) {
                     g_content_selected_idx = g_dir_history.count - 1;
                 }
                 
-                show_status_message("Entry deleted");
+                show_status_message("已删除历史项");
                 render_history_content();
             }
             break;
@@ -1890,7 +2031,7 @@ static void handle_history_input(int ch) {
             if (g_focus_area == FOCUS_CONTENT) {
                 clear_dir_history();
                 g_content_selected_idx = 0;
-                show_status_message("History cleared!");
+                show_status_message("历史记录已清空");
                 render_history_content();
             }
             break;
@@ -1906,11 +2047,12 @@ static void handle_history_input(int ch) {
                     getmaxyx(stdscr, max_y, max_x);
                     int menu_width = max_x / 4;
 
-                    mvprintw(max_y - 2, menu_width + 2, "Enter new name: ");
+                    const char *rename_prompt = "输入新名称：";
+                    mvprintw(max_y - 2, menu_width + 2, "%s", rename_prompt);
                     clrtoeol();
                     refresh();
 
-                    move(max_y - 2, menu_width + 2 + 16);
+                    move(max_y - 2, menu_width + 2 + utf8_str_width(rename_prompt));
                     refresh();
 
                     flushinp();
@@ -1983,13 +2125,13 @@ static void handle_history_input(int ch) {
                     if (strlen(new_name) > 0) {
                         int result = rename_user_playlist(g_content_selected_idx, new_name);
                         if (result == 0) {
-                            show_status_message("Playlist renamed!");
+                            show_status_message("歌单已重命名");
                         } else {
-                            show_status_message("Failed to rename playlist");
+                            show_status_message("歌单重命名失败");
                         }
                     }
 
-                    render_menu_frame("Play List [F4]");
+                    render_menu_frame("歌单 [F4]");
                     render_menu_sidebar(g_menu_selected_idx, playlist_sidebar_items, PLAYLIST_ITEM_COUNT);
                     render_playlist_manager_content();
                 }
@@ -2086,11 +2228,12 @@ static void handle_playlist_input(int ch) {
                     getmaxyx(stdscr, max_y, max_x);
                     int menu_width = max_x / 4;
                     
-                    mvprintw(max_y - 2, menu_width + 2, "Enter playlist name: ");
+                    const char *create_prompt = "输入歌单名称：";
+                    mvprintw(max_y - 2, menu_width + 2, "%s", create_prompt);
                     clrtoeol();
                     refresh();
 
-                    move(max_y - 2, menu_width + 2 + 19);
+                    move(max_y - 2, menu_width + 2 + utf8_str_width(create_prompt));
                     refresh();
                     
                     flushinp();
@@ -2163,15 +2306,15 @@ static void handle_playlist_input(int ch) {
                     if (strlen(name) > 0) {
                         int result = create_user_playlist(name);
                         if (result == 0) {
-                            show_status_message("Playlist created!");
+                            show_status_message("歌单已创建");
                         } else if (result == -2) {
-                            show_status_message("Maximum playlists reached!");
+                            show_status_message("歌单数量已达上限");
                         } else {
-                            show_status_message("Failed to create playlist");
+                            show_status_message("创建歌单失败");
                         }
                     }
                     
-                    render_menu_frame("Play List [F3]");
+                    render_menu_frame("歌单 [F4]");
                     render_menu_sidebar(g_menu_selected_idx, playlist_sidebar_items, PLAYLIST_ITEM_COUNT);
                     render_playlist_manager_content();
                 } else if (g_menu_selected_idx == PLAYLIST_ITEM_COUNT - 1) {
@@ -2204,7 +2347,7 @@ static void handle_playlist_input(int ch) {
                                 play_audio(found);
                                 exit_current_view();
                             } else {
-                                show_status_message("Track not in current playlist");
+                                show_status_message("当前播放列表中没有这首歌");
                             }
                         }
                     }
@@ -2221,7 +2364,7 @@ static void handle_playlist_input(int ch) {
                         if (g_content_selected_idx >= g_playlist_manager.count) {
                             g_content_selected_idx = g_playlist_manager.count - 1;
                         }
-                        show_status_message("Playlist deleted");
+                        show_status_message("歌单已删除");
                         render_playlist_manager_content();
                     }
                 } else {
@@ -2231,7 +2374,7 @@ static void handle_playlist_input(int ch) {
                         if (g_content_selected_idx >= pl->track_count) {
                             g_content_selected_idx = pl->track_count - 1;
                         }
-                        show_status_message("Track removed");
+                        show_status_message("歌曲已移除");
                         render_playlist_manager_content();
                     }
                 }
@@ -2314,7 +2457,7 @@ static void handle_favorites_input(int ch) {
                         play_audio(found);
                         exit_current_view();
                     } else {
-                        show_status_message("Track not in current playlist");
+                        show_status_message("当前播放列表中没有这首歌");
                     }
                 }
             }
@@ -2329,7 +2472,7 @@ static void handle_favorites_input(int ch) {
                 if (g_content_selected_idx >= g_favorites.count) {
                     g_content_selected_idx = g_favorites.count - 1;
                 }
-                show_status_message("Removed from favorites");
+                show_status_message("已从收藏移除");
                 render_favorites_content();
             }
             break;
