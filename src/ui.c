@@ -72,11 +72,107 @@ int use_ascii_fallback_ui(void) {
     return g_ascii_fallback_ui;
 }
 
+static void format_display_text(char *dest, size_t dest_size, const char *src, int width, int pad);
+
 static const char *get_control_label(int index) {
     if (index < 0 || index >= CONTROL_COUNT) {
         return "";
     }
     return g_ascii_fallback_ui ? control_labels_ascii[index] : control_labels[index];
+}
+
+static void build_wave_particle_line(char *dest, size_t dest_size, int width, uint64_t tick) {
+    if (!dest || dest_size == 0 || width <= 0) {
+        return;
+    }
+
+    int usable = width;
+    if ((size_t)usable >= dest_size) {
+        usable = (int)dest_size - 1;
+    }
+    if (usable <= 0) {
+        dest[0] = '\0';
+        return;
+    }
+
+    for (int i = 0; i < usable; i++) {
+        dest[i] = ' ';
+    }
+    dest[usable] = '\0';
+
+    if (g_play_state == PLAY_STATE_STOPPED) {
+        snprintf(dest, dest_size, "%s", ui_text("等待播放...", "Idle..."));
+        return;
+    }
+
+    int motion = (int)(tick % 29);
+    int paused = (g_play_state == PLAY_STATE_PAUSED);
+
+    for (int i = 0; i < usable; i++) {
+        int phase = (i * 3 + motion + (g_current_position % 17)) % 18;
+        int amplitude = phase <= 9 ? phase : 18 - phase;
+
+        char c = ' ';
+        if (amplitude >= 8) {
+            c = paused ? ':' : '~';
+        } else if (amplitude >= 6) {
+            c = paused ? '.' : '=';
+        } else if (amplitude >= 4) {
+            c = '-';
+        } else if (amplitude >= 2) {
+            c = '.';
+        }
+        dest[i] = c;
+    }
+
+    int particle_count = usable / 7;
+    if (particle_count < 3) {
+        particle_count = 3;
+    }
+    if (particle_count > 14) {
+        particle_count = 14;
+    }
+
+    for (int i = 0; i < particle_count; i++) {
+        int pos = (int)((tick / 2 + i * 11 + g_current_position * 5) % usable);
+        const char *particle_chars = paused ? "o.." : "*o+.";
+        dest[pos] = particle_chars[i % (int)strlen(particle_chars)];
+    }
+}
+
+static void render_wave_particle_visualizer(void) {
+    if (!win_controls || g_current_view != VIEW_MAIN) {
+        return;
+    }
+
+    int h, w;
+    getmaxyx(win_controls, h, w);
+    if (h < 6 || w < 24) {
+        return;
+    }
+
+    int row = h / 2 - 1;
+    if (row < 1 || row >= h - 2) {
+        return;
+    }
+
+    const char *label = ui_text("波粒二象", "Wave-Particle");
+    int label_width = utf8_str_width(label);
+    int canvas_col = 2 + label_width + 1;
+    int canvas_width = w - canvas_col - 2;
+    if (canvas_width < 8) {
+        return;
+    }
+
+    mvwhline(win_controls, row, 1, ' ', w - 2);
+    mvwprintw(win_controls, row, 2, "%s", label);
+
+    char line[256];
+    build_wave_particle_line(line, sizeof(line), canvas_width, get_ui_time_ms() / 80);
+
+    char display_line[256];
+    format_display_text(display_line, sizeof(display_line), line, canvas_width, 1);
+    mvwprintw(win_controls, row, canvas_col, "%s", display_line);
 }
 
 static void build_control_label(int index, char *dest, size_t dest_size) {
@@ -832,6 +928,8 @@ void render_controls() {
     }
     
     int row = h / 2; // 垂直居中
+
+    render_wave_particle_visualizer();
     
     // 计算按钮总宽度以便居中
     int total_len = 0;
@@ -980,6 +1078,8 @@ void update_progress_bar() {
     // 恢复边框
     mvwaddch(win_controls, progress_row, 0, ACS_VLINE);
     mvwaddch(win_controls, progress_row, w - 1, ACS_VLINE);
+
+    render_wave_particle_visualizer();
     
     wrefresh(win_controls);
 
