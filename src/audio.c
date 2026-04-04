@@ -7,7 +7,12 @@
 #include <string.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <math.h>
 #include <time.h>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 // 音频后端头文件
 #if defined(HAVE_PULSE)
@@ -59,8 +64,10 @@ static int g_visualizer_levels[VISUALIZER_BAND_COUNT] = {0};
 static int g_visualizer_peaks[VISUALIZER_BAND_COUNT] = {0};
 static uint64_t g_visualizer_last_update_ms = 0;
 
+#define VISUALIZER_ANALYSIS_SIZE 128
+
 static const char *audio_text(const char *utf8, const char *ascii) {
-    return use_ascii_fallback_ui() ? ascii : utf8;
+    return use_english_ui() ? ascii : utf8;
 }
 
 static uint64_t audio_now_ms(void) {
@@ -119,29 +126,70 @@ void push_visualizer_samples(const int16_t *samples, int frame_count, int channe
         return;
     }
 
-    int64_t sums[VISUALIZER_BAND_COUNT] = {0};
-    int counts[VISUALIZER_BAND_COUNT] = {0};
+    static double window[VISUALIZER_ANALYSIS_SIZE];
+    static int window_initialized = 0;
 
-    for (int frame = 0; frame < frame_count; frame++) {
-        int mixed = 0;
+    if (!window_initialized) {
+        for (int i = 0; i < VISUALIZER_ANALYSIS_SIZE; i++) {
+            window[i] = 0.5 - 0.5 * cos((2.0 * M_PI * (double)i) / (double)(VISUALIZER_ANALYSIS_SIZE - 1));
+        }
+        window_initialized = 1;
+    }
+
+    double mono[VISUALIZER_ANALYSIS_SIZE];
+    for (int i = 0; i < VISUALIZER_ANALYSIS_SIZE; i++) {
+        int src_frame = (i * frame_count) / VISUALIZER_ANALYSIS_SIZE;
+        if (src_frame >= frame_count) {
+            src_frame = frame_count - 1;
+        }
+
+        double mixed = 0.0;
         for (int ch = 0; ch < channels; ch++) {
-            int sample = samples[frame * channels + ch];
-            mixed += sample >= 0 ? sample : -sample;
+            mixed += (double)samples[src_frame * channels + ch];
         }
-        mixed /= channels;
+        mixed /= (double)channels * 32768.0;
+        mono[i] = mixed * window[i];
+    }
 
-        int band = (frame * VISUALIZER_BAND_COUNT) / frame_count;
-        if (band >= VISUALIZER_BAND_COUNT) {
-            band = VISUALIZER_BAND_COUNT - 1;
+    double magnitudes[VISUALIZER_ANALYSIS_SIZE / 2] = {0.0};
+    int useful_bins = VISUALIZER_ANALYSIS_SIZE / 2;
+
+    for (int bin = 1; bin < useful_bins; bin++) {
+        double real = 0.0;
+        double imag = 0.0;
+        double coeff = (2.0 * M_PI * (double)bin) / (double)VISUALIZER_ANALYSIS_SIZE;
+
+        for (int n = 0; n < VISUALIZER_ANALYSIS_SIZE; n++) {
+            double angle = coeff * (double)n;
+            real += mono[n] * cos(angle);
+            imag -= mono[n] * sin(angle);
         }
-        sums[band] += mixed;
-        counts[band]++;
+
+        double magnitude = sqrt(real * real + imag * imag) / ((double)VISUALIZER_ANALYSIS_SIZE / 2.0);
+        double emphasis = 1.0 + ((double)bin / (double)(useful_bins - 1)) * 0.35;
+        magnitudes[bin] = magnitude * emphasis;
     }
 
     pthread_mutex_lock(&g_visualizer_mutex);
     for (int i = 0; i < VISUALIZER_BAND_COUNT; i++) {
-        int raw_level = counts[i] > 0 ? (int)(sums[i] / counts[i]) : 0;
-        int scaled_level = (raw_level * 100) / 14000;
+        int start_bin = 1 + (i * (useful_bins - 1)) / VISUALIZER_BAND_COUNT;
+        int end_bin = 1 + ((i + 1) * (useful_bins - 1)) / VISUALIZER_BAND_COUNT;
+        if (end_bin <= start_bin) {
+            end_bin = start_bin + 1;
+        }
+        if (end_bin > useful_bins) {
+            end_bin = useful_bins;
+        }
+
+        double band_energy = 0.0;
+        for (int bin = start_bin; bin < end_bin; bin++) {
+            if (magnitudes[bin] > band_energy) {
+                band_energy = magnitudes[bin];
+            }
+        }
+
+        double compressed = log1p(band_energy * 48.0) / log1p(49.0);
+        int scaled_level = (int)lround(compressed * 100.0);
         if (scaled_level < 0) {
             scaled_level = 0;
         }
@@ -156,7 +204,7 @@ void push_visualizer_samples(const int16_t *samples, int frame_count, int channe
             g_visualizer_levels[i] = (previous * 3 + scaled_level) / 4;
         }
 
-        if (g_visualizer_levels[i] < 2) {
+        if (g_visualizer_levels[i] < 1) {
             g_visualizer_levels[i] = 0;
         }
 
@@ -687,7 +735,7 @@ void set_volume_percent(int volume) {
 
         char msg[64];
         snprintf(msg, sizeof(msg),
-                 use_ascii_fallback_ui() ? "Volume: %d%%" : "音量：%d%%",
+                 use_english_ui() ? "Volume: %d%%" : "音量：%d%%",
                  clamped);
         update_controls_status(msg);
         request_ui_refresh(UI_DIRTY_CONTROLS);
@@ -816,7 +864,7 @@ static int handle_seek_request_in_decoder(AVFormatContext *fmt_ctx,
 
             char msg[64];
             snprintf(msg, sizeof(msg),
-                     use_ascii_fallback_ui() ? "Seek to %02d:%02d" : "已跳转到 %02d:%02d",
+                     use_english_ui() ? "Seek to %02d:%02d" : "已跳转到 %02d:%02d",
                      target_position / 60, target_position % 60);
             update_controls_status(msg);
         }
@@ -1160,8 +1208,8 @@ void *play_audio_thread(void *arg) {
             continue;
         }
 
-        apply_volume_to_samples(chunk->data, chunk->frame_count * output_channels);
         push_visualizer_samples(chunk->data, chunk->frame_count, output_channels);
+        apply_volume_to_samples(chunk->data, chunk->frame_count * output_channels);
         if (audio_backend_write_samples(chunk->data, chunk->frame_count) < 0) {
             update_controls_status(audio_text("写入音频设备失败", "Audio device write failed"));
             playback_error = 1;

@@ -13,6 +13,7 @@
 #include <wchar.h>
 #include <locale.h>
 #include <langinfo.h>
+#include <math.h>
 #include <pthread.h>
 
 extern WINDOW *win_playlist;
@@ -31,7 +32,7 @@ WINDOW *win_lyrics;
 
 // 控件标签文本
 const char *control_labels[] = {"上一曲", "播放/暂停", "下一曲", "停止", "循环", "音量", "进度"};
-static const char *control_labels_ascii[] = {"Prev", "Play/Pause", "Next", "Stop", "Loop", "Vol", "Prog"};
+static const char *control_labels_en[] = {"Prev", "Play/Pause", "Next", "Stop", "Loop", "Vol", "Prog"};
 
 // 歌词光标操作模式全局变量
 int g_lyric_cursor_mode = 0;
@@ -58,10 +59,6 @@ enum {
     CONTROL_IDX_PROGRESS = 6
 };
 
-static const char *ui_text(const char *utf8, const char *ascii) {
-    return g_ascii_fallback_ui ? ascii : utf8;
-}
-
 static uint64_t get_ui_time_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -70,6 +67,14 @@ static uint64_t get_ui_time_ms(void) {
 
 int use_ascii_fallback_ui(void) {
     return g_ascii_fallback_ui;
+}
+
+int use_english_ui(void) {
+    return g_ascii_fallback_ui || g_app_config.ui_language == UI_LANG_EN;
+}
+
+static const char *ui_text(const char *utf8, const char *ascii) {
+    return use_english_ui() ? ascii : utf8;
 }
 
 static void format_display_text(char *dest, size_t dest_size, const char *src, int width, int pad);
@@ -113,7 +118,28 @@ static const char *get_control_label(int index) {
     if (index < 0 || index >= CONTROL_COUNT) {
         return "";
     }
-    return g_ascii_fallback_ui ? control_labels_ascii[index] : control_labels[index];
+    return use_english_ui() ? control_labels_en[index] : control_labels[index];
+}
+
+static const char *get_spectrum_glyph(int units) {
+    static const char *glyphs[] = {" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"};
+    static const char ascii_glyphs[] = {' ', '.', ':', '-', '=', '+', '*', '#', '#'};
+
+    if (units < 0) {
+        units = 0;
+    }
+    if (units > 8) {
+        units = 8;
+    }
+
+    if (use_ascii_fallback_ui()) {
+        static char glyph_buf[2];
+        glyph_buf[0] = ascii_glyphs[units];
+        glyph_buf[1] = '\0';
+        return glyph_buf;
+    }
+
+    return glyphs[units];
 }
 
 static void render_wave_particle_visualizer(void) {
@@ -147,21 +173,9 @@ static void render_wave_particle_visualizer(void) {
     }
 
     int graph_width = w - 4;
-    int band_slots = VISUALIZER_BAND_COUNT;
-    int max_slots = graph_width / 2;
-    if (max_slots < 6) {
+    if (graph_width < 12) {
         return;
     }
-    if (band_slots > max_slots) {
-        band_slots = max_slots;
-    }
-
-    int cell_width = graph_width / band_slots;
-    if (cell_width < 2) {
-        cell_width = 2;
-    }
-
-    int bar_width = 1;
 
     int levels[VISUALIZER_BAND_COUNT] = {0};
     int peaks[VISUALIZER_BAND_COUNT] = {0};
@@ -171,37 +185,68 @@ static void render_wave_particle_visualizer(void) {
 
     uint64_t now_ms = get_ui_time_ms();
     int inactive_decay = 0;
+    int is_visualizer_active = 0;
     if (last_update_ms > 0 && now_ms > last_update_ms) {
         inactive_decay = (int)((now_ms - last_update_ms) / 90ULL);
+        if ((now_ms - last_update_ms) < 250ULL &&
+            (g_play_state == PLAY_STATE_PLAYING || g_play_state == PLAY_STATE_PAUSED)) {
+            is_visualizer_active = 1;
+        }
     }
 
-    for (int slot = 0; slot < band_slots; slot++) {
-        int src = (slot * VISUALIZER_BAND_COUNT) / band_slots;
-        if (src >= VISUALIZER_BAND_COUNT) {
-            src = VISUALIZER_BAND_COUNT - 1;
+    int column_units[graph_width];
+    for (int col = 0; col < graph_width; col++) {
+        double normalized = (graph_width <= 1)
+            ? 0.0
+            : ((double)col * (double)(VISUALIZER_BAND_COUNT - 1)) / (double)(graph_width - 1);
+        int left = (int)normalized;
+        int right = left + 1;
+        if (right >= VISUALIZER_BAND_COUNT) {
+            right = VISUALIZER_BAND_COUNT - 1;
         }
+        double frac = normalized - (double)left;
+        int blended_level = (int)lround(((double)levels[left] * (1.0 - frac)) + ((double)levels[right] * frac));
 
-        int level = levels[src] - inactive_decay * 7;
+        int level = blended_level - inactive_decay * 7;
         if (level < 0) {
             level = 0;
         }
 
-        int bar_height = (level * viz_height + 99) / 100;
-        int bar_col = 2 + slot * cell_width + (cell_width / 2);
-        if (bar_col >= w - 1) {
-            continue;
+        if (is_visualizer_active && level > 0 && level < 3) {
+            level = 3;
         }
 
-        for (int fill = 0; fill < bar_height; fill++) {
-            int row = viz_bottom - fill;
-            if (row < viz_top) {
-                break;
-            }
+        int units = (level * viz_height * 8 + 99) / 100;
+        if (level > 0 && units == 0) {
+            units = 1;
+        }
+        column_units[col] = units;
+    }
 
-            chtype bar_char = use_ascii_fallback_ui() ? '|' : ACS_VLINE;
-            for (int dx = 0; dx < bar_width && bar_col + dx < w - 1; dx++) {
-                mvwaddch(win_controls, row, bar_col + dx, bar_char);
+    if (graph_width >= 3) {
+        int smoothed_units[graph_width];
+        smoothed_units[0] = (column_units[0] * 3 + column_units[1]) / 4;
+        for (int col = 1; col < graph_width - 1; col++) {
+            smoothed_units[col] = (column_units[col - 1] + column_units[col] * 2 + column_units[col + 1]) / 4;
+        }
+        smoothed_units[graph_width - 1] = (column_units[graph_width - 2] + column_units[graph_width - 1] * 3) / 4;
+
+        for (int col = 0; col < graph_width; col++) {
+            column_units[col] = smoothed_units[col];
+        }
+    }
+
+    for (int col = 0; col < graph_width; col++) {
+        for (int row = viz_bottom; row >= viz_top; row--) {
+            int row_from_bottom = viz_bottom - row;
+            int units = column_units[col] - row_from_bottom * 8;
+            if (units < 0) {
+                units = 0;
             }
+            if (units > 8) {
+                units = 8;
+            }
+            mvwaddstr(win_controls, row, 2 + col, get_spectrum_glyph(units));
         }
     }
 }
@@ -655,18 +700,53 @@ void create_layout() {
     if (max_y < 8) max_y = 8;
     if (max_x < 20) max_x = 20;
 
-    int lyrics_width = max_x / 3; // 歌词栏占宽度的 1/3
+    int lyrics_width;
+    if (max_x >= 160) {
+        lyrics_width = max_x / 3;
+    } else if (max_x >= 120) {
+        lyrics_width = (max_x * 3) / 8;
+    } else {
+        lyrics_width = (max_x * 2) / 5;
+    }
+
+    if (lyrics_width < 28) {
+        lyrics_width = 28;
+    }
+    if (lyrics_width > max_x - 44) {
+        lyrics_width = max_x - 44;
+    }
     if (lyrics_width < 10) lyrics_width = 10;
     int main_width = max_x - lyrics_width;
     if (main_width < 10) main_width = 10;
 
-    // 计算高度比例 (5:2)，预留边框空间和底部提示条（预留1行给菜单提示条
+    // 预留边框空间和底部提示条（预留1行给菜单提示条）
     int total_inner_height = max_y - 5; // 上下留边距 + 底部提示条预留1行
     if (total_inner_height < 3) total_inner_height = 3;
-    int playlist_height = (total_inner_height * 5) / 7;
-    if (playlist_height < 1) playlist_height = 1;
-    int controls_height = total_inner_height - playlist_height;
-    if (controls_height < 2) controls_height = 2;
+
+    int controls_height;
+    if (max_y >= 34) {
+        controls_height = 7;
+    } else if (max_y >= 24) {
+        controls_height = 6;
+    } else {
+        controls_height = 5;
+    }
+
+    if (controls_height > total_inner_height - 4) {
+        controls_height = total_inner_height - 4;
+    }
+    if (controls_height < 4) {
+        controls_height = 4;
+    }
+
+    int playlist_height = total_inner_height - controls_height;
+    if (playlist_height < 4) {
+        playlist_height = 4;
+        controls_height = total_inner_height - playlist_height;
+        if (controls_height < 3) {
+            controls_height = 3;
+        }
+    }
 
     // 1. 创建播放列表窗口 (左上)
     win_playlist = newwin(playlist_height, main_width, 1, 1);
@@ -960,8 +1040,6 @@ void render_controls() {
     
     int row = get_controls_button_row(h);
 
-    render_wave_particle_visualizer();
-    
     // 计算按钮总宽度以便居中
     int total_len = 0;
     for(int i=0; i<CONTROL_COUNT-1; i++) { // 不包括进度条
@@ -1110,12 +1188,25 @@ void update_progress_bar() {
     mvwaddch(win_controls, progress_row, 0, ACS_VLINE);
     mvwaddch(win_controls, progress_row, w - 1, ACS_VLINE);
 
-    render_wave_particle_visualizer();
-    
     wrefresh(win_controls);
 
     if (position_changed) {
         update_lyrics_display();
+    }
+
+    static uint64_t last_placeholder_refresh_ms = 0;
+    static uint64_t last_corner_spectrum_refresh_ms = 0;
+    if (g_current_view == VIEW_MAIN &&
+        (!g_lyrics.has_lyrics || g_lyrics.count == 0) &&
+        (position_changed || now_ms - last_placeholder_refresh_ms >= 100ULL)) {
+        render_lyrics();
+        last_placeholder_refresh_ms = now_ms;
+    } else if (g_current_view == VIEW_MAIN &&
+               g_lyrics.has_lyrics &&
+               g_lyrics.count > 0 &&
+               (now_ms - last_corner_spectrum_refresh_ms >= 100ULL)) {
+        render_lyrics();
+        last_corner_spectrum_refresh_ms = now_ms;
     }
 
     last_refresh_ms = now_ms;
@@ -1332,8 +1423,8 @@ void run_event_loop() {
             continue;
         }
         
-        // 新增：处理功能键（F1-F7）
-        if (ch >= KEY_F(1) && ch <= KEY_F(7)) {
+        // 处理功能键（F1-F8）
+        if (ch >= KEY_F(1) && ch <= KEY_F(8)) {
             handle_function_keys(ch);
             continue;
         }
@@ -1602,14 +1693,14 @@ void run_event_loop() {
                                         char playlist_name[MAX_PLAYLIST_NAME_LEN + 8];
                                         format_display_text(playlist_name, sizeof(playlist_name), pl->name, 30, 1);
                                         mvwprintw(win_win, start_y + i, 2,
-                                                  g_ascii_fallback_ui ? " %s (%d tracks)" : " %s (%d 首)",
+                                                  use_english_ui() ? " %s (%d tracks)" : " %s (%d 首)",
                                                   playlist_name, pl->track_count);
                                         wattroff(win_win, A_REVERSE);
                                     } else {
                                         char playlist_name[MAX_PLAYLIST_NAME_LEN + 8];
                                         format_display_text(playlist_name, sizeof(playlist_name), pl->name, 30, 1);
                                         mvwprintw(win_win, start_y + i, 2,
-                                                  g_ascii_fallback_ui ? " %s (%d tracks)" : " %s (%d 首)",
+                                                  use_english_ui() ? " %s (%d tracks)" : " %s (%d 首)",
                                                   playlist_name, pl->track_count);
                                     }
                                 }

@@ -40,6 +40,11 @@ typedef enum {
     FOCUS_CONTENT = 1
 } FocusArea;
 
+typedef enum {
+    UI_LANG_ZH = 0,
+    UI_LANG_EN = 1
+} UiLanguage;
+
 #define COLOR_PAIR_BORDER 1
 #define COLOR_PAIR_PLAYLIST 2
 #define COLOR_PAIR_CONTROLS 3
@@ -62,7 +67,7 @@ typedef enum {
 #define MAX_DIR_HISTORY_COUNT 50
 #define MAX_PLAYLISTS_COUNT 50
 #define MAX_PLAYLIST_NAME_LEN 64
-#define VISUALIZER_BAND_COUNT 24
+#define VISUALIZER_BAND_COUNT 64
 
 typedef struct {
     char path[MAX_PATH_LEN];
@@ -133,6 +138,7 @@ typedef struct {
     int auto_play_on_start;
     int remember_last_path;
     int clear_history_on_startup;
+    int ui_language;
     int volume_percent;
     int audio_latency_ms;
 } AppConfig;
@@ -198,6 +204,7 @@ int utf8_str_substring(char *dest, const char *src, int start_col, int max_cols)
 int utf8_str_pad(char *dest, size_t dest_size, const char *src, int width);
 void decode_html_entities(char *str);
 int use_ascii_fallback_ui(void);
+int use_english_ui(void);
 
 void update_progress_bar();
 void update_controls_status(const char *msg);

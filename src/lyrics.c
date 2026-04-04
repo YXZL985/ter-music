@@ -8,7 +8,12 @@
 #include <iconv.h>
 #include <ncursesw/ncurses.h>
 #include <libgen.h>
+#include <math.h>
 #include <time.h>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 // 全局歌词变量实例
 Lyrics g_lyrics = {
@@ -24,7 +29,352 @@ Lyrics g_lyrics = {
 extern WINDOW *win_lyrics;
 
 static const char *lyric_text(const char *utf8, const char *ascii) {
-    return use_ascii_fallback_ui() ? ascii : utf8;
+    return use_english_ui() ? ascii : utf8;
+}
+
+static uint64_t lyric_now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)(ts.tv_nsec / 1000000ULL);
+}
+
+static int lyric_glyph_width(const char *glyph) {
+    int width = utf8_str_width(glyph);
+    return width > 0 ? width : 1;
+}
+
+static void draw_lyric_glyph(int row, int col, const char *glyph, int attrs) {
+    if (!win_lyrics || !glyph || glyph[0] == '\0') {
+        return;
+    }
+
+    int h, w;
+    getmaxyx(win_lyrics, h, w);
+
+    int glyph_width = lyric_glyph_width(glyph);
+    if (row <= 0 || row >= h - 1 || col <= 1 || col + glyph_width > w - 1) {
+        return;
+    }
+
+    if (attrs != 0) {
+        wattron(win_lyrics, attrs);
+    }
+    mvwprintw(win_lyrics, row, col, "%s", glyph);
+    if (attrs != 0) {
+        wattroff(win_lyrics, attrs);
+    }
+}
+
+static const char *pick_disc_glyph(double diff, double angle, int pulse_phase) {
+    static const char *ascii_idle[] = {".", "o", "x", "+", "a", "m", "n", "z"};
+    static const char *ascii_hot[] = {"*", "#", "@", "%", "M", "U", "S", "I", "C"};
+    static const char *unicode_idle[] = {"·", "•", "◦", "○", "◇", "A", "M", "N", "Z", "♪"};
+    static const char *unicode_hot[] = {"✦", "✧", "✶", "✹", "♪", "♬", "♩", "M", "U", "S", "I", "C"};
+
+    const char **idle = use_ascii_fallback_ui() ? ascii_idle : unicode_idle;
+    const char **hot = use_ascii_fallback_ui() ? ascii_hot : unicode_hot;
+    int idle_count = use_ascii_fallback_ui() ? (int)(sizeof(ascii_idle) / sizeof(ascii_idle[0]))
+                                             : (int)(sizeof(unicode_idle) / sizeof(unicode_idle[0]));
+    int hot_count = use_ascii_fallback_ui() ? (int)(sizeof(ascii_hot) / sizeof(ascii_hot[0]))
+                                            : (int)(sizeof(unicode_hot) / sizeof(unicode_hot[0]));
+
+    int angle_bucket = (int)lround(((angle + M_PI) / (M_PI * 2.0)) * 16.0);
+    if (diff < 0.18) {
+        return hot[(pulse_phase + angle_bucket) % hot_count];
+    }
+    if (diff < 0.42) {
+        return hot[(pulse_phase / 2 + angle_bucket / 2) % hot_count];
+    }
+    return idle[(pulse_phase / 3 + angle_bucket) % idle_count];
+}
+
+static const char *pick_bar_glyph(double angle, int step, int extent, int pulse_phase) {
+    static const char *ascii_body[] = {"|", "/", "\\", ":", "!", "+", "="};
+    static const char *ascii_tip[] = {"*", "#", "@", "M", "U", "S", "I", "C"};
+    static const char *unicode_body[] = {"·", "•", "╎", "╏", "│", "┆", "┊", "♪"};
+    static const char *unicode_tip[] = {"✦", "✧", "✶", "✹", "♪", "♬", "♩", "♫", "M", "U", "S", "I", "C"};
+
+    const char **body = use_ascii_fallback_ui() ? ascii_body : unicode_body;
+    const char **tip = use_ascii_fallback_ui() ? ascii_tip : unicode_tip;
+    int body_count = use_ascii_fallback_ui() ? (int)(sizeof(ascii_body) / sizeof(ascii_body[0]))
+                                             : (int)(sizeof(unicode_body) / sizeof(unicode_body[0]));
+    int tip_count = use_ascii_fallback_ui() ? (int)(sizeof(ascii_tip) / sizeof(ascii_tip[0]))
+                                            : (int)(sizeof(unicode_tip) / sizeof(unicode_tip[0]));
+
+    double normalized = fmod(angle + (M_PI * 2.0), M_PI * 2.0);
+    if (normalized < 0) {
+        normalized += M_PI * 2.0;
+    }
+
+    int angle_bucket = (int)lround((normalized / (M_PI * 2.0)) * 12.0);
+    if (step == extent - 1) {
+        return tip[(pulse_phase + angle_bucket) % tip_count];
+    }
+    return body[(pulse_phase / 2 + angle_bucket + step) % body_count];
+}
+
+static int use_emoji_no_lyrics_title(void) {
+    return !use_ascii_fallback_ui() && utf8_str_width("🎵") >= 2;
+}
+
+static void render_no_lyrics_spectrum(int h, int w) {
+    if (h < 12 || w < 24) {
+        mvwprintw(win_lyrics, h / 2, 2, "%s", lyric_text("没有可用歌词", "No lyrics available"));
+        return;
+    }
+
+    int levels[VISUALIZER_BAND_COUNT] = {0};
+    int peaks[VISUALIZER_BAND_COUNT] = {0};
+    uint64_t last_update_ms = 0;
+    get_visualizer_snapshot(levels, peaks, VISUALIZER_BAND_COUNT, &last_update_ms);
+
+    uint64_t now_ms = lyric_now_ms();
+    double spin = (double)(now_ms % 5000ULL) / 5000.0;
+    double highlight_angle = (spin * M_PI * 2.0) - (M_PI / 2.0);
+    int pulse_phase = (int)((now_ms / 180ULL) % 24ULL);
+
+    int center_y = h / 2 - 1;
+    int center_x = w / 2;
+    double x_scale = 1.8;
+    int ring_radius = (h - 8) / 2;
+    int width_radius = (w - 10) / 4;
+    if (width_radius < ring_radius) {
+        ring_radius = width_radius;
+    }
+    if (ring_radius < 4) {
+        ring_radius = 4;
+    }
+
+    int disc_outer = ring_radius - 1;
+    int disc_inner = disc_outer / 2;
+    int max_bar_len = ring_radius / 2;
+    if (max_bar_len < 2) {
+        max_bar_len = 2;
+    }
+
+    for (int row = 1; row < h - 1; row++) {
+        for (int col = 2; col < w - 2; col++) {
+            double dx = ((double)col - (double)center_x) / x_scale;
+            double dy = (double)row - (double)center_y;
+            double dist = sqrt(dx * dx + dy * dy);
+
+            if (dist > disc_inner && dist <= disc_outer) {
+                double angle = atan2(dy, dx);
+                double diff = fabs(angle - highlight_angle);
+                if (diff > M_PI) {
+                    diff = (2.0 * M_PI) - diff;
+                }
+                draw_lyric_glyph(row, col, pick_disc_glyph(diff, angle, pulse_phase), diff < 0.18 ? A_BOLD : 0);
+            } else if (dist <= disc_inner - 0.4) {
+                mvwaddch(win_lyrics, row, col, ' ');
+            }
+        }
+    }
+
+    int band_count = VISUALIZER_BAND_COUNT;
+    int max_band_count = (int)(disc_outer * 5.0);
+    if (band_count > max_band_count) {
+        band_count = max_band_count;
+    }
+    if (band_count < 16) {
+        band_count = 16;
+    }
+
+    int is_idle = (last_update_ms == 0) || (now_ms > last_update_ms + 260ULL);
+    if (g_play_state == PLAY_STATE_STOPPED) {
+        is_idle = 1;
+    }
+
+    for (int i = 0; i < band_count; i++) {
+        int src = (i * VISUALIZER_BAND_COUNT) / band_count;
+        if (src >= VISUALIZER_BAND_COUNT) {
+            src = VISUALIZER_BAND_COUNT - 1;
+        }
+
+        int level = levels[src];
+        if (is_idle) {
+            double wave = sin((spin * M_PI * 6.0) + (double)i * 0.42);
+            level = 16 + (int)(14.0 * (wave + 1.0));
+            if (g_play_state == PLAY_STATE_STOPPED) {
+                level /= 2;
+            }
+        }
+
+        int extent = 1 + (level * max_bar_len) / 100;
+        if (extent < 1) {
+            extent = 1;
+        }
+
+        double angle = (-M_PI / 2.0) + ((2.0 * M_PI * (double)i) / (double)band_count);
+        const char *bar_glyph = pick_bar_glyph(angle, 0, extent, pulse_phase + i);
+
+        for (int step = 0; step < extent; step++) {
+            double radius = (double)disc_outer + 1.0 + (double)step;
+            int row = (int)lround((double)center_y + sin(angle) * radius);
+            int col = (int)lround((double)center_x + cos(angle) * radius * x_scale);
+            if (row <= 0 || row >= h - 1 || col <= 1 || col >= w - 1) {
+                continue;
+            }
+            bar_glyph = pick_bar_glyph(angle, step, extent, pulse_phase + i);
+            draw_lyric_glyph(row, col, bar_glyph, step == extent - 1 ? A_BOLD : 0);
+        }
+    }
+
+    const char *title = use_emoji_no_lyrics_title()
+        ? lyric_text("🎵 暂无歌词 🎶", "🎵 No Lyrics 🎶")
+        : lyric_text("暂无歌词", "No Lyrics");
+    const char *subtitle = use_emoji_no_lyrics_title()
+        ? lyric_text("字母 · 符号 · Emoji", "Letters · Symbols · Emoji")
+        : lyric_text("字母 · 符号粒子", "Letter + Symbol Particles");
+    int title_col = center_x - utf8_str_width(title) / 2;
+    int subtitle_col = center_x - utf8_str_width(subtitle) / 2;
+    int text_row = center_y + disc_outer + max_bar_len + 1;
+
+    if (text_row < h - 2) {
+        if (title_col < 2) {
+            title_col = 2;
+        }
+        mvwprintw(win_lyrics, text_row, title_col, "%s", title);
+    }
+    if (text_row + 1 < h - 1) {
+        if (subtitle_col < 2) {
+            subtitle_col = 2;
+        }
+        mvwprintw(win_lyrics, text_row + 1, subtitle_col, "%s", subtitle);
+    }
+}
+
+static int get_corner_spectrum_height(int h) {
+    if (h >= 28) {
+        return 5;
+    }
+    if (h >= 22) {
+        return 4;
+    }
+    if (h >= 17) {
+        return 3;
+    }
+    if (h >= 13) {
+        return 2;
+    }
+    return 1;
+}
+
+static const char *lyric_spectrum_glyph(int units) {
+    static const char *glyphs[] = {" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"};
+    static const char ascii_glyphs[] = {' ', '.', ':', '-', '=', '+', '*', '#', '#'};
+
+    if (units < 0) {
+        units = 0;
+    }
+    if (units > 8) {
+        units = 8;
+    }
+
+    if (use_ascii_fallback_ui()) {
+        static char glyph_buf[2];
+        glyph_buf[0] = ascii_glyphs[units];
+        glyph_buf[1] = '\0';
+        return glyph_buf;
+    }
+
+    return glyphs[units];
+}
+
+static int render_corner_spectrum(int h, int w) {
+    int spectrum_height = get_corner_spectrum_height(h);
+    int graph_top = 1;
+    int graph_bottom = graph_top + spectrum_height - 1;
+    if (graph_bottom >= h - 2 || w < 16) {
+        return 1;
+    }
+
+    int graph_width = w - 4;
+    int levels[VISUALIZER_BAND_COUNT] = {0};
+    int peaks[VISUALIZER_BAND_COUNT] = {0};
+    uint64_t last_update_ms = 0;
+    get_visualizer_snapshot(levels, peaks, VISUALIZER_BAND_COUNT, &last_update_ms);
+    (void)peaks;
+
+    uint64_t now_ms = lyric_now_ms();
+    int inactive_decay = 0;
+    int is_visualizer_active = 0;
+    if (last_update_ms > 0 && now_ms > last_update_ms) {
+        inactive_decay = (int)((now_ms - last_update_ms) / 90ULL);
+        if ((now_ms - last_update_ms) < 250ULL &&
+            (g_play_state == PLAY_STATE_PLAYING || g_play_state == PLAY_STATE_PAUSED)) {
+            is_visualizer_active = 1;
+        }
+    }
+
+    int column_units[graph_width];
+    for (int col = 0; col < graph_width; col++) {
+        double normalized = (graph_width <= 1)
+            ? 0.0
+            : ((double)col * (double)(VISUALIZER_BAND_COUNT - 1)) / (double)(graph_width - 1);
+        int left = (int)normalized;
+        int right = left + 1;
+        if (right >= VISUALIZER_BAND_COUNT) {
+            right = VISUALIZER_BAND_COUNT - 1;
+        }
+
+        double frac = normalized - (double)left;
+        int blended_level = (int)lround(((double)levels[left] * (1.0 - frac)) + ((double)levels[right] * frac));
+        int level = blended_level - inactive_decay * 7;
+        if (level < 0) {
+            level = 0;
+        }
+        if (is_visualizer_active && level > 0 && level < 3) {
+            level = 3;
+        }
+
+        int units = (level * spectrum_height * 8 + 99) / 100;
+        if (level > 0 && units == 0) {
+            units = 1;
+        }
+        column_units[col] = units;
+    }
+
+    if (graph_width >= 3) {
+        int smoothed_units[graph_width];
+        smoothed_units[0] = (column_units[0] * 3 + column_units[1]) / 4;
+        for (int col = 1; col < graph_width - 1; col++) {
+            smoothed_units[col] = (column_units[col - 1] + column_units[col] * 2 + column_units[col + 1]) / 4;
+        }
+        smoothed_units[graph_width - 1] = (column_units[graph_width - 2] + column_units[graph_width - 1] * 3) / 4;
+
+        for (int col = 0; col < graph_width; col++) {
+            column_units[col] = smoothed_units[col];
+        }
+    }
+
+    for (int row = graph_top; row <= graph_bottom; row++) {
+        mvwhline(win_lyrics, row, 1, ' ', w - 2);
+    }
+
+    for (int col = 0; col < graph_width; col++) {
+        for (int row = graph_bottom; row >= graph_top; row--) {
+            int row_from_bottom = graph_bottom - row;
+            int units = column_units[col] - row_from_bottom * 8;
+            if (units < 0) {
+                units = 0;
+            }
+            if (units > 8) {
+                units = 8;
+            }
+            mvwaddstr(win_lyrics, row, 2 + col, lyric_spectrum_glyph(units));
+        }
+    }
+
+    int separator_row = graph_bottom + 1;
+    if (separator_row < h - 1) {
+        mvwhline(win_lyrics, separator_row, 1, ACS_HLINE, w - 2);
+        mvwaddch(win_lyrics, separator_row, 0, ACS_VLINE);
+        mvwaddch(win_lyrics, separator_row, w - 1, ACS_VLINE);
+        return separator_row + 1;
+    }
+
+    return graph_bottom + 1;
 }
 
 static void reset_loaded_lyrics(void) {
@@ -737,23 +1087,28 @@ void render_lyrics(void) {
     pthread_mutex_lock(&g_lyrics.lock);
     
     if (!g_lyrics.has_lyrics || g_lyrics.count == 0) {
-        // 没有歌词时显示提示
-        mvwprintw(win_lyrics, h / 2 - 1, 2, "%s", lyric_text("没有可用歌词", "No lyrics available"));
         pthread_mutex_unlock(&g_lyrics.lock);
+        render_no_lyrics_spectrum(h, w);
         wrefresh(win_lyrics);
         return;
     }
 
+    int content_top = render_corner_spectrum(h, w);
+
     // 如果有歌词但没有当前索引（刚开始播放）
     if (g_lyrics.current_index < 0) {
-        mvwprintw(win_lyrics, h / 2 - 1, 2, "%s", lyric_text("播放中...", "Playing..."));
+        int message_row = content_top + ((h - content_top - 1) / 2);
+        if (message_row >= h - 1) {
+            message_row = h - 2;
+        }
+        mvwprintw(win_lyrics, message_row, 2, "%s", lyric_text("播放中...", "Playing..."));
         pthread_mutex_unlock(&g_lyrics.lock);
         wrefresh(win_lyrics);
         return;
     }
 
     // 计算可视区域大小
-    int visible_lines = h - 4;  // 减去边框和标题行
+    int visible_lines = h - content_top - 1;
     if (visible_lines <= 0) {
         pthread_mutex_unlock(&g_lyrics.lock);
         wrefresh(win_lyrics);
@@ -778,7 +1133,7 @@ void render_lyrics(void) {
     // 渲染可视区域内的歌词行
     for (int i = 0; i < visible_lines && (start_idx + i) < g_lyrics.count; i++) {
         int lyric_idx = start_idx + i;
-        int row = i + 1;  // 窗口内行号（从 1 开始，避开边框）
+        int row = content_top + i;
         
         int is_highlighted;
         int show_marker;
