@@ -207,25 +207,45 @@ copy_dependencies() {
     
     local binary="${appdir}/usr/bin/${PROJECT_NAME}"
     local lib_dir="${appdir}/usr/lib"
+    local processed=()
     
     if [ ! -f "$binary" ]; then
         log_error "未找到二进制文件: $binary"
         exit 1
     fi
     
+    process_dependency() {
+        local dep="$1"
+        
+        if [ ! -f "$dep" ]; then
+            return
+        fi
+        
+        local dep_name=$(basename "$dep")
+        if printf "%s\n" "${processed[@]}" | grep -qFx "$dep"; then
+            return
+        fi
+        
+        processed+=("$dep")
+        
+        if [ ! -f "${lib_dir}/${dep_name}" ]; then
+            cp -L "$dep" "${lib_dir}/"
+            log_info "  复制: $dep_name"
+        fi
+        
+        local sub_deps=$(ldd "$dep" | grep -E "^\s+/" | awk '{print $3}')
+        for sub_dep in $sub_deps; do
+            process_dependency "$sub_dep"
+        done
+    }
+    
     local deps=$(ldd "$binary" | grep -E "^\s+/" | awk '{print $3}' | sort -u)
     
     for dep in $deps; do
-        if [ -f "$dep" ]; then
-            local dep_name=$(basename "$dep")
-            if [ ! -f "${lib_dir}/${dep_name}" ]; then
-                cp "$dep" "${lib_dir}/"
-                log_info "  复制: $dep_name"
-            fi
-        fi
+        process_dependency "$dep"
     done
     
-    log_info "依赖库复制完成"
+    log_info "依赖库复制完成（共 ${#processed[@]} 个库）"
 }
 
 create_icon() {
