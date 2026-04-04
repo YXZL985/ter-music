@@ -110,6 +110,7 @@ copy_dependencies() {
     
     local binary="${extract_dir}/usr/bin/${PROJECT_NAME}"
     local lib_dir="${portable_dir}/lib"
+    local processed=()
     
     mkdir -p "${lib_dir}"
     
@@ -118,17 +119,38 @@ copy_dependencies() {
         exit 1
     fi
     
+    process_dependency() {
+        local dep="$1"
+        
+        if [ ! -f "$dep" ]; then
+            return
+        fi
+        
+        local dep_name=$(basename "$dep")
+        if printf "%s\n" "${processed[@]}" | grep -qFx "$dep"; then
+            return
+        fi
+        
+        processed+=("$dep")
+        
+        if [ ! -f "${lib_dir}/${dep_name}" ]; then
+            cp -L "$dep" "${lib_dir}/"
+            log_info "  复制: $dep_name"
+        fi
+        
+        local sub_deps=$(ldd "$dep" | grep -E "^\s+/" | awk '{print $3}')
+        for sub_dep in $sub_deps; do
+            process_dependency "$sub_dep"
+        done
+    }
+    
     local deps=$(ldd "$binary" | grep -E "^\s+/" | awk '{print $3}' | sort -u)
     
     for dep in $deps; do
-        if [ -f "$dep" ]; then
-            local dep_name=$(basename "$dep")
-            cp "$dep" "${lib_dir}/"
-            log_info "  复制: $dep_name"
-        fi
+        process_dependency "$dep"
     done
     
-    log_info "依赖库复制完成"
+    log_info "依赖库复制完成（共 ${#processed[@]} 个库）"
 }
 
 create_portable_package() {
@@ -141,6 +163,10 @@ create_portable_package() {
     mkdir -p "${portable_dir}"/{bin,lib,share}
     
     cp "${extract_dir}/usr/bin/${PROJECT_NAME}" "${portable_dir}/bin/"
+    
+    if [ -d "${extract_dir}/usr/share" ]; then
+        cp -r "${extract_dir}/usr/share"/* "${portable_dir}/share/" 2>/dev/null || true
+    fi
     
     cat > "${portable_dir}/run.sh" << 'EOF'
 #!/bin/bash
@@ -302,8 +328,8 @@ main() {
     # 创建可移植目录
     mkdir -p "${portable_dir}"
     
-    copy_dependencies "$extract_dir" "$portable_dir"
     create_portable_package "$extract_dir" "$portable_dir" "$version"
+    copy_dependencies "$extract_dir" "$portable_dir"
     
     log_info "创建压缩包..."
     local tarball_path=$(create_tarball "$portable_dir" "$version")
