@@ -119,8 +119,15 @@ copy_dependencies() {
         exit 1
     fi
     
+    log_info "二进制文件: $binary"
+    log_info "目标库目录: $lib_dir"
+    
+    local deps=$(ldd "$binary" | grep -E "^\s+/" | awk '{print $3}' | sort -u)
+    log_info "找到直接依赖: $(echo "$deps" | wc -w) 个"
+    
     process_dependency() {
         local dep="$1"
+        local target_lib_dir="$2"
         
         if [ ! -f "$dep" ]; then
             return
@@ -133,24 +140,26 @@ copy_dependencies() {
         
         processed+=("$dep")
         
-        if [ ! -f "${lib_dir}/${dep_name}" ]; then
-            cp -L "$dep" "${lib_dir}/"
+        if [ ! -f "${target_lib_dir}/${dep_name}" ]; then
+            cp -L "$dep" "${target_lib_dir}/"
             log_info "  复制: $dep_name"
         fi
         
         local sub_deps=$(ldd "$dep" | grep -E "^\s+/" | awk '{print $3}')
         for sub_dep in $sub_deps; do
-            process_dependency "$sub_dep"
+            process_dependency "$sub_dep" "$target_lib_dir"
         done
     }
     
-    local deps=$(ldd "$binary" | grep -E "^\s+/" | awk '{print $3}' | sort -u)
-    
     for dep in $deps; do
-        process_dependency "$dep"
+        process_dependency "$dep" "$lib_dir"
     done
     
-    log_info "依赖库复制完成（共 ${#processed[@]} 个库）"
+    local copied=$(ls -1 "${lib_dir}" | wc -l)
+    log_info "依赖库复制完成（共 ${#processed[@]} 个依赖，复制了 $copied 个文件到库目录）"
+    if [ $copied -eq 0 ]; then
+        log_error "警告：库目录仍然为空！这可能意味着没有复制任何依赖库"
+    fi
 }
 
 create_portable_package() {
