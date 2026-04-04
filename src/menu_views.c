@@ -1907,10 +1907,19 @@ static void handle_settings_input(int ch) {
             
         case KEY_LEFT:
             if (g_focus_area == FOCUS_CONTENT && g_settings_current_option < 12) {
-                (*color_values[g_settings_current_option])--;
-                if (*color_values[g_settings_current_option] < 0) {
-                    *color_values[g_settings_current_option] = 7;
+                int paired_idx;
+                if (g_settings_current_option % 2 == 0) {
+                    paired_idx = g_settings_current_option + 1;
+                } else {
+                    paired_idx = g_settings_current_option - 1;
                 }
+                int paired_color = *color_values[paired_idx];
+                do {
+                    (*color_values[g_settings_current_option])--;
+                    if (*color_values[g_settings_current_option] < 0) {
+                        *color_values[g_settings_current_option] = 7;
+                    }
+                } while (*color_values[g_settings_current_option] == paired_color);
                 apply_color_theme();
                 save_config();
                 render_settings_content();
@@ -1951,10 +1960,19 @@ static void handle_settings_input(int ch) {
         case KEY_RIGHT:
         case 9:
             if (g_focus_area == FOCUS_CONTENT && g_settings_current_option < 12) {
-                (*color_values[g_settings_current_option])++;
-                if (*color_values[g_settings_current_option] > 7) {
-                    *color_values[g_settings_current_option] = 0;
+                int paired_idx;
+                if (g_settings_current_option % 2 == 0) {
+                    paired_idx = g_settings_current_option + 1;
+                } else {
+                    paired_idx = g_settings_current_option - 1;
                 }
+                int paired_color = *color_values[paired_idx];
+                do {
+                    (*color_values[g_settings_current_option])++;
+                    if (*color_values[g_settings_current_option] > 7) {
+                        *color_values[g_settings_current_option] = 0;
+                    }
+                } while (*color_values[g_settings_current_option] == paired_color);
                 apply_color_theme();
                 save_config();
                 render_settings_content();
