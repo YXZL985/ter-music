@@ -1696,7 +1696,7 @@ void render_info_content(void) {
     
     mvprintw(start_y, content_start_x, use_english_ui() ? "Name: %s" : "名称：%s", APP_NAME);
     mvprintw(start_y + 1, content_start_x, use_english_ui() ? "Version: %s" : "版本：%s", APP_VERSION);
-    mvprintw(start_y + 2, content_start_x, use_english_ui() ? "Author: %s" : "作者：%s", APP_AUTHOR);
+    mvprintw(start_y + 2, content_start_x, use_english_ui() ? "Authors: %s" : "巨献：%s", APP_AUTHORS);
     mvprintw(start_y + 3, content_start_x, use_english_ui() ? "Email: %s" : "邮箱：%s", APP_EMAIL);
     start_y += 5;
     
