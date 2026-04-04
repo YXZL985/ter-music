@@ -50,7 +50,7 @@ typedef enum {
 #define UI_DIRTY_CONTROLS 0x02
 #define UI_DIRTY_LYRICS 0x04
 
-#define CONTROL_COUNT 6
+#define CONTROL_COUNT 7
 #define MAX_AUDIO_BUFFER_SIZE (44100 * 2 * sizeof(int16_t))
 #define MAX_PATH_LEN 512
 #define MAX_TRACKS 1000
@@ -131,6 +131,8 @@ typedef struct {
     int auto_play_on_start;
     int remember_last_path;
     int clear_history_on_startup;
+    int volume_percent;
+    int audio_latency_ms;
 } AppConfig;
 
 typedef struct {
@@ -184,6 +186,9 @@ const char *get_loop_mode_str();
 void cleanup();
 void seek_audio(double position);
 int get_and_clear_initial_seek_position(void);
+int get_volume_percent(void);
+void set_volume_percent(int volume);
+void adjust_volume(int delta);
 
 int utf8_str_truncate(char *dest, const char *src, int max_cols);
 int utf8_str_width(const char *src);

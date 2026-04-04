@@ -187,6 +187,7 @@ int main(int argc, char *argv[]) {
     init_ncurses();
     
     init_menu_views();
+    set_volume_percent(g_app_config.volume_percent);
     
     if (g_app_config.clear_history_on_startup) {
         clear_dir_history();

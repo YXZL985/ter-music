@@ -30,8 +30,8 @@ WINDOW *win_controls;
 WINDOW *win_lyrics;
 
 // 控件标签文本
-const char *control_labels[] = {"上一曲", "播放/暂停", "下一曲", "停止", "循环", "进度"};
-static const char *control_labels_ascii[] = {"Prev", "Play/Pause", "Next", "Stop", "Loop", "Prog"};
+const char *control_labels[] = {"上一曲", "播放/暂停", "下一曲", "停止", "循环", "音量", "进度"};
+static const char *control_labels_ascii[] = {"Prev", "Play/Pause", "Next", "Stop", "Loop", "Vol", "Prog"};
 
 // 歌词光标操作模式全局变量
 int g_lyric_cursor_mode = 0;
@@ -44,9 +44,28 @@ static time_t g_controls_status_time = 0;
 static int g_ascii_fallback_ui = 0;
 
 #define SEEK_STEP_SECONDS 5
+#define VOLUME_STEP_PERCENT 5
+#define UI_INPUT_TIMEOUT_MS 40
+#define UI_PROGRESS_REFRESH_MS 80
+
+enum {
+    CONTROL_IDX_PREV = 0,
+    CONTROL_IDX_PLAY_PAUSE = 1,
+    CONTROL_IDX_NEXT = 2,
+    CONTROL_IDX_STOP = 3,
+    CONTROL_IDX_LOOP = 4,
+    CONTROL_IDX_VOLUME = 5,
+    CONTROL_IDX_PROGRESS = 6
+};
 
 static const char *ui_text(const char *utf8, const char *ascii) {
     return g_ascii_fallback_ui ? ascii : utf8;
+}
+
+static uint64_t get_ui_time_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)(ts.tv_nsec / 1000000ULL);
 }
 
 int use_ascii_fallback_ui(void) {
@@ -58,6 +77,29 @@ static const char *get_control_label(int index) {
         return "";
     }
     return g_ascii_fallback_ui ? control_labels_ascii[index] : control_labels[index];
+}
+
+static void build_control_label(int index, char *dest, size_t dest_size) {
+    if (!dest || dest_size == 0) {
+        return;
+    }
+
+    dest[0] = '\0';
+    if (index < 0 || index >= CONTROL_COUNT) {
+        return;
+    }
+
+    if (index == CONTROL_IDX_LOOP) {
+        snprintf(dest, dest_size, "%s:%s", get_control_label(index), get_loop_mode_str());
+        return;
+    }
+
+    if (index == CONTROL_IDX_VOLUME) {
+        snprintf(dest, dest_size, "%s:%d%%", get_control_label(index), get_volume_percent());
+        return;
+    }
+
+    utf8_str_truncate(dest, get_control_label(index), (int)dest_size - 1);
 }
 
 static int locale_uses_utf8(void) {
@@ -738,7 +780,7 @@ void render_controls() {
             total_min %= 100;
             
             // 检查是否选中进度条
-            int is_progress_selected = (g_current_control_idx == 5 && g_control_focus == 1);
+            int is_progress_selected = (g_current_control_idx == CONTROL_IDX_PROGRESS && g_control_focus == 1);
             
             if (is_progress_selected) {
                 wattron(win_controls, A_REVERSE | A_BOLD);
@@ -795,11 +837,7 @@ void render_controls() {
     int total_len = 0;
     for(int i=0; i<CONTROL_COUNT-1; i++) { // 不包括进度条
         char display_label[32];
-        if (i == 4) {
-            snprintf(display_label, sizeof(display_label), "%s:%s", get_control_label(i), get_loop_mode_str());
-        } else {
-            utf8_str_truncate(display_label, get_control_label(i), sizeof(display_label) - 1);
-        }
+        build_control_label(i, display_label, sizeof(display_label));
         total_len += utf8_str_width(display_label) + 4;
     }
     int start_col = (w - total_len) / 2;
@@ -808,11 +846,7 @@ void render_controls() {
     int current_col = start_col;
     for (int i = 0; i < CONTROL_COUNT-1; i++) { // 不包括进度条
         char display_label[32];
-        if (i == 4) { // 循环按钮
-            snprintf(display_label, sizeof(display_label), "%s:%s", get_control_label(i), get_loop_mode_str());
-        } else {
-            utf8_str_truncate(display_label, get_control_label(i), sizeof(display_label) - 1);
-        }
+        build_control_label(i, display_label, sizeof(display_label));
         int len = utf8_str_width(display_label);
         
         if (i == g_current_control_idx && g_control_focus == 1) {
@@ -836,9 +870,25 @@ void render_controls() {
  * 直接计算百分比并只重绘进度条区域
  */
 void update_progress_bar() {
+    static uint64_t last_refresh_ms = 0;
+    static int last_position = -1;
+    static int last_duration = -1;
+    static PlayState last_state = PLAY_STATE_STOPPED;
+
     // 前置条件检查
     if (g_play_state == PLAY_STATE_STOPPED || g_total_duration <= 0 || !win_controls || g_current_view != VIEW_MAIN) {
         return;
+    }
+
+    if (g_play_state == PLAY_STATE_PLAYING && progress_tracker_is_ready()) {
+        int tracked_position = progress_tracker_get_position_seconds();
+        if (tracked_position < 0) {
+            tracked_position = 0;
+        }
+        if (g_total_duration > 0 && tracked_position > g_total_duration) {
+            tracked_position = g_total_duration;
+        }
+        g_current_position = tracked_position;
     }
     
     int h, w;
@@ -851,6 +901,13 @@ void update_progress_bar() {
     int current_pos = g_current_position;
     if (current_pos < 0) current_pos = 0;
     if (current_pos > g_total_duration) current_pos = g_total_duration;
+
+    uint64_t now_ms = get_ui_time_ms();
+    int position_changed = (current_pos != last_position);
+    int force_redraw = position_changed || g_total_duration != last_duration || g_play_state != last_state;
+    if (!force_redraw && (now_ms - last_refresh_ms) < UI_PROGRESS_REFRESH_MS) {
+        return;
+    }
     
     // 计算进度百分比
     int progress_percent = (current_pos * 100) / g_total_duration;
@@ -866,7 +923,7 @@ void update_progress_bar() {
     total_min %= 100;
     
     // 检查是否选中进度条控件
-    int is_progress_selected = (g_current_control_idx == 5 && g_control_focus == 1);
+    int is_progress_selected = (g_current_control_idx == CONTROL_IDX_PROGRESS && g_control_focus == 1);
     
     int progress_row = h / 2 - 2;
     if (progress_row < 1 || progress_row >= h - 1) return;
@@ -925,9 +982,15 @@ void update_progress_bar() {
     mvwaddch(win_controls, progress_row, w - 1, ACS_VLINE);
     
     wrefresh(win_controls);
-    
-    // 更新歌词显示
-    update_lyrics_display();
+
+    if (position_changed) {
+        update_lyrics_display();
+    }
+
+    last_refresh_ms = now_ms;
+    last_position = current_pos;
+    last_duration = g_total_duration;
+    last_state = g_play_state;
 }
 
 /**
@@ -1116,8 +1179,8 @@ void run_event_loop() {
     render_controls(); // 初始绘制控件
     render_lyrics();
     
-    // 设置输入超时为 10ms（100 FPS 刷新率，确保进度条流畅）
-    timeout(10);
+    // 降低空转刷新频率，实时进度由独立节流控制
+    timeout(UI_INPUT_TIMEOUT_MS);
     
     while (1) {
         reap_finished_playback_thread();
@@ -1146,6 +1209,19 @@ void run_event_loop() {
         
         if (ch == 'q' || ch == 'Q') {
             break;
+        }
+
+        if (g_current_view == VIEW_MAIN) {
+            if (ch == '+' || ch == '=') {
+                adjust_volume(VOLUME_STEP_PERCENT);
+                render_controls();
+                continue;
+            }
+            if (ch == '-' || ch == '_') {
+                adjust_volume(-VOLUME_STEP_PERCENT);
+                render_controls();
+                continue;
+            }
         }
         
         // 新增：如果在菜单视图模式下，优先处理菜单输入
@@ -1218,6 +1294,18 @@ void run_event_loop() {
         if (g_control_focus == 1) {
             // === 控制区模式 ===
             switch (ch) {
+                case KEY_UP:
+                    if (g_current_control_idx == CONTROL_IDX_VOLUME) {
+                        adjust_volume(VOLUME_STEP_PERCENT);
+                        render_controls();
+                    }
+                    break;
+                case KEY_DOWN:
+                    if (g_current_control_idx == CONTROL_IDX_VOLUME) {
+                        adjust_volume(-VOLUME_STEP_PERCENT);
+                        render_controls();
+                    }
+                    break;
                 case KEY_LEFT:
                     g_current_control_idx--;
                     if (g_current_control_idx < 0) g_current_control_idx = CONTROL_COUNT - 1;
@@ -1239,10 +1327,10 @@ void run_event_loop() {
                     // 执行当前选中的控件功能
                     // 使用局部变量保存当前状态，避免在函数调用期间状态被其他线程改变
                     switch(g_current_control_idx) {
-                        case 0: // 上一曲
+                        case CONTROL_IDX_PREV: // 上一曲
                             prev_track();
                             break;
-                        case 1: // 播放/暂停
+                        case CONTROL_IDX_PLAY_PAUSE: // 播放/暂停
                             {
                                 // 捕获当前状态快照，确保一致性检查
                                 PlayState current_state = g_play_state;
@@ -1264,16 +1352,19 @@ void run_event_loop() {
                                 }
                             }
                             break;
-                        case 2: // 下一曲
+                        case CONTROL_IDX_NEXT: // 下一曲
                             next_track();
                             break;
-                        case 3: // 停止
+                        case CONTROL_IDX_STOP: // 停止
                             stop_audio();
                             break;
-                        case 4: // 循环模式
+                        case CONTROL_IDX_LOOP: // 循环模式
                             toggle_loop_mode();
                             break;
-                        case 5: // 进度条（占位，无操作）
+                        case CONTROL_IDX_VOLUME: // 音量
+                            adjust_volume(10);
+                            break;
+                        case CONTROL_IDX_PROGRESS: // 进度条（占位，无操作）
                             break;
                     }
                     // 刷新 UI 以反映状态变化
