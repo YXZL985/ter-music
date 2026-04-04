@@ -250,9 +250,14 @@ collect_results() {
     log_info "收集构建结果..."
     
     local found_rpms=0
+    local rpm_files=()
     
     # 收集所有 RPM 包
-    find "${TEMP_DIR}/RPMS" "${TEMP_DIR}/SRPMS" -name "*.rpm" -type f | while read -r rpm_file; do
+    while IFS= read -r -d '' rpm_file; do
+        rpm_files+=("$rpm_file")
+    done < <(find "${TEMP_DIR}/RPMS" "${TEMP_DIR}/SRPMS" -name "*.rpm" -type f -print0)
+    
+    for rpm_file in "${rpm_files[@]}"; do
         cp "$rpm_file" "${OUTPUT_DIR}/"
         local filename=$(basename "$rpm_file")
         log_info "已复制: $filename -> ${OUTPUT_DIR}/"
