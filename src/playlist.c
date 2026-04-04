@@ -10,6 +10,8 @@
 #include <wchar.h>
 #include <locale.h>
 #include <pthread.h>
+#include <libavformat/avformat.h>
+#include <libavutil/dict.h>
 
 const char *audio_extensions[] = {
     ".mp3", ".MP3", ".flac", ".FLAC", ".wav", ".WAV", 
@@ -25,8 +27,72 @@ int g_selected_index = 0;  // 当前选中的歌曲索引
 // 控制区焦点状态
 // 0: 列表模式 (List), 1: 控制模式 (Control)
 int g_control_focus = 0; 
-// 当前选中的控件索引 (0:上一曲，1:播放/暂停，2:下一曲，3:停止，4:循环)
+// 当前选中的控件索引 (0:上一曲，1:播放/暂停，2:下一曲，3:停止，4:循环，5:音量，6:进度条)
 int g_current_control_idx = 1;
+
+static void copy_metadata_field(char *dest, size_t dest_size, const char *value) {
+    if (!dest || dest_size == 0) {
+        return;
+    }
+
+    if (!value || value[0] == '\0') {
+        dest[0] = '\0';
+        return;
+    }
+
+    snprintf(dest, dest_size, "%s", value);
+    decode_html_entities(dest);
+}
+
+static const char *find_metadata_tag(AVDictionary *primary,
+                                     AVDictionary *secondary,
+                                     const char *const *keys,
+                                     int key_count) {
+    for (int i = 0; i < key_count; i++) {
+        if (primary) {
+            AVDictionaryEntry *entry = av_dict_get(primary, keys[i], NULL, 0);
+            if (entry && entry->value && entry->value[0] != '\0') {
+                return entry->value;
+            }
+        }
+
+        if (secondary) {
+            AVDictionaryEntry *entry = av_dict_get(secondary, keys[i], NULL, 0);
+            if (entry && entry->value && entry->value[0] != '\0') {
+                return entry->value;
+            }
+        }
+    }
+
+    return NULL;
+}
+
+static void fill_metadata_from_filename(const char *path, char *title, char *artist, char *album) {
+    const char *fname = strrchr(path, '/');
+    fname = fname ? fname + 1 : path;
+
+    char temp_title[MAX_META_LEN];
+    utf8_str_truncate(temp_title, fname, MAX_META_LEN - 1);
+    char *dot = strrchr(temp_title, '.');
+    if (dot) {
+        *dot = '\0';
+    }
+
+    utf8_str_truncate(title, temp_title, MAX_META_LEN - 1);
+    utf8_str_truncate(artist, "未知艺术家", MAX_META_LEN - 1);
+    utf8_str_truncate(album, "未知专辑", MAX_META_LEN - 1);
+
+    char *dash_pos = strstr(temp_title, " - ");
+    if (dash_pos) {
+        *dash_pos = '\0';
+        utf8_str_truncate(artist, temp_title, MAX_META_LEN - 1);
+        utf8_str_truncate(title, dash_pos + 3, MAX_META_LEN - 1);
+    }
+
+    decode_html_entities(title);
+    decode_html_entities(artist);
+    decode_html_entities(album);
+}
 
 void decode_html_entities(char *str) {
     if (!str) {
@@ -104,57 +170,43 @@ int is_audio_file(const char *filename) {
  * 此处若无真实标签，则默认标题为文件名，艺术家为“未知艺术家”
  */
 void get_audio_metadata(const char *path, char *title, char *artist, char *album) {
-    // 提取文件名作为默认标题
-    const char *fname = strrchr(path, '/');
-    fname = fname ? fname + 1 : path;
-    
-    // 去除扩展名
-    char temp_title[MAX_META_LEN];
-    utf8_str_truncate(temp_title, fname, MAX_META_LEN - 1);
-    char *dot = strrchr(temp_title, '.');
-    if (dot) *dot = '\0';
+    static const char *const title_keys[] = {"title", "TITLE"};
+    static const char *const artist_keys[] = {"artist", "ARTIST", "album_artist", "ALBUM_ARTIST"};
+    static const char *const album_keys[] = {"album", "ALBUM"};
 
-    // 初始化默认值
-    utf8_str_truncate(title, temp_title, MAX_META_LEN - 1);
-    utf8_str_truncate(artist, "未知艺术家", MAX_META_LEN - 1);
-    utf8_str_truncate(album, "未知专辑", MAX_META_LEN - 1);
-    
-    // 尝试从文件名中提取元数据（格式：Artist - Title）
-    char *dash_pos = strstr(temp_title, " - ");
-    if (dash_pos) {
-        *dash_pos = '\0';
-        utf8_str_truncate(artist, temp_title, MAX_META_LEN - 1);
-        utf8_str_truncate(title, dash_pos + 3, MAX_META_LEN - 1);
+    fill_metadata_from_filename(path, title, artist, album);
+
+    AVFormatContext *fmt_ctx = NULL;
+    if (avformat_open_input(&fmt_ctx, path, NULL, NULL) != 0) {
+        return;
     }
 
-    decode_html_entities(title);
-    decode_html_entities(artist);
-    decode_html_entities(album);
-    
-    // TODO: 集成 taglib_c 示例 (需链接 -ltag_c)
-    /*
-    TagLib_File *file = taglib_file_new(path);
-    if (file && taglib_file_is_valid(file)) {
-        TagLib_Tag *tag = taglib_file_tag(file);
-        if (tag) {
-            const char *tag_title = taglib_tag_title(tag);
-            const char *tag_artist = taglib_tag_artist(tag);
-            const char *tag_album = taglib_tag_album(tag);
-            
-            if (tag_title && strlen(tag_title) > 0) {
-                utf8_str_truncate(title, tag_title, MAX_META_LEN - 1);
-            }
-            if (tag_artist && strlen(tag_artist) > 0) {
-                utf8_str_truncate(artist, tag_artist, MAX_META_LEN - 1);
-            }
-            if (tag_album && strlen(tag_album) > 0) {
-                utf8_str_truncate(album, tag_album, MAX_META_LEN - 1);
-            }
-            taglib_tag_free_strings();
+    AVDictionary *stream_meta = NULL;
+    for (unsigned int i = 0; i < fmt_ctx->nb_streams; i++) {
+        if (fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+            stream_meta = fmt_ctx->streams[i]->metadata;
+            break;
         }
-        taglib_file_free(file);
     }
-    */
+
+    const char *tag_title = find_metadata_tag(stream_meta, fmt_ctx->metadata,
+                                              title_keys, (int)(sizeof(title_keys) / sizeof(title_keys[0])));
+    const char *tag_artist = find_metadata_tag(stream_meta, fmt_ctx->metadata,
+                                               artist_keys, (int)(sizeof(artist_keys) / sizeof(artist_keys[0])));
+    const char *tag_album = find_metadata_tag(stream_meta, fmt_ctx->metadata,
+                                              album_keys, (int)(sizeof(album_keys) / sizeof(album_keys[0])));
+
+    if (tag_title) {
+        copy_metadata_field(title, MAX_META_LEN, tag_title);
+    }
+    if (tag_artist) {
+        copy_metadata_field(artist, MAX_META_LEN, tag_artist);
+    }
+    if (tag_album) {
+        copy_metadata_field(album, MAX_META_LEN, tag_album);
+    }
+
+    avformat_close_input(&fmt_ctx);
 }
 
 /**

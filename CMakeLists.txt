@@ -74,6 +74,7 @@ target_link_libraries(${PROJECT_NAME}
     ${AVUTIL_LIBRARIES}
     ${AUDIO_BACKEND_LIBRARIES}
     ${NCURSESW_LIBRARY}
+    m
     ${PTHREAD_LIBRARY}
 )
 

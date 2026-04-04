@@ -7,6 +7,12 @@
 #include <string.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <math.h>
+#include <time.h>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 // 音频后端头文件
 #if defined(HAVE_PULSE)
@@ -46,13 +52,351 @@ static snd_pcm_t *alsa_pcm = NULL;
 static int alsa_ready = 0;
 #endif
 
-static int16_t *audio_buffer = NULL;
-static int buffer_size = 0;
-static int buffer_pos = 0;
 static pthread_mutex_t audio_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t g_volume_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t g_visualizer_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_play_control_cond = PTHREAD_COND_INITIALIZER;
+static int g_volume_percent = 100;
+static int g_pending_volume_sync = 0;
+static int g_output_sample_rate = 44100;
+static int g_output_channels = 2;
+static int g_visualizer_levels[VISUALIZER_BAND_COUNT] = {0};
+static int g_visualizer_peaks[VISUALIZER_BAND_COUNT] = {0};
+static uint64_t g_visualizer_last_update_ms = 0;
+
+#define VISUALIZER_ANALYSIS_SIZE 128
 
 static const char *audio_text(const char *utf8, const char *ascii) {
-    return use_ascii_fallback_ui() ? ascii : utf8;
+    return use_english_ui() ? ascii : utf8;
+}
+
+static uint64_t audio_now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)(ts.tv_nsec / 1000000ULL);
+}
+
+#define PCM_QUEUE_CAPACITY 12
+#define PCM_QUEUE_PREFILL_TARGET 4
+
+typedef struct {
+    int16_t *data;
+    int frame_count;
+    int bytes;
+} PCMChunk;
+
+typedef struct {
+    PCMChunk chunks[PCM_QUEUE_CAPACITY];
+    int read_index;
+    int write_index;
+    int count;
+} PCMQueue;
+
+static int clamp_volume_percent(int volume) {
+    if (volume < 0) {
+        return 0;
+    }
+    if (volume > 100) {
+        return 100;
+    }
+    return volume;
+}
+
+static int get_configured_latency_ms(void) {
+    int latency_ms = g_app_config.audio_latency_ms;
+    if (latency_ms < 20) {
+        latency_ms = 20;
+    }
+    if (latency_ms > 250) {
+        latency_ms = 250;
+    }
+    return latency_ms;
+}
+
+void reset_visualizer_state(void) {
+    pthread_mutex_lock(&g_visualizer_mutex);
+    memset(g_visualizer_levels, 0, sizeof(g_visualizer_levels));
+    memset(g_visualizer_peaks, 0, sizeof(g_visualizer_peaks));
+    g_visualizer_last_update_ms = audio_now_ms();
+    pthread_mutex_unlock(&g_visualizer_mutex);
+}
+
+void push_visualizer_samples(const int16_t *samples, int frame_count, int channels) {
+    if (!samples || frame_count <= 0 || channels <= 0) {
+        return;
+    }
+
+    static double window[VISUALIZER_ANALYSIS_SIZE];
+    static int window_initialized = 0;
+
+    if (!window_initialized) {
+        for (int i = 0; i < VISUALIZER_ANALYSIS_SIZE; i++) {
+            window[i] = 0.5 - 0.5 * cos((2.0 * M_PI * (double)i) / (double)(VISUALIZER_ANALYSIS_SIZE - 1));
+        }
+        window_initialized = 1;
+    }
+
+    double mono[VISUALIZER_ANALYSIS_SIZE];
+    for (int i = 0; i < VISUALIZER_ANALYSIS_SIZE; i++) {
+        int src_frame = (i * frame_count) / VISUALIZER_ANALYSIS_SIZE;
+        if (src_frame >= frame_count) {
+            src_frame = frame_count - 1;
+        }
+
+        double mixed = 0.0;
+        for (int ch = 0; ch < channels; ch++) {
+            mixed += (double)samples[src_frame * channels + ch];
+        }
+        mixed /= (double)channels * 32768.0;
+        mono[i] = mixed * window[i];
+    }
+
+    double magnitudes[VISUALIZER_ANALYSIS_SIZE / 2] = {0.0};
+    int useful_bins = VISUALIZER_ANALYSIS_SIZE / 2;
+
+    for (int bin = 1; bin < useful_bins; bin++) {
+        double real = 0.0;
+        double imag = 0.0;
+        double coeff = (2.0 * M_PI * (double)bin) / (double)VISUALIZER_ANALYSIS_SIZE;
+
+        for (int n = 0; n < VISUALIZER_ANALYSIS_SIZE; n++) {
+            double angle = coeff * (double)n;
+            real += mono[n] * cos(angle);
+            imag -= mono[n] * sin(angle);
+        }
+
+        double magnitude = sqrt(real * real + imag * imag) / ((double)VISUALIZER_ANALYSIS_SIZE / 2.0);
+        double emphasis = 1.0 + ((double)bin / (double)(useful_bins - 1)) * 0.35;
+        magnitudes[bin] = magnitude * emphasis;
+    }
+
+    pthread_mutex_lock(&g_visualizer_mutex);
+    for (int i = 0; i < VISUALIZER_BAND_COUNT; i++) {
+        int start_bin = 1 + (i * (useful_bins - 1)) / VISUALIZER_BAND_COUNT;
+        int end_bin = 1 + ((i + 1) * (useful_bins - 1)) / VISUALIZER_BAND_COUNT;
+        if (end_bin <= start_bin) {
+            end_bin = start_bin + 1;
+        }
+        if (end_bin > useful_bins) {
+            end_bin = useful_bins;
+        }
+
+        double band_energy = 0.0;
+        for (int bin = start_bin; bin < end_bin; bin++) {
+            if (magnitudes[bin] > band_energy) {
+                band_energy = magnitudes[bin];
+            }
+        }
+
+        double compressed = log1p(band_energy * 48.0) / log1p(49.0);
+        int scaled_level = (int)lround(compressed * 100.0);
+        if (scaled_level < 0) {
+            scaled_level = 0;
+        }
+        if (scaled_level > 100) {
+            scaled_level = 100;
+        }
+
+        int previous = g_visualizer_levels[i];
+        if (scaled_level > previous) {
+            g_visualizer_levels[i] = (previous + scaled_level * 3) / 4;
+        } else {
+            g_visualizer_levels[i] = (previous * 3 + scaled_level) / 4;
+        }
+
+        if (g_visualizer_levels[i] < 1) {
+            g_visualizer_levels[i] = 0;
+        }
+
+        if (g_visualizer_levels[i] > g_visualizer_peaks[i]) {
+            g_visualizer_peaks[i] = g_visualizer_levels[i];
+        } else if (g_visualizer_peaks[i] > 0) {
+            g_visualizer_peaks[i] -= 1;
+        }
+    }
+    g_visualizer_last_update_ms = audio_now_ms();
+    pthread_mutex_unlock(&g_visualizer_mutex);
+}
+
+void get_visualizer_snapshot(int *levels, int *peaks, int max_levels, uint64_t *last_update_ms) {
+    if (!levels || !peaks || max_levels <= 0) {
+        return;
+    }
+
+    int copy_count = max_levels < VISUALIZER_BAND_COUNT ? max_levels : VISUALIZER_BAND_COUNT;
+
+    pthread_mutex_lock(&g_visualizer_mutex);
+    for (int i = 0; i < copy_count; i++) {
+        levels[i] = g_visualizer_levels[i];
+        peaks[i] = g_visualizer_peaks[i];
+    }
+    if (last_update_ms) {
+        *last_update_ms = g_visualizer_last_update_ms;
+    }
+    pthread_mutex_unlock(&g_visualizer_mutex);
+}
+
+static void signal_playback_thread(void) {
+    pthread_cond_broadcast(&g_play_control_cond);
+}
+
+static void pcm_queue_reset(PCMQueue *queue) {
+    if (!queue) {
+        return;
+    }
+
+    queue->read_index = 0;
+    queue->write_index = 0;
+    queue->count = 0;
+    for (int i = 0; i < PCM_QUEUE_CAPACITY; i++) {
+        queue->chunks[i].frame_count = 0;
+        queue->chunks[i].bytes = 0;
+    }
+}
+
+static int pcm_queue_init(PCMQueue *queue) {
+    if (!queue) {
+        return -1;
+    }
+
+    memset(queue, 0, sizeof(*queue));
+    for (int i = 0; i < PCM_QUEUE_CAPACITY; i++) {
+        queue->chunks[i].data = malloc(MAX_AUDIO_BUFFER_SIZE);
+        if (!queue->chunks[i].data) {
+            for (int j = 0; j < i; j++) {
+                free(queue->chunks[j].data);
+                queue->chunks[j].data = NULL;
+            }
+            return -1;
+        }
+    }
+
+    pcm_queue_reset(queue);
+    return 0;
+}
+
+static void pcm_queue_destroy(PCMQueue *queue) {
+    if (!queue) {
+        return;
+    }
+
+    for (int i = 0; i < PCM_QUEUE_CAPACITY; i++) {
+        free(queue->chunks[i].data);
+        queue->chunks[i].data = NULL;
+    }
+    pcm_queue_reset(queue);
+}
+
+static PCMChunk *pcm_queue_write_slot(PCMQueue *queue) {
+    if (!queue || queue->count >= PCM_QUEUE_CAPACITY) {
+        return NULL;
+    }
+    return &queue->chunks[queue->write_index];
+}
+
+static void pcm_queue_commit_write(PCMQueue *queue, int frame_count, int bytes) {
+    if (!queue || queue->count >= PCM_QUEUE_CAPACITY) {
+        return;
+    }
+
+    queue->chunks[queue->write_index].frame_count = frame_count;
+    queue->chunks[queue->write_index].bytes = bytes;
+    queue->write_index = (queue->write_index + 1) % PCM_QUEUE_CAPACITY;
+    queue->count++;
+}
+
+static PCMChunk *pcm_queue_peek(PCMQueue *queue) {
+    if (!queue || queue->count <= 0) {
+        return NULL;
+    }
+    return &queue->chunks[queue->read_index];
+}
+
+static void pcm_queue_consume(PCMQueue *queue) {
+    if (!queue || queue->count <= 0) {
+        return;
+    }
+
+    queue->chunks[queue->read_index].frame_count = 0;
+    queue->chunks[queue->read_index].bytes = 0;
+    queue->read_index = (queue->read_index + 1) % PCM_QUEUE_CAPACITY;
+    queue->count--;
+}
+
+static void apply_volume_to_samples(int16_t *samples, int sample_count) {
+#if defined(HAVE_PULSE)
+    (void)samples;
+    (void)sample_count;
+#else
+    if (!samples || sample_count <= 0) {
+        return;
+    }
+
+    int volume = get_volume_percent();
+    if (volume >= 100) {
+        return;
+    }
+    if (volume <= 0) {
+        memset(samples, 0, (size_t)sample_count * sizeof(int16_t));
+        return;
+    }
+
+    for (int i = 0; i < sample_count; i++) {
+        samples[i] = (int16_t)(((int)samples[i] * volume) / 100);
+    }
+#endif
+}
+
+static int consume_volume_sync_request(int *volume_out, int force) {
+    int should_sync = force;
+    int volume = 100;
+
+    pthread_mutex_lock(&g_volume_mutex);
+    volume = g_volume_percent;
+    if (g_pending_volume_sync) {
+        should_sync = 1;
+        g_pending_volume_sync = 0;
+    }
+    pthread_mutex_unlock(&g_volume_mutex);
+
+    if (volume_out) {
+        *volume_out = volume;
+    }
+    return should_sync;
+}
+
+static void audio_backend_sync_volume(int force) {
+    int volume = 100;
+    if (!consume_volume_sync_request(&volume, force)) {
+        return;
+    }
+
+#if defined(HAVE_PULSE)
+    if (!pa_ctx || !pa_ml || !pa_s || pa_stream_get_state(pa_s) != PA_STREAM_READY) {
+        return;
+    }
+
+    uint32_t stream_index = pa_stream_get_index(pa_s);
+    if (stream_index == PA_INVALID_INDEX) {
+        return;
+    }
+
+    pa_cvolume cvolume;
+    pa_cvolume_set(&cvolume, pa_ss.channels, pa_sw_volume_from_linear((double)volume / 100.0));
+
+    pa_operation *op = pa_context_set_sink_input_volume(pa_ctx, stream_index, &cvolume, NULL, NULL);
+    if (!op) {
+        return;
+    }
+
+    while (pa_operation_get_state(op) == PA_OPERATION_RUNNING) {
+        pa_mainloop_iterate(pa_ml, 1, NULL);
+    }
+    pa_operation_unref(op);
+#else
+    (void)force;
+    (void)volume;
+#endif
 }
 
 // 全局变量定义
@@ -96,7 +440,17 @@ static void ffmpeg_log_callback(void *ptr, int level, const char *fmt, va_list v
     // 这防止了FFmpeg日志破坏ncurses界面
 }
 
-static int audio_backend_prepare_stream(void) {
+static int audio_backend_prepare_stream(int sample_rate, int channels) {
+    g_output_sample_rate = sample_rate;
+    g_output_channels = channels;
+
+    unsigned int latency_usec = (unsigned int)get_configured_latency_ms() * 1000U;
+    unsigned int minreq_usec = latency_usec / 4U;
+    if (minreq_usec < 5000U) {
+        minreq_usec = 5000U;
+    }
+    unsigned int max_latency_usec = latency_usec * 2U;
+
 #if defined(HAVE_PULSE)
     if (!pa_connected || !pa_ctx) {
         update_controls_status(audio_text("PulseAudio 未连接", "PulseAudio disconnected"));
@@ -104,8 +458,8 @@ static int audio_backend_prepare_stream(void) {
     }
 
     pa_ss.format = PA_SAMPLE_S16LE;
-    pa_ss.rate = 44100;
-    pa_ss.channels = 2;
+    pa_ss.rate = sample_rate;
+    pa_ss.channels = (uint8_t)channels;
 
     pa_stream *new_stream = pa_stream_new(pa_ctx, "playback", &pa_ss, NULL);
     if (!new_stream) {
@@ -115,13 +469,13 @@ static int audio_backend_prepare_stream(void) {
 
     pa_buffer_attr ba;
     memset(&ba, 0, sizeof(ba));
-    ba.maxlength = (uint32_t)-1;
-    ba.tlength = (uint32_t)-1;
-    ba.prebuf = (uint32_t)-1;
-    ba.minreq = (uint32_t)-1;
+    ba.maxlength = pa_usec_to_bytes((pa_usec_t)max_latency_usec, &pa_ss);
+    ba.tlength = pa_usec_to_bytes((pa_usec_t)latency_usec, &pa_ss);
+    ba.prebuf = 0;
+    ba.minreq = pa_usec_to_bytes((pa_usec_t)minreq_usec, &pa_ss);
     ba.fragsize = (uint32_t)-1;
 
-    if (pa_stream_connect_playback(new_stream, NULL, &ba, PA_STREAM_NOFLAGS, NULL, NULL) < 0) {
+    if (pa_stream_connect_playback(new_stream, NULL, &ba, PA_STREAM_ADJUST_LATENCY, NULL, NULL) < 0) {
         update_controls_status(audio_text("无法连接 PulseAudio 播放流", "Cannot connect PulseAudio stream"));
         pa_stream_unref(new_stream);
         return -1;
@@ -154,10 +508,10 @@ static int audio_backend_prepare_stream(void) {
     if (snd_pcm_set_params(alsa_pcm,
                            SND_PCM_FORMAT_S16_LE,
                            SND_PCM_ACCESS_RW_INTERLEAVED,
-                           2,
-                           44100,
+                           (unsigned int)channels,
+                           (unsigned int)sample_rate,
                            1,
-                           500000) < 0) {
+                           latency_usec) < 0) {
         update_controls_status(audio_text("无法配置 ALSA 设备", "Cannot configure ALSA device"));
         snd_pcm_close(alsa_pcm);
         alsa_pcm = NULL;
@@ -207,24 +561,53 @@ static void audio_backend_flush_stream(void) {
 }
 
 static int audio_backend_write_samples(const int16_t *samples, int frame_count) {
+    if (!samples || frame_count <= 0) {
+        return 0;
+    }
+
 #if defined(HAVE_PULSE)
     size_t bytes = (size_t)frame_count * pa_ss.channels * sizeof(int16_t);
 
-    while (pa_stream_writable_size(pa_s) < bytes) {
+    if (!pa_s || pa_stream_get_state(pa_s) != PA_STREAM_READY) {
+        return -1;
+    }
+
+    while (pa_s && pa_stream_get_state(pa_s) == PA_STREAM_READY &&
+           pa_stream_writable_size(pa_s) < bytes) {
         if (!g_play_thread_running) {
             return 0;
         }
         pa_mainloop_iterate(pa_ml, 1, NULL);
     }
 
+    if (!pa_s || pa_stream_get_state(pa_s) != PA_STREAM_READY) {
+        return -1;
+    }
+
     return pa_stream_write(pa_s, samples, bytes, NULL, 0, PA_SEEK_RELATIVE);
 #else
     int written = 0;
+    int wait_timeout_ms = get_configured_latency_ms();
+    if (wait_timeout_ms < 20) {
+        wait_timeout_ms = 20;
+    }
 
     while (written < frame_count) {
-        snd_pcm_sframes_t ret = snd_pcm_writei(alsa_pcm, samples + (written * 2), frame_count - written);
+        if (!g_play_thread_running) {
+            return 0;
+        }
+
+        if (snd_pcm_wait(alsa_pcm, wait_timeout_ms) < 0) {
+            snd_pcm_prepare(alsa_pcm);
+        }
+        snd_pcm_sframes_t ret = snd_pcm_writei(alsa_pcm,
+                                               samples + (written * g_output_channels),
+                                               frame_count - written);
         if (ret > 0) {
             written += (int)ret;
+            continue;
+        }
+        if (ret == -EAGAIN) {
             continue;
         }
         if (ret == -EPIPE || ret == -ESTRPIPE) {
@@ -324,6 +707,46 @@ void init_audio_device() {
 #endif
 }
 
+int get_volume_percent(void) {
+    int volume = 100;
+
+    pthread_mutex_lock(&g_volume_mutex);
+    volume = g_volume_percent;
+    pthread_mutex_unlock(&g_volume_mutex);
+
+    return volume;
+}
+
+void set_volume_percent(int volume) {
+    int clamped = clamp_volume_percent(volume);
+    int changed = 0;
+
+    pthread_mutex_lock(&g_volume_mutex);
+    if (g_volume_percent != clamped) {
+        g_volume_percent = clamped;
+        g_pending_volume_sync = 1;
+        changed = 1;
+    }
+    pthread_mutex_unlock(&g_volume_mutex);
+
+    if (changed) {
+        g_app_config.volume_percent = clamped;
+        save_config();
+
+        char msg[64];
+        snprintf(msg, sizeof(msg),
+                 use_english_ui() ? "Volume: %d%%" : "音量：%d%%",
+                 clamped);
+        update_controls_status(msg);
+        request_ui_refresh(UI_DIRTY_CONTROLS);
+        signal_playback_thread();
+    }
+}
+
+void adjust_volume(int delta) {
+    set_volume_percent(get_volume_percent() + delta);
+}
+
 extern void render_playlist_content();
 extern void render_controls();
 
@@ -387,6 +810,175 @@ void process_pending_playback_action(void) {
     }
 }
 
+static int wait_while_paused(void) {
+    pthread_mutex_lock(&g_play_mutex);
+    while (g_play_state == PLAY_STATE_PAUSED && g_play_thread_running) {
+        pthread_cond_wait(&g_play_control_cond, &g_play_mutex);
+    }
+    int still_running = g_play_thread_running;
+    pthread_mutex_unlock(&g_play_mutex);
+    return still_running;
+}
+
+static int handle_seek_request_in_decoder(AVFormatContext *fmt_ctx,
+                                          AVCodecContext *codec_ctx,
+                                          SwrContext *swr_ctx,
+                                          AVPacket *packet,
+                                          PCMQueue *queue,
+                                          int audio_stream_index,
+                                          int *decoder_draining,
+                                          int *decoder_finished) {
+    int handled = 0;
+
+    pthread_mutex_lock(&g_seek_mutex);
+    if (g_seek_request && g_play_thread_running && fmt_ctx && codec_ctx) {
+        int target_position = g_seek_position;
+        g_seek_request = 0;
+        handled = 1;
+
+        AVRational time_base = fmt_ctx->streams[audio_stream_index]->time_base;
+        int64_t target_ts = av_rescale_q(target_position, (AVRational){1, 1}, time_base);
+        int ret = av_seek_frame(fmt_ctx, audio_stream_index, target_ts, 0);
+        if (ret < 0) {
+            update_controls_status(audio_text("跳转失败", "Seek failed"));
+        } else {
+            avcodec_flush_buffers(codec_ctx);
+            if (swr_ctx) {
+                swr_init(swr_ctx);
+            }
+            if (packet) {
+                av_packet_unref(packet);
+            }
+            if (queue) {
+                pcm_queue_reset(queue);
+            }
+            audio_backend_flush_stream();
+            progress_tracker_seek(target_position);
+            g_current_position = target_position;
+            if (decoder_draining) {
+                *decoder_draining = 0;
+            }
+            if (decoder_finished) {
+                *decoder_finished = 0;
+            }
+
+            char msg[64];
+            snprintf(msg, sizeof(msg),
+                     use_english_ui() ? "Seek to %02d:%02d" : "已跳转到 %02d:%02d",
+                     target_position / 60, target_position % 60);
+            update_controls_status(msg);
+        }
+    }
+    pthread_mutex_unlock(&g_seek_mutex);
+
+    return handled;
+}
+
+static int decode_next_pcm_chunk(AVFormatContext *fmt_ctx,
+                                 AVCodecContext *codec_ctx,
+                                 SwrContext *swr_ctx,
+                                 AVPacket *packet,
+                                 AVFrame *frame,
+                                 PCMQueue *queue,
+                                 int audio_stream_index,
+                                 int output_sample_rate,
+                                 int output_channels,
+                                 int use_resampler,
+                                 int *decoder_draining,
+                                 int *decoder_finished) {
+    if (!fmt_ctx || !codec_ctx || !packet || !frame || !queue) {
+        return -1;
+    }
+
+    while (!*decoder_finished) {
+        int ret = avcodec_receive_frame(codec_ctx, frame);
+        if (ret == 0) {
+            PCMChunk *slot = pcm_queue_write_slot(queue);
+            if (!slot) {
+                av_frame_unref(frame);
+                return 0;
+            }
+
+            int produced_frames = 0;
+            int produced_bytes = 0;
+
+            if (!use_resampler) {
+                produced_bytes = av_samples_get_buffer_size(NULL, output_channels, frame->nb_samples,
+                                                            AV_SAMPLE_FMT_S16, 1);
+                if (produced_bytes > 0 && produced_bytes <= MAX_AUDIO_BUFFER_SIZE) {
+                    memcpy(slot->data, frame->data[0], (size_t)produced_bytes);
+                    produced_frames = frame->nb_samples;
+                }
+            } else {
+                int dst_nb_samples = av_rescale_rnd(
+                    swr_get_delay(swr_ctx, codec_ctx->sample_rate) + frame->nb_samples,
+                    output_sample_rate, codec_ctx->sample_rate, AV_ROUND_UP);
+                produced_bytes = av_samples_get_buffer_size(NULL, output_channels, dst_nb_samples,
+                                                            AV_SAMPLE_FMT_S16, 1);
+                if (produced_bytes > 0 && produced_bytes <= MAX_AUDIO_BUFFER_SIZE) {
+                    uint8_t *output_planes[] = {(uint8_t *)slot->data};
+                    produced_frames = swr_convert(swr_ctx, output_planes, dst_nb_samples,
+                                                  (const uint8_t **)frame->data, frame->nb_samples);
+                    if (produced_frames > 0) {
+                        produced_bytes = produced_frames * output_channels * (int)sizeof(int16_t);
+                    }
+                }
+            }
+
+            av_frame_unref(frame);
+
+            if (produced_frames > 0 && produced_bytes > 0) {
+                pcm_queue_commit_write(queue, produced_frames, produced_bytes);
+                return 1;
+            }
+            continue;
+        }
+
+        if (ret == AVERROR_EOF) {
+            *decoder_finished = 1;
+            return 0;
+        }
+
+        if (ret != AVERROR(EAGAIN)) {
+            return -1;
+        }
+
+        if (!*decoder_draining) {
+            while (1) {
+                ret = av_read_frame(fmt_ctx, packet);
+                if (ret < 0) {
+                    *decoder_draining = 1;
+                    ret = avcodec_send_packet(codec_ctx, NULL);
+                    if (ret < 0 && ret != AVERROR_EOF) {
+                        return -1;
+                    }
+                    break;
+                }
+
+                if (packet->stream_index != audio_stream_index) {
+                    av_packet_unref(packet);
+                    continue;
+                }
+
+                ret = avcodec_send_packet(codec_ctx, packet);
+                av_packet_unref(packet);
+                if (ret == AVERROR(EAGAIN)) {
+                    break;
+                }
+                if (ret < 0) {
+                    return -1;
+                }
+                break;
+            }
+        } else {
+            *decoder_finished = 1;
+            return 0;
+        }
+    }
+
+    return 0;
+}
+
 /**
  * 播放音频文件的线程函数
  * 负责解码音频文件并通过音频后端输出到音频设备
@@ -415,6 +1007,20 @@ void *play_audio_thread(void *arg) {
     SwrContext *swr_ctx = NULL;
     AVPacket *packet = NULL;
     AVFrame *frame = NULL;
+    int initial_seek_position = 0;
+    int audio_stream_index = -1;
+    int input_channels = 2;
+    int output_channels = 2;
+    int output_sample_rate = 44100;
+    int use_resampler = 1;
+    int decoder_draining = 0;
+    int decoder_finished = 0;
+    int playback_error = 0;
+    PCMQueue pcm_queue;
+    int pcm_queue_initialized = 0;
+
+    memset(&pcm_queue, 0, sizeof(pcm_queue));
+
     if (avformat_open_input(&fmt_ctx, file_path, NULL, NULL) != 0) {
         update_controls_status(audio_text("无法打开音频文件", "Cannot open audio file"));
         goto cleanup;
@@ -449,19 +1055,16 @@ void *play_audio_thread(void *arg) {
     
     // 重置当前播放位置为 0
     g_current_position = 0;
-    
-    // 初始化进度跟踪器（使用默认采样率 44100）
-    progress_tracker_init(44100);
+    reset_visualizer_state();
     
     // 检查是否需要跳转到特定位置（在开始播放之前）
     // 如果是重启跳转，从全局变量获取目标位置
-    int initial_seek_position = get_and_clear_initial_seek_position(); // 获取初始跳转位置，获取后清除
+    initial_seek_position = get_and_clear_initial_seek_position(); // 获取初始跳转位置，获取后清除
     
     // 强制更新 UI 显示，确保进度条从 0% 开始
     request_ui_refresh(UI_DIRTY_CONTROLS);
     
     // 找到音频流
-    int audio_stream_index = -1;
     for (int i = 0; i < fmt_ctx->nb_streams; i++) {
         if (fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
             audio_stream_index = i;
@@ -499,227 +1102,139 @@ void *play_audio_thread(void *arg) {
         goto cleanup;
     }
     
-    // 音频重采样
-    swr_ctx = swr_alloc();
-    if (!swr_ctx) {
-        update_controls_status(audio_text("无法分配重采样器", "Cannot allocate resampler"));
-        goto cleanup;
+    input_channels = codec_ctx->ch_layout.nb_channels;
+    if (input_channels <= 0) {
+        input_channels = 2;
     }
-    
-    // 设置重采样参数
-    AVChannelLayout in_ch_layout = codec_ctx->ch_layout;
-    AVChannelLayout out_ch_layout = AV_CHANNEL_LAYOUT_STEREO;
-    
-    av_opt_set_chlayout(swr_ctx, "in_chlayout", &in_ch_layout, 0);
-    av_opt_set_chlayout(swr_ctx, "out_chlayout", &out_ch_layout, 0);
-    av_opt_set_int(swr_ctx, "in_sample_rate", codec_ctx->sample_rate, 0);
-    av_opt_set_int(swr_ctx, "out_sample_rate", 44100, 0);
-    av_opt_set_sample_fmt(swr_ctx, "in_sample_fmt", codec_ctx->sample_fmt, 0);
-    av_opt_set_sample_fmt(swr_ctx, "out_sample_fmt", AV_SAMPLE_FMT_S16, 0);
-    
-    if (swr_init(swr_ctx) < 0) {
-        update_controls_status(audio_text("无法初始化重采样器", "Cannot initialize resampler"));
-        goto cleanup;
+    output_channels = (input_channels == 1) ? 1 : 2;
+    output_sample_rate = codec_ctx->sample_rate > 0 ? codec_ctx->sample_rate : 44100;
+    use_resampler = !(codec_ctx->sample_fmt == AV_SAMPLE_FMT_S16 && input_channels <= 2);
+
+    if (use_resampler) {
+        swr_ctx = swr_alloc();
+        if (!swr_ctx) {
+            update_controls_status(audio_text("无法分配重采样器", "Cannot allocate resampler"));
+            goto cleanup;
+        }
+
+        AVChannelLayout in_ch_layout = codec_ctx->ch_layout;
+        AVChannelLayout out_ch_layout;
+        av_channel_layout_default(&out_ch_layout, output_channels);
+
+        av_opt_set_chlayout(swr_ctx, "in_chlayout", &in_ch_layout, 0);
+        av_opt_set_chlayout(swr_ctx, "out_chlayout", &out_ch_layout, 0);
+        av_opt_set_int(swr_ctx, "in_sample_rate", codec_ctx->sample_rate, 0);
+        av_opt_set_int(swr_ctx, "out_sample_rate", output_sample_rate, 0);
+        av_opt_set_sample_fmt(swr_ctx, "in_sample_fmt", codec_ctx->sample_fmt, 0);
+        av_opt_set_sample_fmt(swr_ctx, "out_sample_fmt", AV_SAMPLE_FMT_S16, 0);
+
+        if (swr_init(swr_ctx) < 0) {
+            update_controls_status(audio_text("无法初始化重采样器", "Cannot initialize resampler"));
+            goto cleanup;
+        }
     }
-    
-    // 分配帧和数据包
+
     packet = av_packet_alloc();
     frame = av_frame_alloc();
     if (!packet || !frame) {
         update_controls_status(audio_text("无法分配解码数据结构", "Cannot allocate decode structures"));
         goto cleanup;
     }
-    
-    // 创建音频缓冲区
-    audio_buffer = malloc(MAX_AUDIO_BUFFER_SIZE);
-    if (!audio_buffer) {
+
+    if (pcm_queue_init(&pcm_queue) < 0) {
         update_controls_status(audio_text("无法分配音频缓冲区", "Cannot allocate audio buffer"));
         goto cleanup;
     }
-    buffer_size = 0;
-    buffer_pos = 0;
-    
-    if (audio_backend_prepare_stream() < 0) {
+    pcm_queue_initialized = 1;
+
+    if (audio_backend_prepare_stream(output_sample_rate, output_channels) < 0) {
         goto cleanup;
     }
-    
-    // 使用固定输出采样率更新进度跟踪器
-    progress_tracker_set_sample_rate(44100);
-    
+
+    audio_backend_sync_volume(1);
+
+    progress_tracker_init(output_sample_rate);
+    progress_tracker_set_sample_rate(output_sample_rate);
     progress_tracker_start();
-    
-    // 播放状态设置为播放中
+
     g_play_state = PLAY_STATE_PLAYING;
-    
-    // 在开始播放前执行初始跳转（如果有）
-    // 注意：UI 刷新由主线程在创建线程后完成，避免多线程同时刷新 ncurses
+
     if (initial_seek_position > 0 && initial_seek_position < g_total_duration) {
-        // 计算目标时间戳
-        AVRational time_base = fmt_ctx->streams[audio_stream_index]->time_base;
-        int64_t target_ts = av_rescale_q(initial_seek_position, (AVRational){1, 1}, time_base);
-        
-        // 执行跳转
-        int ret = av_seek_frame(fmt_ctx, audio_stream_index, target_ts, 0);
-        if (ret >= 0) {
-            // 清空解码器缓冲区
-            avcodec_flush_buffers(codec_ctx);
-            // 重置当前位置
-            g_current_position = initial_seek_position;
-            // 同步进度跟踪器
-            progress_tracker_seek(initial_seek_position);
-            // 注意：UI 刷新由主线程完成，避免多线程同时刷新 ncurses
-        }
+        pthread_mutex_lock(&g_seek_mutex);
+        g_seek_position = initial_seek_position;
+        g_seek_request = 1;
+        pthread_mutex_unlock(&g_seek_mutex);
     }
 
-    // 解码和播放循环
     while (g_play_thread_running) {
-        // === 新增：实时处理 seek 请求（无论播放/暂停）===
-        pthread_mutex_lock(&g_seek_mutex);
-        if (g_seek_request && g_play_thread_running && fmt_ctx && codec_ctx) {
-            int target_position = g_seek_position;
-            g_seek_request = 0;
-            AVRational time_base = fmt_ctx->streams[audio_stream_index]->time_base;
-            int64_t target_ts = av_rescale_q(target_position, (AVRational){1, 1}, time_base);
+        audio_backend_sync_volume(0);
 
-            // BUGFIX 2026.03.26: 使用正确的 audio stream index
-            // 指定 audio_stream_index 确保跳转到正确的流
-            // 不使用 AVSEEK_FLAG_BACKWARD，直接跳转到不小于目标位置的关键帧，定位更精确
-            int ret = av_seek_frame(fmt_ctx, audio_stream_index, target_ts, 0);
-            if (ret < 0) {
-                char errbuf[128];
-                av_strerror(ret, errbuf, sizeof(errbuf));
-                update_controls_status(audio_text("跳转失败", "Seek failed"));
-                // 失败时不重置 UI
-            } else {
-                // 成功：flush 解码器缓冲，避免残留旧帧
-                avcodec_flush_buffers(codec_ctx);
-
-                // 重置 swresample 上下文（清除缓冲区，但保持对象有效）
-                if (swr_ctx) {
-                    swr_init(swr_ctx);
-                }
-
-                // 同步 tracker 和 UI（防止脱节）
-                progress_tracker_seek(target_position);
-                g_current_position = target_position;
-
-                audio_backend_flush_stream();
-
-                char msg[64];
-                snprintf(msg, sizeof(msg),
-                         use_ascii_fallback_ui() ? "Seek to %02d:%02d" : "已跳转到 %02d:%02d",
-                         target_position / 60, target_position % 60);
-                update_controls_status(msg);
-                
-                // 如果跳转到总时长位置，立即停止播放
-                if (target_position >= g_total_duration) {
-                    pthread_mutex_unlock(&g_seek_mutex);
-                    g_play_thread_running = 0;
-                    break;
-                }
-                
-                // 重要：如果当前 packet 已经被读取，需要释放它
-                // 这样下一轮循环会直接从新位置读取新 packet
-                if (packet) {
-                    av_packet_unref(packet);
-                }
-                
-                // 重要：跳过本次循环，下一轮从新位置读取新数据
-                pthread_mutex_unlock(&g_seek_mutex);
-                continue;
-            }
-        }
-        pthread_mutex_unlock(&g_seek_mutex);
-        
-        // 检查是否需要暂停（在读取帧之前检查）
-        if (g_play_state == PLAY_STATE_PAUSED) {
-            while (g_play_state == PLAY_STATE_PAUSED && g_play_thread_running) {
-                usleep(100000);
-            }
-        }
-        
-        if (!g_play_thread_running) {
+        if (!wait_while_paused()) {
             break;
         }
-        
-        if (av_read_frame(fmt_ctx, packet) < 0) {
-            reached_end_of_stream = 1;
-            break; // 文件读取完毕
-        }
-        
-        if (packet->stream_index == audio_stream_index) {
-            if (avcodec_send_packet(codec_ctx, packet) < 0) {
+
+        if (handle_seek_request_in_decoder(fmt_ctx, codec_ctx, swr_ctx, packet, &pcm_queue,
+                                           audio_stream_index, &decoder_draining, &decoder_finished)) {
+            if (g_current_position >= g_total_duration) {
+                g_play_thread_running = 0;
                 break;
             }
-            
-            while (avcodec_receive_frame(codec_ctx, frame) == 0) {
-                // 重采样音频帧
-                int dst_nb_samples = av_rescale_rnd(
-                    swr_get_delay(swr_ctx, codec_ctx->sample_rate) + frame->nb_samples,
-                    44100, codec_ctx->sample_rate, AV_ROUND_UP);
-                
-                // 分配输出帧
-                uint8_t *output_data;
-                int ret = av_samples_alloc(&output_data, NULL, 2, dst_nb_samples,
-                                          AV_SAMPLE_FMT_S16, 0);
-                if (ret < 0) {
-                    break; // 分配失败，跳过这一帧
-                }
-                
-                // 执行重采样
-                int converted_samples = swr_convert(swr_ctx, &output_data, dst_nb_samples,
-                                                   (const uint8_t**)frame->data, frame->nb_samples);
-                if (converted_samples > 0) {
-                    // 累加样本数到进度跟踪器（无论 PulseAudio 写入是否成功）
-                    progress_tracker_add_samples(converted_samples);
-                    
-                    // 更新全局位置变量（用于 UI 显示）- 每帧都更新
-                    // 但如果已有跳转请求，跳过更新以避免干扰跳转
-                    if (!g_seek_request) {
-                        g_current_position = progress_tracker_get_position_seconds();
-                    }
-                    
-                    int16_t *samples = (int16_t*)output_data;
-                    if (audio_backend_write_samples(samples, converted_samples) < 0) {
-                        char err_msg[128];
-                        snprintf(err_msg, sizeof(err_msg), "%s",
-                                 audio_text("写入音频设备失败", "Audio device write failed"));
-                        update_controls_status(err_msg);
-                    }
-                }
-                
-                // 释放输出帧内存
-                av_freep(&output_data);
-                
-                // 检查是否需要暂停（在处理每帧后检查）
-                if (g_play_state == PLAY_STATE_PAUSED) {
-                    while (g_play_state == PLAY_STATE_PAUSED && g_play_thread_running) {
-                        usleep(100000);
-                    }
-                }
-                
-                if (!g_play_thread_running) {
-                    break;
-                }
+            continue;
+        }
+
+        while (g_play_thread_running && !decoder_finished && pcm_queue.count < PCM_QUEUE_PREFILL_TARGET) {
+            int decode_result = decode_next_pcm_chunk(fmt_ctx, codec_ctx, swr_ctx, packet, frame, &pcm_queue,
+                                                      audio_stream_index, output_sample_rate, output_channels,
+                                                      use_resampler, &decoder_draining, &decoder_finished);
+            if (decode_result < 0) {
+                playback_error = 1;
+                break;
+            }
+            if (decode_result == 0) {
+                break;
             }
         }
-        av_packet_unref(packet);
+
+        if (playback_error) {
+            break;
+        }
+
+        PCMChunk *chunk = pcm_queue_peek(&pcm_queue);
+        if (!chunk) {
+            if (decoder_finished) {
+                reached_end_of_stream = 1;
+                break;
+            }
+            continue;
+        }
+
+        push_visualizer_samples(chunk->data, chunk->frame_count, output_channels);
+        apply_volume_to_samples(chunk->data, chunk->frame_count * output_channels);
+        if (audio_backend_write_samples(chunk->data, chunk->frame_count) < 0) {
+            update_controls_status(audio_text("写入音频设备失败", "Audio device write failed"));
+            playback_error = 1;
+            break;
+        }
+
+        progress_tracker_add_samples(chunk->frame_count);
+        g_current_position = progress_tracker_get_position_seconds();
+        pcm_queue_consume(&pcm_queue);
     }
     
 cleanup:
     audio_backend_cleanup_stream();
-    
-    if (audio_buffer) {
-        free(audio_buffer);
-        audio_buffer = NULL;
+
+    if (pcm_queue_initialized) {
+        pcm_queue_destroy(&pcm_queue);
     }
-    
+
     av_frame_free(&frame);
     av_packet_free(&packet);
     swr_free(&swr_ctx);
     avcodec_free_context(&codec_ctx);
     avformat_close_input(&fmt_ctx);
     progress_tracker_on_stop();
+    reset_visualizer_state();
 
     if (!reached_end_of_stream) {
         g_current_position = 0;
@@ -791,6 +1306,7 @@ void play_audio(int index) {
         g_seek_request = 0;
         
         pthread_mutex_unlock(&g_play_mutex);
+        signal_playback_thread();
         
         pthread_join(g_play_thread, NULL);
         
@@ -800,6 +1316,8 @@ void play_audio(int index) {
     
     g_current_play_index = index;
     g_selected_index = index;
+    g_play_thread_running = 1;
+    g_play_thread_finished = 0;
     g_play_state = PLAY_STATE_STOPPED;
     
     pthread_mutex_unlock(&g_play_mutex);
@@ -817,16 +1335,16 @@ void play_audio(int index) {
         free(index_ptr);
         pthread_mutex_lock(&g_play_mutex);
         g_play_thread_running = 0;
+        g_play_state = PLAY_STATE_STOPPED;
         g_current_play_index = -1;
         pthread_mutex_unlock(&g_play_mutex);
         return;
     }
 
     pthread_mutex_lock(&g_play_mutex);
-    g_play_thread_running = 1;
-    g_play_thread_finished = 0;
     g_play_state = PLAY_STATE_PLAYING;
     pthread_mutex_unlock(&g_play_mutex);
+    signal_playback_thread();
     
     char msg[64];
     snprintf(msg, sizeof(msg), "%s%s - %s",
@@ -866,6 +1384,7 @@ void pause_audio() {
     audio_backend_pause_stream();
     
     pthread_mutex_unlock(&g_play_mutex);
+    signal_playback_thread();
     
     // 通知进度跟踪器（在锁外调用，避免死锁）
     progress_tracker_on_pause();
@@ -897,6 +1416,7 @@ void resume_audio() {
     audio_backend_resume_stream();
     
     pthread_mutex_unlock(&g_play_mutex);
+    signal_playback_thread();
     
     /* 通知进度跟踪器（在锁外调用，避免死锁） */
     progress_tracker_on_resume();
@@ -921,10 +1441,9 @@ void stop_audio() {
     
     // 清除跳转请求，避免跳转线程继续执行
     g_seek_request = 0;
-    
-    audio_backend_cleanup_stream();
-    
+
     pthread_mutex_unlock(&g_play_mutex);  // 新增：解锁
+    signal_playback_thread();
     
     // 重置播放状态
     g_play_state = PLAY_STATE_STOPPED;
@@ -945,6 +1464,7 @@ void stop_audio() {
     
     // 清空歌词
     clear_lyrics();
+    reset_visualizer_state();
     
     render_playlist_content();
     render_controls();  // 新增：更新控制栏
@@ -1045,6 +1565,7 @@ void seek_audio(double position) {
     g_current_position = int_position;
     g_seek_request = 1;
     pthread_mutex_unlock(&g_seek_mutex);
+    signal_playback_thread();
 
     update_progress_bar();
     render_controls();

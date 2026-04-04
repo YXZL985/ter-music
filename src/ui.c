@@ -13,6 +13,7 @@
 #include <wchar.h>
 #include <locale.h>
 #include <langinfo.h>
+#include <math.h>
 #include <pthread.h>
 
 extern WINDOW *win_playlist;
@@ -30,8 +31,8 @@ WINDOW *win_controls;
 WINDOW *win_lyrics;
 
 // 控件标签文本
-const char *control_labels[] = {"上一曲", "播放/暂停", "下一曲", "停止", "循环", "进度"};
-static const char *control_labels_ascii[] = {"Prev", "Play/Pause", "Next", "Stop", "Loop", "Prog"};
+const char *control_labels[] = {"上一曲", "播放/暂停", "下一曲", "停止", "循环", "音量", "进度"};
+static const char *control_labels_en[] = {"Prev", "Play/Pause", "Next", "Stop", "Loop", "Vol", "Prog"};
 
 // 歌词光标操作模式全局变量
 int g_lyric_cursor_mode = 0;
@@ -44,20 +45,233 @@ static time_t g_controls_status_time = 0;
 static int g_ascii_fallback_ui = 0;
 
 #define SEEK_STEP_SECONDS 5
+#define VOLUME_STEP_PERCENT 5
+#define UI_INPUT_TIMEOUT_MS 40
+#define UI_PROGRESS_REFRESH_MS 80
 
-static const char *ui_text(const char *utf8, const char *ascii) {
-    return g_ascii_fallback_ui ? ascii : utf8;
+enum {
+    CONTROL_IDX_PREV = 0,
+    CONTROL_IDX_PLAY_PAUSE = 1,
+    CONTROL_IDX_NEXT = 2,
+    CONTROL_IDX_STOP = 3,
+    CONTROL_IDX_LOOP = 4,
+    CONTROL_IDX_VOLUME = 5,
+    CONTROL_IDX_PROGRESS = 6
+};
+
+static uint64_t get_ui_time_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)(ts.tv_nsec / 1000000ULL);
 }
 
 int use_ascii_fallback_ui(void) {
     return g_ascii_fallback_ui;
 }
 
+int use_english_ui(void) {
+    return g_ascii_fallback_ui || g_app_config.ui_language == UI_LANG_EN;
+}
+
+static const char *ui_text(const char *utf8, const char *ascii) {
+    return use_english_ui() ? ascii : utf8;
+}
+
+static void format_display_text(char *dest, size_t dest_size, const char *src, int width, int pad);
+
+static int get_controls_progress_row(int height) {
+    if (height >= 9) {
+        return 1;
+    }
+
+    int row = height / 2 - 2;
+    if (row < 1) {
+        row = 1;
+    }
+    return row;
+}
+
+static int get_controls_button_row(int height) {
+    if (height >= 9) {
+        return 2;
+    }
+
+    int row = height / 2;
+    if (row < 2) {
+        row = 2;
+    }
+    return row;
+}
+
+static int get_controls_visualizer_top(int height) {
+    if (height >= 9) {
+        return 4;
+    }
+    return get_controls_button_row(height) + 1;
+}
+
+static int get_controls_visualizer_bottom(int height) {
+    return height - 3;
+}
+
 static const char *get_control_label(int index) {
     if (index < 0 || index >= CONTROL_COUNT) {
         return "";
     }
-    return g_ascii_fallback_ui ? control_labels_ascii[index] : control_labels[index];
+    return use_english_ui() ? control_labels_en[index] : control_labels[index];
+}
+
+static const char *get_spectrum_glyph(int units) {
+    static const char *glyphs[] = {" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"};
+    static const char ascii_glyphs[] = {' ', '.', ':', '-', '=', '+', '*', '#', '#'};
+
+    if (units < 0) {
+        units = 0;
+    }
+    if (units > 8) {
+        units = 8;
+    }
+
+    if (use_ascii_fallback_ui()) {
+        static char glyph_buf[2];
+        glyph_buf[0] = ascii_glyphs[units];
+        glyph_buf[1] = '\0';
+        return glyph_buf;
+    }
+
+    return glyphs[units];
+}
+
+static void render_wave_particle_visualizer(void) {
+    if (!win_controls || g_current_view != VIEW_MAIN) {
+        return;
+    }
+
+    int h, w;
+    getmaxyx(win_controls, h, w);
+    if (h < 7 || w < 24) {
+        return;
+    }
+
+    int button_row = get_controls_button_row(h);
+    int viz_top = get_controls_visualizer_top(h);
+    int viz_bottom = get_controls_visualizer_bottom(h);
+    int viz_height = viz_bottom - viz_top + 1;
+    if (viz_height < 2) {
+        return;
+    }
+
+    int separator_row = viz_top - 1;
+    if (separator_row > button_row && separator_row < h - 1) {
+        mvwhline(win_controls, separator_row, 1, ACS_HLINE, w - 2);
+        mvwaddch(win_controls, separator_row, 0, ACS_VLINE);
+        mvwaddch(win_controls, separator_row, w - 1, ACS_VLINE);
+    }
+
+    for (int row = viz_top; row <= viz_bottom; row++) {
+        mvwhline(win_controls, row, 1, ' ', w - 2);
+    }
+
+    int graph_width = w - 4;
+    if (graph_width < 12) {
+        return;
+    }
+
+    int levels[VISUALIZER_BAND_COUNT] = {0};
+    int peaks[VISUALIZER_BAND_COUNT] = {0};
+    uint64_t last_update_ms = 0;
+    get_visualizer_snapshot(levels, peaks, VISUALIZER_BAND_COUNT, &last_update_ms);
+    (void)peaks;
+
+    uint64_t now_ms = get_ui_time_ms();
+    int inactive_decay = 0;
+    int is_visualizer_active = 0;
+    if (last_update_ms > 0 && now_ms > last_update_ms) {
+        inactive_decay = (int)((now_ms - last_update_ms) / 90ULL);
+        if ((now_ms - last_update_ms) < 250ULL &&
+            (g_play_state == PLAY_STATE_PLAYING || g_play_state == PLAY_STATE_PAUSED)) {
+            is_visualizer_active = 1;
+        }
+    }
+
+    int column_units[graph_width];
+    for (int col = 0; col < graph_width; col++) {
+        double normalized = (graph_width <= 1)
+            ? 0.0
+            : ((double)col * (double)(VISUALIZER_BAND_COUNT - 1)) / (double)(graph_width - 1);
+        int left = (int)normalized;
+        int right = left + 1;
+        if (right >= VISUALIZER_BAND_COUNT) {
+            right = VISUALIZER_BAND_COUNT - 1;
+        }
+        double frac = normalized - (double)left;
+        int blended_level = (int)lround(((double)levels[left] * (1.0 - frac)) + ((double)levels[right] * frac));
+
+        int level = blended_level - inactive_decay * 7;
+        if (level < 0) {
+            level = 0;
+        }
+
+        if (is_visualizer_active && level > 0 && level < 3) {
+            level = 3;
+        }
+
+        int units = (level * viz_height * 8 + 99) / 100;
+        if (level > 0 && units == 0) {
+            units = 1;
+        }
+        column_units[col] = units;
+    }
+
+    if (graph_width >= 3) {
+        int smoothed_units[graph_width];
+        smoothed_units[0] = (column_units[0] * 3 + column_units[1]) / 4;
+        for (int col = 1; col < graph_width - 1; col++) {
+            smoothed_units[col] = (column_units[col - 1] + column_units[col] * 2 + column_units[col + 1]) / 4;
+        }
+        smoothed_units[graph_width - 1] = (column_units[graph_width - 2] + column_units[graph_width - 1] * 3) / 4;
+
+        for (int col = 0; col < graph_width; col++) {
+            column_units[col] = smoothed_units[col];
+        }
+    }
+
+    for (int col = 0; col < graph_width; col++) {
+        for (int row = viz_bottom; row >= viz_top; row--) {
+            int row_from_bottom = viz_bottom - row;
+            int units = column_units[col] - row_from_bottom * 8;
+            if (units < 0) {
+                units = 0;
+            }
+            if (units > 8) {
+                units = 8;
+            }
+            mvwaddstr(win_controls, row, 2 + col, get_spectrum_glyph(units));
+        }
+    }
+}
+
+static void build_control_label(int index, char *dest, size_t dest_size) {
+    if (!dest || dest_size == 0) {
+        return;
+    }
+
+    dest[0] = '\0';
+    if (index < 0 || index >= CONTROL_COUNT) {
+        return;
+    }
+
+    if (index == CONTROL_IDX_LOOP) {
+        snprintf(dest, dest_size, "%s:%s", get_control_label(index), get_loop_mode_str());
+        return;
+    }
+
+    if (index == CONTROL_IDX_VOLUME) {
+        snprintf(dest, dest_size, "%s:%d%%", get_control_label(index), get_volume_percent());
+        return;
+    }
+
+    utf8_str_truncate(dest, get_control_label(index), (int)dest_size - 1);
 }
 
 static int locale_uses_utf8(void) {
@@ -486,18 +700,53 @@ void create_layout() {
     if (max_y < 8) max_y = 8;
     if (max_x < 20) max_x = 20;
 
-    int lyrics_width = max_x / 3; // 歌词栏占宽度的 1/3
+    int lyrics_width;
+    if (max_x >= 160) {
+        lyrics_width = max_x / 3;
+    } else if (max_x >= 120) {
+        lyrics_width = (max_x * 3) / 8;
+    } else {
+        lyrics_width = (max_x * 2) / 5;
+    }
+
+    if (lyrics_width < 28) {
+        lyrics_width = 28;
+    }
+    if (lyrics_width > max_x - 44) {
+        lyrics_width = max_x - 44;
+    }
     if (lyrics_width < 10) lyrics_width = 10;
     int main_width = max_x - lyrics_width;
     if (main_width < 10) main_width = 10;
 
-    // 计算高度比例 (5:2)，预留边框空间和底部提示条（预留1行给菜单提示条
+    // 预留边框空间和底部提示条（预留1行给菜单提示条）
     int total_inner_height = max_y - 5; // 上下留边距 + 底部提示条预留1行
     if (total_inner_height < 3) total_inner_height = 3;
-    int playlist_height = (total_inner_height * 5) / 7;
-    if (playlist_height < 1) playlist_height = 1;
-    int controls_height = total_inner_height - playlist_height;
-    if (controls_height < 2) controls_height = 2;
+
+    int controls_height;
+    if (max_y >= 34) {
+        controls_height = 7;
+    } else if (max_y >= 24) {
+        controls_height = 6;
+    } else {
+        controls_height = 5;
+    }
+
+    if (controls_height > total_inner_height - 4) {
+        controls_height = total_inner_height - 4;
+    }
+    if (controls_height < 4) {
+        controls_height = 4;
+    }
+
+    int playlist_height = total_inner_height - controls_height;
+    if (playlist_height < 4) {
+        playlist_height = 4;
+        controls_height = total_inner_height - playlist_height;
+        if (controls_height < 3) {
+            controls_height = 3;
+        }
+    }
 
     // 1. 创建播放列表窗口 (左上)
     win_playlist = newwin(playlist_height, main_width, 1, 1);
@@ -715,7 +964,7 @@ void render_controls() {
     
     // 绘制进度条（在控件上方）
     if (g_play_state != PLAY_STATE_STOPPED && g_total_duration > 0) {
-        int progress_row = h / 2 - 2; // 在控件上方两行
+        int progress_row = get_controls_progress_row(h);
         
         // 窗口尺寸校验
         if (h >= 5 && w >= 20) {
@@ -738,7 +987,7 @@ void render_controls() {
             total_min %= 100;
             
             // 检查是否选中进度条
-            int is_progress_selected = (g_current_control_idx == 5 && g_control_focus == 1);
+            int is_progress_selected = (g_current_control_idx == CONTROL_IDX_PROGRESS && g_control_focus == 1);
             
             if (is_progress_selected) {
                 wattron(win_controls, A_REVERSE | A_BOLD);
@@ -789,17 +1038,13 @@ void render_controls() {
         }
     }
     
-    int row = h / 2; // 垂直居中
-    
+    int row = get_controls_button_row(h);
+
     // 计算按钮总宽度以便居中
     int total_len = 0;
     for(int i=0; i<CONTROL_COUNT-1; i++) { // 不包括进度条
         char display_label[32];
-        if (i == 4) {
-            snprintf(display_label, sizeof(display_label), "%s:%s", get_control_label(i), get_loop_mode_str());
-        } else {
-            utf8_str_truncate(display_label, get_control_label(i), sizeof(display_label) - 1);
-        }
+        build_control_label(i, display_label, sizeof(display_label));
         total_len += utf8_str_width(display_label) + 4;
     }
     int start_col = (w - total_len) / 2;
@@ -808,11 +1053,7 @@ void render_controls() {
     int current_col = start_col;
     for (int i = 0; i < CONTROL_COUNT-1; i++) { // 不包括进度条
         char display_label[32];
-        if (i == 4) { // 循环按钮
-            snprintf(display_label, sizeof(display_label), "%s:%s", get_control_label(i), get_loop_mode_str());
-        } else {
-            utf8_str_truncate(display_label, get_control_label(i), sizeof(display_label) - 1);
-        }
+        build_control_label(i, display_label, sizeof(display_label));
         int len = utf8_str_width(display_label);
         
         if (i == g_current_control_idx && g_control_focus == 1) {
@@ -836,9 +1077,25 @@ void render_controls() {
  * 直接计算百分比并只重绘进度条区域
  */
 void update_progress_bar() {
+    static uint64_t last_refresh_ms = 0;
+    static int last_position = -1;
+    static int last_duration = -1;
+    static PlayState last_state = PLAY_STATE_STOPPED;
+
     // 前置条件检查
     if (g_play_state == PLAY_STATE_STOPPED || g_total_duration <= 0 || !win_controls || g_current_view != VIEW_MAIN) {
         return;
+    }
+
+    if (g_play_state == PLAY_STATE_PLAYING && progress_tracker_is_ready()) {
+        int tracked_position = progress_tracker_get_position_seconds();
+        if (tracked_position < 0) {
+            tracked_position = 0;
+        }
+        if (g_total_duration > 0 && tracked_position > g_total_duration) {
+            tracked_position = g_total_duration;
+        }
+        g_current_position = tracked_position;
     }
     
     int h, w;
@@ -851,6 +1108,13 @@ void update_progress_bar() {
     int current_pos = g_current_position;
     if (current_pos < 0) current_pos = 0;
     if (current_pos > g_total_duration) current_pos = g_total_duration;
+
+    uint64_t now_ms = get_ui_time_ms();
+    int position_changed = (current_pos != last_position);
+    int force_redraw = position_changed || g_total_duration != last_duration || g_play_state != last_state;
+    if (!force_redraw && (now_ms - last_refresh_ms) < UI_PROGRESS_REFRESH_MS) {
+        return;
+    }
     
     // 计算进度百分比
     int progress_percent = (current_pos * 100) / g_total_duration;
@@ -866,9 +1130,9 @@ void update_progress_bar() {
     total_min %= 100;
     
     // 检查是否选中进度条控件
-    int is_progress_selected = (g_current_control_idx == 5 && g_control_focus == 1);
+    int is_progress_selected = (g_current_control_idx == CONTROL_IDX_PROGRESS && g_control_focus == 1);
     
-    int progress_row = h / 2 - 2;
+    int progress_row = get_controls_progress_row(h);
     if (progress_row < 1 || progress_row >= h - 1) return;
     
     // 安全清除行 - 保留边框
@@ -923,11 +1187,32 @@ void update_progress_bar() {
     // 恢复边框
     mvwaddch(win_controls, progress_row, 0, ACS_VLINE);
     mvwaddch(win_controls, progress_row, w - 1, ACS_VLINE);
-    
+
     wrefresh(win_controls);
-    
-    // 更新歌词显示
-    update_lyrics_display();
+
+    if (position_changed) {
+        update_lyrics_display();
+    }
+
+    static uint64_t last_placeholder_refresh_ms = 0;
+    static uint64_t last_corner_spectrum_refresh_ms = 0;
+    if (g_current_view == VIEW_MAIN &&
+        (!g_lyrics.has_lyrics || g_lyrics.count == 0) &&
+        (position_changed || now_ms - last_placeholder_refresh_ms >= 100ULL)) {
+        render_lyrics();
+        last_placeholder_refresh_ms = now_ms;
+    } else if (g_current_view == VIEW_MAIN &&
+               g_lyrics.has_lyrics &&
+               g_lyrics.count > 0 &&
+               (now_ms - last_corner_spectrum_refresh_ms >= 100ULL)) {
+        render_lyrics();
+        last_corner_spectrum_refresh_ms = now_ms;
+    }
+
+    last_refresh_ms = now_ms;
+    last_position = current_pos;
+    last_duration = g_total_duration;
+    last_state = g_play_state;
 }
 
 /**
@@ -1116,8 +1401,8 @@ void run_event_loop() {
     render_controls(); // 初始绘制控件
     render_lyrics();
     
-    // 设置输入超时为 10ms（100 FPS 刷新率，确保进度条流畅）
-    timeout(10);
+    // 降低空转刷新频率，实时进度由独立节流控制
+    timeout(UI_INPUT_TIMEOUT_MS);
     
     while (1) {
         reap_finished_playback_thread();
@@ -1138,14 +1423,27 @@ void run_event_loop() {
             continue;
         }
         
-        // 新增：处理功能键（F1-F7）
-        if (ch >= KEY_F(1) && ch <= KEY_F(7)) {
+        // 处理功能键（F1-F8）
+        if (ch >= KEY_F(1) && ch <= KEY_F(8)) {
             handle_function_keys(ch);
             continue;
         }
         
         if (ch == 'q' || ch == 'Q') {
             break;
+        }
+
+        if (g_current_view == VIEW_MAIN) {
+            if (ch == '+' || ch == '=') {
+                adjust_volume(VOLUME_STEP_PERCENT);
+                render_controls();
+                continue;
+            }
+            if (ch == '-' || ch == '_') {
+                adjust_volume(-VOLUME_STEP_PERCENT);
+                render_controls();
+                continue;
+            }
         }
         
         // 新增：如果在菜单视图模式下，优先处理菜单输入
@@ -1218,6 +1516,18 @@ void run_event_loop() {
         if (g_control_focus == 1) {
             // === 控制区模式 ===
             switch (ch) {
+                case KEY_UP:
+                    if (g_current_control_idx == CONTROL_IDX_VOLUME) {
+                        adjust_volume(VOLUME_STEP_PERCENT);
+                        render_controls();
+                    }
+                    break;
+                case KEY_DOWN:
+                    if (g_current_control_idx == CONTROL_IDX_VOLUME) {
+                        adjust_volume(-VOLUME_STEP_PERCENT);
+                        render_controls();
+                    }
+                    break;
                 case KEY_LEFT:
                     g_current_control_idx--;
                     if (g_current_control_idx < 0) g_current_control_idx = CONTROL_COUNT - 1;
@@ -1239,10 +1549,10 @@ void run_event_loop() {
                     // 执行当前选中的控件功能
                     // 使用局部变量保存当前状态，避免在函数调用期间状态被其他线程改变
                     switch(g_current_control_idx) {
-                        case 0: // 上一曲
+                        case CONTROL_IDX_PREV: // 上一曲
                             prev_track();
                             break;
-                        case 1: // 播放/暂停
+                        case CONTROL_IDX_PLAY_PAUSE: // 播放/暂停
                             {
                                 // 捕获当前状态快照，确保一致性检查
                                 PlayState current_state = g_play_state;
@@ -1264,16 +1574,19 @@ void run_event_loop() {
                                 }
                             }
                             break;
-                        case 2: // 下一曲
+                        case CONTROL_IDX_NEXT: // 下一曲
                             next_track();
                             break;
-                        case 3: // 停止
+                        case CONTROL_IDX_STOP: // 停止
                             stop_audio();
                             break;
-                        case 4: // 循环模式
+                        case CONTROL_IDX_LOOP: // 循环模式
                             toggle_loop_mode();
                             break;
-                        case 5: // 进度条（占位，无操作）
+                        case CONTROL_IDX_VOLUME: // 音量
+                            adjust_volume(10);
+                            break;
+                        case CONTROL_IDX_PROGRESS: // 进度条（占位，无操作）
                             break;
                     }
                     // 刷新 UI 以反映状态变化
@@ -1380,14 +1693,14 @@ void run_event_loop() {
                                         char playlist_name[MAX_PLAYLIST_NAME_LEN + 8];
                                         format_display_text(playlist_name, sizeof(playlist_name), pl->name, 30, 1);
                                         mvwprintw(win_win, start_y + i, 2,
-                                                  g_ascii_fallback_ui ? " %s (%d tracks)" : " %s (%d 首)",
+                                                  use_english_ui() ? " %s (%d tracks)" : " %s (%d 首)",
                                                   playlist_name, pl->track_count);
                                         wattroff(win_win, A_REVERSE);
                                     } else {
                                         char playlist_name[MAX_PLAYLIST_NAME_LEN + 8];
                                         format_display_text(playlist_name, sizeof(playlist_name), pl->name, 30, 1);
                                         mvwprintw(win_win, start_y + i, 2,
-                                                  g_ascii_fallback_ui ? " %s (%d tracks)" : " %s (%d 首)",
+                                                  use_english_ui() ? " %s (%d tracks)" : " %s (%d 首)",
                                                   playlist_name, pl->track_count);
                                     }
                                 }

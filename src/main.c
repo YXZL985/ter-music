@@ -187,6 +187,7 @@ int main(int argc, char *argv[]) {
     init_ncurses();
     
     init_menu_views();
+    set_volume_percent(g_app_config.volume_percent);
     
     if (g_app_config.clear_history_on_startup) {
         clear_dir_history();
@@ -214,14 +215,23 @@ int main(int argc, char *argv[]) {
             if (load_startup_playlist(expanded_path, final_path, sizeof(final_path))) {
                 loaded = 1;
             } else {
-                mvprintw(2, 2, "警告：指定目录中没有可播放的音频文件");
-                mvprintw(3, 2, "将继续尝试当前目录和默认启动路径...");
+                mvprintw(2, 2, "%s",
+                         use_english_ui()
+                             ? "Warning: the selected folder has no playable audio files"
+                             : "警告：指定目录中没有可播放的音频文件");
+                mvprintw(3, 2, "%s",
+                         use_english_ui()
+                             ? "Continuing with current directory and default paths..."
+                             : "将继续尝试当前目录和默认启动路径...");
                 refresh();
                 used_fallback = 1;
             }
         } else {
-            mvprintw(2, 2, "警告：指定路径无效：%s", open_path);
-            mvprintw(3, 2, "将继续尝试当前目录和默认启动路径...");
+            mvprintw(2, 2, use_english_ui() ? "Warning: invalid path: %s" : "警告：指定路径无效：%s", open_path);
+            mvprintw(3, 2, "%s",
+                     use_english_ui()
+                         ? "Continuing with current directory and default paths..."
+                         : "将继续尝试当前目录和默认启动路径...");
             refresh();
             used_fallback = 1;
         }
@@ -237,7 +247,10 @@ int main(int argc, char *argv[]) {
             loaded = 1;
 
             if (used_fallback) {
-                mvprintw(4, 2, "已从当前目录自动找到音乐目录：%s", auto_found_path);
+                mvprintw(4, 2,
+                         use_english_ui() ? "Auto-detected music folder in current directory: %s"
+                                          : "已从当前目录自动找到音乐目录：%s",
+                         auto_found_path);
                 refresh();
             }
         }
@@ -248,7 +261,9 @@ int main(int argc, char *argv[]) {
             loaded = 1;
 
             if (used_fallback) {
-                mvprintw(4, 2, "已从默认路径加载：%s", g_app_config.default_startup_path);
+                mvprintw(4, 2,
+                         use_english_ui() ? "Loaded from default path: %s" : "已从默认路径加载：%s",
+                         g_app_config.default_startup_path);
                 refresh();
             }
         }
@@ -277,6 +292,6 @@ int main(int argc, char *argv[]) {
     
     cleanup();
     
-    printf("ter-music 已正常退出。\n");
+    printf("%s\n", use_english_ui() ? "ter-music exited cleanly." : "ter-music 已正常退出。");
     return 0;
 }
