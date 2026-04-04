@@ -74,6 +74,41 @@ int use_ascii_fallback_ui(void) {
 
 static void format_display_text(char *dest, size_t dest_size, const char *src, int width, int pad);
 
+static int get_controls_progress_row(int height) {
+    if (height >= 9) {
+        return 1;
+    }
+
+    int row = height / 2 - 2;
+    if (row < 1) {
+        row = 1;
+    }
+    return row;
+}
+
+static int get_controls_button_row(int height) {
+    if (height >= 9) {
+        return 2;
+    }
+
+    int row = height / 2;
+    if (row < 2) {
+        row = 2;
+    }
+    return row;
+}
+
+static int get_controls_visualizer_top(int height) {
+    if (height >= 9) {
+        return 4;
+    }
+    return get_controls_button_row(height) + 1;
+}
+
+static int get_controls_visualizer_bottom(int height) {
+    return height - 3;
+}
+
 static const char *get_control_label(int index) {
     if (index < 0 || index >= CONTROL_COUNT) {
         return "";
@@ -92,24 +127,35 @@ static void render_wave_particle_visualizer(void) {
         return;
     }
 
-    int button_row = h / 2;
-    int viz_top = button_row + 1;
-    int viz_bottom = h - 3;
+    int button_row = get_controls_button_row(h);
+    int viz_top = get_controls_visualizer_top(h);
+    int viz_bottom = get_controls_visualizer_bottom(h);
     int viz_height = viz_bottom - viz_top + 1;
     if (viz_height < 2) {
         return;
+    }
+
+    int separator_row = viz_top - 1;
+    if (separator_row > button_row && separator_row < h - 1) {
+        mvwhline(win_controls, separator_row, 1, ACS_HLINE, w - 2);
+        mvwaddch(win_controls, separator_row, 0, ACS_VLINE);
+        mvwaddch(win_controls, separator_row, w - 1, ACS_VLINE);
     }
 
     for (int row = viz_top; row <= viz_bottom; row++) {
         mvwhline(win_controls, row, 1, ' ', w - 2);
     }
 
-    int band_slots = (w - 4) / 4;
-    if (band_slots < 8) {
-        band_slots = 8;
+    int band_slots = VISUALIZER_BAND_COUNT;
+    int graph_width = w - 4;
+    int cell_width = graph_width / band_slots;
+    if (cell_width < 2) {
+        return;
     }
-    if (band_slots > VISUALIZER_BAND_COUNT) {
-        band_slots = VISUALIZER_BAND_COUNT;
+
+    int bar_width = cell_width - 1;
+    if (bar_width < 1) {
+        bar_width = 1;
     }
 
     int levels[VISUALIZER_BAND_COUNT] = {0};
@@ -121,11 +167,6 @@ static void render_wave_particle_visualizer(void) {
     int inactive_decay = 0;
     if (last_update_ms > 0 && now_ms > last_update_ms) {
         inactive_decay = (int)((now_ms - last_update_ms) / 90ULL);
-    }
-
-    int cell_width = (w - 4) / band_slots;
-    if (cell_width < 2) {
-        cell_width = 2;
     }
 
     for (int slot = 0; slot < band_slots; slot++) {
@@ -152,7 +193,7 @@ static void render_wave_particle_visualizer(void) {
             peak_height = viz_height;
         }
 
-        int bar_col = 2 + slot * cell_width + (cell_width / 2);
+        int bar_col = 2 + slot * cell_width;
         if (bar_col >= w - 1) {
             continue;
         }
@@ -162,10 +203,10 @@ static void render_wave_particle_visualizer(void) {
             if (row < viz_top) {
                 break;
             }
-            char bar_char = use_ascii_fallback_ui() ? '|' : '#';
-            mvwaddch(win_controls, row, bar_col, bar_char);
-            if (bar_col + 1 < w - 1 && cell_width >= 3) {
-                mvwaddch(win_controls, row, bar_col + 1, bar_char);
+
+            chtype bar_char = use_ascii_fallback_ui() ? '#' : ACS_CKBOARD;
+            for (int dx = 0; dx < bar_width && bar_col + dx < w - 1; dx++) {
+                mvwaddch(win_controls, row, bar_col + dx, bar_char);
             }
         }
 
@@ -175,7 +216,11 @@ static void render_wave_particle_visualizer(void) {
                 peak_row = viz_top;
             }
             wattron(win_controls, A_BOLD);
-            mvwaddch(win_controls, peak_row, bar_col, use_ascii_fallback_ui() ? 'o' : '*');
+            int peak_col = bar_col + (bar_width / 2);
+            if (peak_col >= w - 1) {
+                peak_col = w - 2;
+            }
+            mvwaddch(win_controls, peak_row, peak_col, use_ascii_fallback_ui() ? 'o' : '*');
             wattroff(win_controls, A_BOLD);
         }
     }
@@ -859,7 +904,7 @@ void render_controls() {
     
     // 绘制进度条（在控件上方）
     if (g_play_state != PLAY_STATE_STOPPED && g_total_duration > 0) {
-        int progress_row = h / 2 - 2; // 在控件上方两行
+        int progress_row = get_controls_progress_row(h);
         
         // 窗口尺寸校验
         if (h >= 5 && w >= 20) {
@@ -933,7 +978,7 @@ void render_controls() {
         }
     }
     
-    int row = h / 2; // 垂直居中
+    int row = get_controls_button_row(h);
 
     render_wave_particle_visualizer();
     
@@ -1029,7 +1074,7 @@ void update_progress_bar() {
     // 检查是否选中进度条控件
     int is_progress_selected = (g_current_control_idx == CONTROL_IDX_PROGRESS && g_control_focus == 1);
     
-    int progress_row = h / 2 - 2;
+    int progress_row = get_controls_progress_row(h);
     if (progress_row < 1 || progress_row >= h - 1) return;
     
     // 安全清除行 - 保留边框
