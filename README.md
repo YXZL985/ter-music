@@ -1,110 +1,112 @@
-# Ter-Music - 终端音乐播放器
+# Ter-Music - Terminal Music Player
 
 ![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)
 ![Language: C](https://img.shields.io/badge/Language-C-blue.svg)
 ![Platform: Linux](https://img.shields.io/badge/Platform-Linux-green.svg)
 
-## 1. 项目介绍
+[中文 README](README_CN.md)
 
-### 1.1 核心功能
+## 1. Project Introduction
 
-Ter-Music 是一个轻量级、基于终端的命令行音乐播放器，专为 Linux 系统设计。它利用 FFmpeg 进行音频解码，PulseAudio 进行音频输出，并通过 ncursesw 提供美观的文本用户界面。
+### 1.1 Core Features
 
-**主要功能包括：**
+Ter-Music is a lightweight, terminal-based command-line music player designed for Linux systems. It utilizes FFmpeg for audio decoding, PulseAudio for audio output, and provides a beautiful text-based user interface through ncursesw.
 
-- 🎵 **支持多种音频格式**：MP3、WAV、FLAC、OGG、M4A、AAC、WMA、APE、OPUS 等主流格式
-- 📝 **LRC 歌词同步显示**：自动加载并同步显示歌词，跟随播放进度高亮显示
-- 🎶 **多种循环播放模式**：顺序播放、单曲循环、列表循环、随机播放
-- 📚 **播放列表管理**：支持用户自定义创建多个播放列表
-- ❤️ **收藏夹功能**：收藏喜爱的歌曲，快速访问
-- 🕒 **播放历史记录**：自动记录播放历史，方便回顾
-- 📂 **目录历史**：记录最近访问的音乐目录
-- ⚙️ **可配置主题颜色**：支持自定义界面颜色主题
-- ⌨️ **键盘快捷键操作**：全键盘操作，高效便捷
-- 📊 **实时进度条**：流畅的播放进度显示和拖拽跳转
+**Key Features:**
 
-### 1.2 设计理念
+- 🎵 **Supports Multiple Audio Formats**: MP3, WAV, FLAC, OGG, M4A, AAC, WMA, APE, OPUS and other popular formats
+- 📝 **LRC Lyrics Synchronization**: Automatically loads and synchronizes lyrics, highlights current line with playback progress
+- 🎶 **Multiple Playback Modes**: Sequential, single repeat, list repeat, shuffle
+- 📚 **Playlist Management**: Supports user-defined creation of multiple playlists
+- ❤️ **Favorites Feature**: Bookmark favorite songs for quick access
+- 🕒 **Playback History**: Automatically records playback history for easy review
+- 📂 **Directory History**: Records recently visited music directories
+- ⚙️ **Configurable Theme Colors**: Supports custom interface color themes
+- ⌨️ **Keyboard Shortcuts**: Full keyboard operation, efficient and convenient
+- 📊 **Real-time Progress Bar**: Smooth playback progress display and seeking
 
-Ter-Music 遵循**简约、高效、原生**的设计理念：
+### 1.2 Design Philosophy
 
-- **轻量级**：不依赖重型桌面环境，资源占用极低
-- **终端原生**：完全基于文本用户界面，适合服务器、嵌入式设备和喜欢终端工作流的用户
-- **模块化设计**：清晰的模块划分，易于维护和扩展
-- **Unix 哲学**：做好一件事，与其他工具良好协作
-- **零跟踪**：不收集任何用户数据，尊重隐私
+Ter-Music follows the **simple, efficient, native** design philosophy:
 
-### 1.3 主要特点
+- **Lightweight**: No dependency on heavy desktop environments, extremely low resource usage
+- **Terminal Native**: Completely text-based UI, suitable for servers, embedded devices, and users who prefer terminal workflows
+- **Modular Design**: Clear module separation, easy to maintain and extend
+- **Unix Philosophy**: Do one thing well, work well with other tools
+- **No Tracking**: Does not collect any user data, respects privacy
 
-| 特性                                         | 说明                       |
-| ------------------------------------------ | ------------------------ |
-| 🚀 **低资源占用**                               | 内存占用通常 < 10MB，CPU 使用率极低  |
-| 🎨 **美观的 TUI**                             | 分栏布局，彩色界面，支持终端大小自适应      |
-| 🌍 **UTF-8 中文支持**                          | 完美支持 UTF-8 编码，正确显示中文歌曲信息 |
-| 🔄 **持久化存储**                               | 配置、收藏夹、播放历史自动保存，程序重启后恢复  |
-| 🎯 **多视图切换**：通过 F2-F7 功能键快速切换设置、历史、播放列表等视图 | <br />                   |
-| ⚡ **响应式 UI**：100 FPS 刷新率，进度条流畅更新           | <br />                   |
-| 🔧 **CMake 构建**：现代化构建系统，跨平台兼容性好            | <br />                   |
-| 🔊 **PulseAudio 音频后端**：稳定的低延迟音频输出          | <br />                   |
+### 1.3 Key Features
 
-### 1.4 应用场景
+| Feature                                      | Description                                 |
+| ------------------------------------------ | ------------------------------------------- |
+| 🚀 **Low Resource Usage**                     | Memory usage usually < 10MB, extremely low CPU usage  |
+| 🎨 **Beautiful TUI**                         | Split-column layout, colored interface, supports terminal size adaptation |
+| 🌍 **UTF-8 Chinese Support**                  | Perfect UTF-8 encoding support, correctly displays Chinese song metadata |
+| 🔄 **Persistent Storage**                     | Configuration, favorites, and play history are automatically saved and restored after program restart |
+| 🎯 **Multiple View Switching**: Quickly switch between settings, history, playlist and other views via F2-F7 function keys | <br /> |
+| ⚡ **Responsive UI**: 100 FPS refresh rate, smooth progress bar updates | <br /> |
+| 🔧 **CMake Build**: Modern build system, good cross-platform compatibility | <br /> |
+| 🔊 **PulseAudio Audio Backend**: Stable low-latency audio output | <br /> |
 
-- **服务器/无头系统**：在没有图形界面的服务器上播放音乐
-- **嵌入式设备**：在资源有限的嵌入式 Linux 设备上运行
-- **开发人员**：在终端工作时边编码边听音乐，无需切换窗口
-- **极简主义者**：喜欢简约软件，不需要复杂图形界面的用户
-- **学习参考**：学习 C 语言、FFmpeg、ncurses 编程的优秀示例项目
+### 1.4 Use Cases
 
-### 1.5 目标用户群体
+- **Servers/Headless Systems**: Play music on servers without a graphical interface
+- **Embedded Devices**: Run on resource-limited embedded Linux devices
+- **Developers**: Code and listen to music while working in the terminal, no need to switch windows
+- **Minimalists**: Users who prefer simple software and don't need complex graphical interfaces
+- **Learning Reference**: Excellent example project for learning C programming, FFmpeg, and ncurses
 
-- Linux 高级用户和命令行爱好者
-- 嵌入式开发人员和系统管理员
-- 追求极简主义的用户
-- 需要在无图形界面环境下播放音乐的用户
-- 学习 C 语言和多媒体编程的开发者
+### 1.5 Target Audience
 
-## 2. 编译环境要求
+- Advanced Linux users and command-line enthusiasts
+- Embedded developers and system administrators
+- Users pursuing minimalism
+- Users who need to play music in environments without a graphical interface
+- Developers learning C programming and multimedia programming
 
-### 2.1 操作系统
+## 2. Build Environment Requirements
 
-- **支持系统**：Linux 内核 3.10 或更高版本
-- **推荐发行版**：Fedora 30+, Ubuntu 20.04+, Arch Linux 最新版
-- **不支持**：Windows、macOS（欢迎贡献移植）
+### 2.1 Operating System
 
-### 2.2 硬件配置
+- **Supported Systems**: Linux kernel 3.10 or higher
+- **Recommended Distributions**: Fedora 30+, Ubuntu 20.04+, Arch Linux latest
+- **Not Supported**: Windows, macOS (contributions for porting are welcome)
 
-| 组件      | 最低要求            | 推荐配置            |
+### 2.2 Hardware Requirements
+
+| Component | Minimum Requirements | Recommended |
 | ------- | --------------- | --------------- |
-| **CPU** | 单核 1GHz         | 双核 2GHz 或更高     |
-| **内存**  | 64MB 可用内存       | 128MB 可用内存或更高   |
-| **存储**  | 200MB 可用磁盘空间      | 1024MB 可用磁盘空间     |
-| **声卡**  | PulseAudio 服务运行 | PulseAudio 服务运行 |
+| **CPU** | Single-core 1GHz | Dual-core 2GHz or higher |
+| **Memory** | 64MB available | 128MB available or higher |
+| **Storage** | 200MB available disk space | 1024MB available disk space |
+| **Sound Card** | PulseAudio service running | PulseAudio service running |
 
-### 2.3 编译器版本
+### 2.3 Compiler Versions
 
-- **GCC**：GCC 7.0 或更高版本
-- **Clang**：Clang 6.0 或更高版本
-- **C 标准**：C99 或更高
+- **GCC**: GCC 7.0 or higher
+- **Clang**: Clang 6.0 or higher
+- **C Standard**: C99 or higher
 
-### 2.4 构建工具
+### 2.4 Build Tools
 
-- **CMake**：3.10 或更高版本
-- **Make**：GNU Make 4.0 或更高版本
-- **pkg-config**：0.29 或更高版本
+- **CMake**: 3.10 or higher
+- **Make**: GNU Make 4.0 or higher
+- **pkg-config**: 0.29 or higher
 
-## 3. 依赖项及安装命令
+## 3. Dependencies and Installation Commands
 
-### 3.1 必需依赖包
+### 3.1 Required Dependencies
 
-| 依赖库               | 版本要求  | 用途                                                      |
+| Dependency Library | Version | Purpose |
 | ----------------- | ----- | ------------------------------------------------------- |
-| `ffmpeg-free-devel`     | 4.0+  | 音频解码（libavcodec, libavformat, libswresample, libavutil） |
-| `pulseaudio-libs-devel` | 10.0+ | PulseAudio 音频输出                                         |
-| `ncurses-devel`        | 6.0+  | 文本用户界面，宽字符支持                                            |
-| `pthread-devel`         | 系统自带  | 多线程支持                                                   |
-| `cmake`           | 3.10+ | 构建系统（编译时需要）                                             |
-| `gcc`             | 7.0+  | C 编译器（编译时需要）                                            |
-| `make`            | -     | 构建工具（编译时需要）                                             |
-| `pkg-config`      | -     | 依赖检测（编译时需要）                                             |
+| `ffmpeg-free-devel` | 4.0+ | Audio decoding (libavcodec, libavformat, libswresample, libavutil) |
+| `pulseaudio-libs-devel` | 10.0+ | PulseAudio audio output |
+| `ncurses-devel` | 6.0+ | Text user interface, wide character support |
+| `pthread-devel` | System | Multi-threading support |
+| `cmake` | 3.10+ | Build system (required for compilation) |
+| `gcc` | 7.0+ | C compiler (required for compilation) |
+| `make` | - | Build tool (required for compilation) |
+| `pkg-config` | - | Dependency detection (required for compilation) |
 
 ### 3.2 Fedora / RHEL / CentOS
 
@@ -122,7 +124,7 @@ sudo apt install libavcodec-dev libavformat-dev libswresample-dev libavutil-dev
 sudo apt install libpulse-dev libncursesw5-dev
 ```
 
-**注意**：如果找不到 ffmpeg 开发包，您可能需要先启用 universe 仓库：
+**Note**: If you can't find the ffmpeg development packages, you may need to enable the universe repository first:
 
 ```bash
 sudo add-apt-repository universe
@@ -136,178 +138,178 @@ sudo pacman -S cmake gcc make pkg-config
 sudo pacman -S ffmpeg pulseaudio ncurses
 ```
 
-## 4. 编译步骤
+## 4. Compilation Steps
 
-### 4.1 获取源代码
+### 4.1 Get Source Code
 
 ```bash
-git clone https://gitee.com/yanxi-bamboo-forest/ter-music.git
+git clone https://github.com/yanxizhulin/ter-music.git
 cd ter-music
 ```
 
-### 4.2 创建构建目录
+### 4.2 Create Build Directory
 
 ```bash
 mkdir build
 cd build
 ```
 
-### 4.3 配置 CMake
+### 4.3 Configure CMake
 
 ```bash
 cmake ..
 ```
 
-CMake 会自动检测系统中的所有依赖库。如果缺少任何依赖，会显示明确的错误信息。
+CMake will automatically detect all dependencies in your system. If any dependencies are missing, it will display a clear error message.
 
-**可选 CMake 参数：**
+**Optional CMake Parameters:**
 
 ```bash
-# 自定义安装前缀（默认：/usr/local）
+# Custom installation prefix (default: /usr/local)
 cmake .. -DCMAKE_INSTALL_PREFIX=/usr
 
-# 启用调试编译
+# Enable debug compilation
 cmake .. -DCMAKE_BUILD_TYPE=Debug
 
-# 启用编译优化
+# Enable compilation optimizations
 cmake .. -DCMAKE_BUILD_TYPE=Release
 ```
 
-### 4.4 编译
+### 4.4 Compile
 
 ```bash
 make -j$(nproc)
 ```
 
-`-j$(nproc)` 会使用所有可用 CPU 核心并行编译，加快编译速度。
+`-j$(nproc)` will use all available CPU cores for parallel compilation, speeding up the build process.
 
-### 4.5 安装（可选）
+### 4.5 Install (Optional)
 
 ```bash
 sudo make install
 ```
 
-安装后，您可以直接在终端输入 `ter-music` 启动程序。
+After installation, you can launch the program by simply typing `ter-music` in your terminal.
 
-### 4.6 卸载（如果已安装）
+### 4.6 Uninstall (if installed)
 
 ```bash
 cd build
 sudo make uninstall
 ```
 
-### 4.7 清理构建文件
+### 4.7 Clean Build Files
 
 ```bash
 cd build
 make clean
-# 或者完全删除构建目录
+# Or completely remove the build directory
 rm -rf build
 ```
 
-### 4.8 常见编译问题
+### 4.8 Common Compilation Issues
 
-**问题 1：找不到 PulseAudio 库**
-
-```
-解决：安装 pulseaudio-libs-devel（Fedora）或 libpulse-dev（Ubuntu）
-```
-
-**问题 2：找不到 ncursesw 库**
+**Issue 1: Cannot find PulseAudio library**
 
 ```
-解决：安装 ncurses-devel（Fedora）或 libncursesw5-dev（Ubuntu）
+Solution: Install pulseaudio-libs-devel (Fedora) or libpulse-dev (Ubuntu)
 ```
 
-**问题 3：找不到 ffmpeg 头文件**
+**Issue 2: Cannot find ncursesw library**
 
 ```
-解决：安装 ffmpeg-devel（Fedora）或 libavcodec-dev libavformat-dev...（Ubuntu）
+Solution: Install ncurses-devel (Fedora) or libncursesw5-dev (Ubuntu)
 ```
 
-### 4.9 构建脚本使用方法
+**Issue 3: Cannot find ffmpeg header files**
 
-Ter-Music 提供了两个构建脚本，用于创建不同格式的可执行文件：
+```
+Solution: Install ffmpeg-devel (Fedora) or libavcodec-dev libavformat-dev... (Ubuntu)
+```
 
-#### 4.9.1 AppImage 构建脚本
+### 4.9 Using Build Scripts
 
-`build-appimage.sh` 脚本用于将 RPM 包转换为 AppImage 格式，适用于各种 Linux 发行版：
+Ter-Music provides two build scripts for creating executable files in different formats:
 
-**使用方法：**
+#### 4.9.1 AppImage Build Script
+
+The `build-appimage.sh` script converts RPM packages to AppImage format, suitable for various Linux distributions:
+
+**Usage:**
 
 ```bash
-# 使用默认 RPM 包构建 AppImage
+# Build AppImage using default RPM package
 ./build-appimage.sh
 
-# 使用指定的 RPM 包构建 AppImage
+# Build AppImage using specified RPM package
 ./build-appimage.sh -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm
 
-# 构建后保留临时文件（用于调试）
+# Keep temporary files after build (for debugging)
 ./build-appimage.sh --keep-temp
 ```
 
-**输出：**
+**Output:**
 
-- AppImage 包将输出到：`build/appimage/`
+- AppImage package will be output to: `build/appimage/`
 
-#### 4.9.2 可移植包构建脚本
+#### 4.9.2 Portable Package Build Script
 
-`build-portable.sh` 脚本用于将 RPM 包转换为可移植的压缩包格式，包含所有必要的依赖库：
+The `build-portable.sh` script converts RPM packages to a portable compressed package format, containing all necessary dependency libraries:
 
-**使用方法：**
+**Usage:**
 
 ```bash
-# 使用默认 RPM 包构建可移植包
+# Build portable package using default RPM package
 ./build-portable.sh
 
-# 使用指定的 RPM 包构建可移植包
+# Build portable package using specified RPM package
 ./build-portable.sh -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm
 
-# 构建后保留临时文件（用于调试）
+# Keep temporary files after build (for debugging)
 ./build-portable.sh --keep-temp
 ```
 
-**输出：**
+**Output:**
 
-- 可移植包将输出到：`build/portable/`
+- Portable package will be output to: `build/portable/`
 
-**注意：** 这两个脚本都需要先运行 `build-rpm.sh` 生成 RPM 包，或者使用 `-r` 选项指定已有的 RPM 包路径。
+**Note:** Both scripts require running `build-rpm.sh` first to generate an RPM package, or use the `-r` option to specify the path to an existing RPM package.
 
-#### 4.9.3 Linyaps（如意玲珑）构建脚本
+#### 4.9.3 Linyaps Build Script
 
-`build-linyaps.sh` 脚本直接从源码构建 Linyaps（如意玲珑）格式包，适合 deepin/UOS 等使用玲珑包管理的系统：
+The `build-linyaps.sh` script builds Linyaps (Linglong) format packages directly from source, suitable for systems like deepin/UOS that use Linglong package management:
 
-**使用方法：**
+**Usage:**
 
 ```bash
-# 使用自动检测版本构建 Linyaps 包
+# Build Linyaps package with automatic version detection
 ./build-linyaps.sh
 
-# 指定版本号构建
+# Build with specified version number
 ./build-linyaps.sh -v 1.2.3
 
-# 构建后保留临时文件（用于调试）
+# Keep temporary files after build (for debugging)
 ./build-linyaps.sh --keep-temp
 
-# 显示帮助信息
+# Show help information
 ./build-linyaps.sh --help
 ```
 
-**输出：**
+**Output:**
 
-- UAB 包和 layer 文件将输出到：`build/linyaps/`
+- UAB package and layer files will be output to: `build/linyaps/`
 
-**安装运行：**
+**Install and Run:**
 
 ```bash
-# 使用 ll-cli 安装
+# Install using ll-cli
 ll-cli install build/linyaps/org.yxzl.ter-music_1.0.0_x86_64.uab
 
-# 运行
+# Run
 ll-cli run org.yxzl.ter-music
 ```
 
-**构建依赖（Debian/Ubuntu/deepin）：**
+**Build Dependencies (Debian/Ubuntu/deepin):**
 
 ```bash
 sudo apt install linglong-builder cmake make pkg-config
@@ -315,55 +317,55 @@ sudo apt install libncurses-dev libavformat-dev libavcodec-dev libswresample-dev
 sudo apt install libavutil-dev libtag1-dev libpulse-dev
 ```
 
-## 5. 使用方法
+## 5. Usage
 
-### 5.1 启动程序
+### 5.1 Launch the Program
 
-**如果已安装：**
+**If installed:**
 
 ```bash
 ter-music
 ```
 
-**如果未安装，直接从构建目录运行：**
+**If not installed, run directly from build directory:**
 
 ```bash
 cd build
 ./ter-music
 ```
 
-### 5.2 命令行参数
+### 5.2 Command Line Arguments
 
 ```bash
 ter-music [OPTIONS]
 
-选项：
-  -o, --open <path>    启动时直接打开指定音乐目录
-  -h, --help           显示帮助信息
+Options:
+  -o, --open <path>    Open specified music directory directly on startup
+  -h, --help           Show help information
 ```
 
-**示例：**
+**Examples:**
 
 ```bash
-# 启动时打开我的音乐文件夹
+# Open my music folder on startup
 ter-music -o ~/Music
 
-# 显示帮助
+# Show help
 ter-music --help
 ```
 
-### 5.3 界面布局
+### 5.3 Interface Layout
 
-启动后，您将看到三栏布局：
+After launching, you will see a three-column layout:
 
 ```
 ┌────────────────────────────┬───────────────┐
 │  Play List                 │  [Spectrum]   │
 │                            ├───────────────┤
-│  歌曲列表区域                │  Lyrics       │
+│  Song List Area            │  Lyrics       │
 │                            │               │
-│                            │ 歌词显示区域    │
-│                            │  (或黑胶唱片)   │
+│                            │ Lyrics Display│
+│                            │  (Vinyl)      │
 │                            │               │
 ├────────────────────────────┤               │
 │   Controls                 │               │
@@ -371,260 +373,230 @@ ter-music --help
 │  [<<] [Play/Pause] [>>]    │               │
 │  [Stop] [Loop:Off] [Volume]│               │
 └────────────────────────────┴───────────────┘
-Menu: 选项菜单
+Menu: Options Menu
 ```
 
-- **左侧上方**：播放列表，显示当前目录下的所有音频文件
-- **左侧下方**：控制栏，包含播放控制按钮和进度条
-- **右侧**：歌词显示区域，同步显示当前播放歌曲的歌词
-- **底部**：选项菜单，包含设置、播放历史、收藏夹、关于信息、退出等选项。
+- **Top Left**: Playlist, displays all audio files in the current directory
+- **Bottom Left**: Control bar, contains playback control buttons and progress bar
+- **Right**: Lyrics display area, synchronously displays lyrics for the currently playing song
+- **Bottom**: Options menu, includes settings, playback history, favorites, about, exit, etc.
 
-### 5.4 基本操作
+### 5.4 Basic Operations
 
-#### 焦点切换
+#### Focus Switching
 
-| 按键  | 功能       |
+| Key | Function |
 | --- | -------- |
-| `C` | 切换到控制区焦点 |
-| `L` | 切换到列表区焦点 |
-| `D` | 临时切换到歌词区焦点 |
+| `C` | Switch focus to control area |
+| `L` | Switch focus to list area |
+| `D` | Temporarily switch focus to lyrics area |
 
-- **注意：** 切换到歌词区焦点后，歌词区会显示当前播放歌曲的歌词，但不会自动滚动到当前播放位置，需要再次按下D键才能恢复滚动。而且仅能在列表区焦点时切换到歌词区焦点。
+- **Note**: After switching focus to the lyrics area, the lyrics area will display the lyrics of the currently playing song, but will not automatically scroll to the current playback position. You need to press D again to resume scrolling. Moreover, you can only switch to lyrics area focus when focus is on the list area.
 
-#### 列表区操作（焦点在播放列表）
+#### List Area Operations (Focus on Playlist)
 
-| 按键                | 功能                 |
+| Key | Function |
 | ----------------- | ------------------ |
-| `↑` / `↓`         | 上下选择歌曲             |
-| `Space` / `Enter` | 播放选中歌曲             |
-| `O` / `o`         | 打开新的音乐文件夹          |
-| `F` / `f`         | 将选中歌曲添加到收藏夹        |
-| `A` / `a`         | 将选中歌曲添加到第一个自定义播放列表 |
+| `↑` / `↓` | Select song up/down |
+| `Space` / `Enter` | Play selected song |
+| `O` / `o` | Open new music folder |
+| `F` / `f` | Add selected song to favorites |
+| `A` / `a` | Add selected song to first custom playlist |
 
+#### Control Area Operations (Focus on Control Bar)
 
-#### 控制区操作（焦点在控制栏）
-
-| 按键        | 功能              |
+| Key | Function |
 | --------- | --------------- |
-| `←` / `→` | 左右选择控制按钮        |
-| `Space`   | 激活当前选中的按钮       |
-| `,`（逗号）   | 后退 5 秒          |
-| `.`（句号）   | 前进 5 秒          |
-| `D` / `d` | 跳转到当前歌词行对应的播放位置 |
-| `-` / `_` | 减小音量             |
-| `=` / `+` | 增大音量             |
+| `←` / `→` | Select control button left/right |
+| `Space` | Activate currently selected button |
+| `,` (comma) | Seek backward 5 seconds |
+| `.` (period) | Seek forward 5 seconds |
+| `D` / `d` | Jump to playback position corresponding to current lyrics line |
+| `-` / `_` | Decrease volume |
+| `=` / `+` | Increase volume |
 
-**控制按钮说明：**
+**Control Button Description:**
 
-| 按钮           | 功能                                   |
+| Button | Function |
 | ------------ | ------------------------------------ |
-| `<<`         | 上一曲                                  |
-| `Play/Pause` | 播放/暂停                                |
-| `>>`         | 下一曲                                  |
-| `Stop`       | 停止播放                                 |
-| `Loop`       | 切换循环模式（Off → Single → List → Random） |
-| `Progress`   | 进度条（显示当前播放进度）                        |
-| `Volume`     | 音量调节（显示当前音量百分比，可调节）                  |
+| `<<` | Previous track |
+| `Play/Pause` | Play/Pause |
+| `>>` | Next track |
+| `Stop` | Stop playback |
+| `Loop` | Switch loop mode (Off → Single → List → Random) |
+| `Progress` | Progress bar (shows current playback progress) |
+| `Volume` | Volume control (shows current volume percentage, adjustable) |
 
-#### 歌词区操作（焦点在歌词区域）
+#### Lyrics Area Operations (Focus on Lyrics Area)
 
-| 按键                            | 功能              |
+| Key | Function |
 | ----------------------------- | --------------- |
-| `↑` / `↓`                     | 上下选择歌词行         |
-| `D`                             | 退出歌词区焦点，恢复滚动 |
+| `↑` / `↓` | Select lyrics line up/down |
+| `D` | Exit lyrics area focus, resume scrolling |
 
-#### 功能键（全局可用）
+#### Function Keys (Globally Available)
 
-**功能键（F1-F8）**
+**Function Keys (F1-F8)**
 
-| 按键                | 功能                 |
+| Key | Function |
 | ----------------- | ------------------ |
-| `F1`              | 返回主界面               |
-| `F2`              | 打开设置视图             |
-| `F3`              | 打开播放历史视图           |
-| `F4`              | 打开播放列表管理视图         |
-| `F5`              | 打开收藏夹视图            |
-| `F6`              | 打开关于信息视图           |
-| `F7`              | 切换中英文界面            |
-| `F8`              | 退出程序               |
+| `F1` | Return to main interface |
+| `F2` | Open settings view |
+| `F3` | Open playback history view |
+| `F4` | Open playlist management view |
+| `F5` | Open favorites view |
+| `F6` | Open about view |
+| `F7` | Toggle language (Chinese/English) |
+| `F8` | Exit program |
 
-**备用数字键（Esc 后 3 秒内输入）**
+**Alternative Number Keys (Enter within 3 seconds after Esc)**
 
-| 按键                | 功能                 |
+| Key | Function |
 | ----------------- | ------------------ |
-| `Esc` + `1`       | 返回主界面               |
-| `Esc` + `2`       | 打开设置视图             |
-| `Esc` + `3`       | 打开播放历史视图           |
-| `Esc` + `4`       | 打开播放列表管理视图         |
-| `Esc` + `5`       | 打开收藏夹视图            |
-| `Esc` + `6`       | 打开关于信息视图           |
-| `Esc` + `7`       | 切换中英文界面            |
-| `Esc` + `8`       | 退出程序               |
-| `q`               | 退出程序               |
+| `Esc` + `1` | Return to main interface |
+| `Esc` + `2` | Open settings view |
+| `Esc` + `3` | Open playback history view |
+| `Esc` + `4` | Open playlist management view |
+| `Esc` + `5` | Open favorites view |
+| `Esc` + `6` | Open about view |
+| `Esc` + `7` | Toggle language (Chinese/English) |
+| `Esc` + `8` | Exit program |
+| `q` | Exit program |
 
-### 5.5 循环模式说明
+### 5.5 Loop Mode Description
 
-| 模式       | 说明              |
+| Mode | Description |
 | -------- | --------------- |
-| `Off`    | 顺序播放，播放到列表末尾停止  |
-| `Single` | 单曲循环，重复播放当前歌曲   |
-| `List`   | 列表循环，播放完一轮后从头开始 |
-| `Random` | 随机播放，随机选择下一首歌曲  |
+| `Off` | Sequential playback, stops at end of list |
+| `Single` | Single repeat, repeats current song |
+| `List` | List repeat, starts from beginning after playing all |
+| `Random` | Shuffle playback, randomly selects next song |
 
-按 `Space` 激活 Loop 按钮可循环切换模式。
+Press `Space` to activate the Loop button to cycle through modes.
 
-### 5.6 歌词显示
+### 5.6 Lyrics Display
 
-Ter-Music 支持自动加载 LRC 格式歌词文件：
+Ter-Music supports automatic loading of LRC format lyrics files:
 
-- 歌词文件应与音频文件放在同一目录
-- 歌词文件名应与音频文件名相同，扩展名为 `.lrc`
-- 例如：`song.mp3` → `song.lrc`
-- 程序会根据播放时间自动高亮当前歌词
-- 如果找不到歌词文件，歌词区域会显示 "No lyrics loaded"
+- Lyrics files should be placed in the same directory as the audio file
+- Lyrics filename should match the audio filename, with extension `.lrc`
+- Example: `song.mp3` → `song.lrc`
+- The program automatically highlights current lyrics based on playback time
+- If no lyrics file is found, the lyrics area will display "No lyrics loaded"
 
-### 5.7 配置文件
+### 5.7 Configuration File
 
-配置文件存储在 `~/.config/ter-music/config`。程序会在首次运行时自动创建。
+The configuration file is stored at `~/.config/ter-music/config`. The program will automatically create it on first run.
 
-**配置项包括：**
+**Configuration options include:**
 
-- `default_startup_path`：默认启动目录
-- `auto_play_on_start`：启动时自动播放（0/1）
-- `remember_last_path`：记住上次打开的目录（0/1）
-- 颜色主题配置：所有界面元素的前景色和背景色
+- `default_startup_path`: Default startup directory
+- `auto_play_on_start`: Auto-play on startup (0/1)
+- `remember_last_path`: Remember last opened directory (0/1)
+- Color theme configuration: Foreground and background colors for all UI elements
 
-程序会自动保存配置，修改设置后立即生效。
+The program automatically saves configuration, changes take effect immediately after modification.
 
-### 5.8 数据存储位置
+### 5.8 Data Storage Location
 
-所有用户数据都存储在 `~/.config/ter-music/` 目录下：
+All user data is stored in the `~/.config/ter-music/` directory:
 
 ```
 ~/.config/ter-music/
-├── config          # 配置文件
-├── history        # 播放历史
-├── favorites      # 收藏夹
-├── dir_history    # 目录访问历史
-└── playlists/     # 自定义播放列表
+├── config          # Configuration file
+├── history        # Playback history
+├── favorites      # Favorites
+├── dir_history    # Directory access history
+└── playlists/     # Custom playlists
 ```
 
-### 5.9 基本使用流程
+### 5.9 Basic Usage Flow
 
-**示例：第一次使用**
+**Example: First time use**
 
-1. 启动程序：
+1. Launch the program:
    ```bash
    ter-music
    ```
-2. 按 `O` 打开文件夹，输入您的音乐目录路径，例如：
+2. Press `O` to open folder, enter your music directory path, for example:
    ```
    /home/yourname/Music
    ```
-3. 程序会扫描目录中的所有音频文件并显示在播放列表中
-4. 使用 `↑` `↓` 选择您想听的歌曲，按 `Space` 开始播放
-5. 如果有歌词文件，歌词会自动加载并在右侧同步显示
-6. 使用 `,` 和 `.` 可以快退/快进 5 秒
+3. The program will scan all audio files in the directory and display them in the playlist
+4. Use `↑` `↓` to select the song you want to listen to, press `Space` to start playback
+5. If a lyrics file exists, lyrics will be automatically loaded and synchronized on the right side
+6. Use `,` and `.` to seek backward/forward 5 seconds
 
-**示例：添加歌曲到收藏夹**
+**Example: Add song to favorites**
 
-1. 在列表区选中想听的歌曲
-2. 按 `F`，底部状态栏会显示 "Added to favorites!"
-3. 按 `F4` 可以查看所有收藏的歌曲
-4. 在收藏夹视图中可以选择并播放收藏的歌曲
+1. Select the desired song in the list area
+2. Press `F`, the bottom status bar will display "Added to favorites!"
+3. Press `F5` to view all favorited songs
+4. You can select and play favorited songs in the favorites view
 
-**示例：创建自定义播放列表**
+**Example: Create custom playlist**
 
-1. 按 `F3` 进入播放列表管理视图
-2. 选择 "Create New Playlist"
-3. 输入播放列表名称
-4. 返回主界面，在列表中选中歌曲，按 `A` 添加到播放列表
+1. Press `F4` to enter playlist management view
+2. Select "Create New Playlist"
+3. Enter playlist name
+4. Return to main interface, select songs in the list, press `A` to add to playlist
 
-### 5.10 快捷键速查表
+### 5.10 Shortcut Cheat Sheet
 
-| 分组     | 按键                  | 功能       |
+| Group | Keys | Function |
 | ------ | ------------------- | -------- |
-| **全局** | `q`                 | 退出程序     |
-| <br /> | `F1`                | 返回主界面    |
-| <br /> | `F2`-`F6`           | 切换功能视图   |
-| <br /> | `F7`                | 退出程序     |
-| <br /> | `Esc`               | 返回主界面    |
-| **焦点** | `C`                 | 焦点到控制区   |
-| <br /> | `L`                 | 焦点到列表区   |
-| **列表** | `↑`/`↓`             | 选择上/下一首  |
-| <br /> | `Space`/`Enter`     | 播放选中     |
-| <br /> | `O`                 | 打开文件夹    |
-| <br /> | `F`                 | 添加到收藏夹   |
-| <br /> | `A`                 | 添加到播放列表  |
-| **控制** | `←`/`→`             | 选择控件     |
-| <br /> | `Space`             | 激活控件     |
-| <br /> | `,`                 | 后退 5 秒   |
-| <br /> | `.`                 | 前进 5 秒   |
-| <br /> | `D`                 | 跳转到当前歌词行 |
-| **歌词** | `D`                 | 临时切换到歌词区焦点 |
-| <br /> | `↑`/`↓`             | 选择上/下一句  |
-| <br /> | `D`/`Enter`/`Space` | 跳转到选中歌词行 |
+| **Global** | `q` | Exit program |
+| <br /> | `F1` | Return to main |
+| <br /> | `F2`-`F6` | Switch function view |
+| <br /> | `F7` | Toggle language |
+| <br /> | `F8` | Exit program |
+| <br /> | `Esc` | Return to main |
+| **Focus** | `C` | Focus to control |
+| <br /> | `L` | Focus to list |
+| **List** | `↑`/`↓` | Select prev/next |
+| <br /> | `Space`/`Enter` | Play selected |
+| <br /> | `O` | Open folder |
+| <br /> | `F` | Add to favorites |
+| <br /> | `A` | Add to playlist |
+| **Control** | `←`/`→` | Select control |
+| <br /> | `Space` | Activate control |
+| <br /> | `,` | Back 5 sec |
+| <br /> | `.` | Forward 5 sec |
+| <br /> | `D` | Jump to lyric line |
+| **Lyrics** | `D` | Temp focus to lyrics |
+| <br /> | `↑`/`↓` | Select prev/next line |
+| <br /> | `D`/`Enter`/`Space` | Jump to selected line |
 
-### 5.11 终端大小调整
+### 5.11 Terminal Resizing
 
-Ter-Music 支持终端窗口大小调整。当您调整终端大小时，程序会自动重新调整布局并重新绘制界面。
+Ter-Music supports terminal window resizing. When you resize the terminal, the program will automatically readjust the layout and redraw the interface.
 
-### 5.12 退出程序
+### 5.12 Exit the Program
 
-有三种方式退出：
+There are three ways to exit:
 
-- 在主界面按 `q`
-- 按 `Ctrl+C`（程序会正确清理并退出）
-- 在选项菜单中选择 "Exit"（也就是`F7`按键）
+- Press `q` in the main interface
+- Press `Ctrl+C` (the program will clean up correctly and exit)
+- Select "Exit" in the options menu (which is the `F7` key)
 
-## 6. 技术架构
+## 6. Technical Architecture
 
-Ter-Music 采用模块化设计，主要模块包括：
+Ter-Music adopts a modular design, main modules include:
 
-- **main.c**：程序入口，命令行参数处理
-- **ui.c**：用户界面渲染，事件处理，布局管理
-- **audio.c**：音频解码，FFmpeg 初始化，播放控制
-- **playlist.c**：播放列表加载，目录扫描，元数据读取
-- **progress.c**：播放进度跟踪，进度操作函数，如跳转到指定时间
-- **lyrics.c**：歌词加载，解析，同步显示
-- **menu\_views.c**：多视图管理，设置、历史、收藏夹、播放列表管理
-- **defs.h**：全局定义，数据结构声明
+- **main.c**: Program entry, command-line argument processing
+- **ui.c**: User interface rendering, event handling, layout management
+- **audio.c**: Audio decoding, FFmpeg initialization, playback control
+- **playlist.c**: Playlist loading, directory scanning, metadata reading
+- **progress.c**: Playback progress tracking, progress operations such as seeking to specified time
+- **lyrics.c**: Lyrics loading, parsing, synchronized display
+- **menu_views.c**: Multi-view management, settings, history, favorites, playlist management
+- **defs.h**: Global definitions, data structure declarations
 
-## 7. 许可证
+## 7. License
 
-本项目采用 [GNU General Public License v3.0](LICENSE) 开源许可证。您可以自由使用、修改和分发本软件，但修改后的衍生作品也必须以相同许可证开源。
+This project is licensed under the [GNU General Public License v3.0](LICENSE) open source license. You are free to use, modify, and distribute this software, but modified derivative works must also be open sourced under the same license.
 
-## 8. 作者
+## 8. Author
 
-- **作者**：燕戏竹林
-- **邮箱**：<yxzl666xx@outlook.com>
-- **项目地址**：<https://gitee.com/yanxi-bamboo-forest/ter-music.git>
-
-## 9. 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 10. 故障排除
-
-**问题：声音无法播放**
-
-- 检查 PulseAudio 服务是否运行：`systemctl status pulseaudio`
-- 检查扬声器音量是否开启
-- 确认 PulseAudio 已正确配置
-
-**问题：中文显示乱码或CJK字符显示为方块**
-
-- 确保您的终端使用 UTF-8 编码
-- 检查系统 locale 设置：`locale` 应该显示 `LC_CTYPE=UTF-8` 或类似
-- 如果在 tty 终端中 CJK 字符仍然显示为方块，可以尝试使用 kmscon 替换其中一个 tty，kmscon 对中文等东亚字符有更好的支持
-
-**问题：编译时找不到头文件**
-
-- 请确保安装了所有开发包，参考第 3 章依赖安装命令
-- 某些发行版将开发包和运行时分开发，需要安装 \*-devel 或 \*-dev 包
-
-**问题：无法打开某些音频文件**
-
-- 确认您的 FFmpeg 版本支持该格式
-- 较新版本的 FFmpeg 支持更多编码格式，建议更新
-
+- **Author**: Yan Xi Zhu Lin
+- **Email**: <yxzl666xx@outlook.com>
