@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
-project(ter-music)
+project(ter-music LANGUAGES C)
 
 set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
 
 # 查找必要的库
 find_package(PkgConfig REQUIRED)

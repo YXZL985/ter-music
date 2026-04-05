@@ -30,6 +30,7 @@
 #include <libavutil/opt.h>
 #include <libavutil/channel_layout.h>
 #include <libavutil/samplefmt.h>
+#include <libavutil/version.h>
 
 // 确保DT_REG和DT_UNKNOWN被定义
 #ifndef DT_REG
@@ -63,11 +64,60 @@ static int g_output_channels = 2;
 static int g_visualizer_levels[VISUALIZER_BAND_COUNT] = {0};
 static int g_visualizer_peaks[VISUALIZER_BAND_COUNT] = {0};
 static uint64_t g_visualizer_last_update_ms = 0;
+static uint64_t g_visualizer_last_analysis_ms = 0;
 
 #define VISUALIZER_ANALYSIS_SIZE 128
+#define VISUALIZER_UPDATE_INTERVAL_MS 40ULL
 
 static const char *audio_text(const char *utf8, const char *ascii) {
     return use_english_ui() ? ascii : utf8;
+}
+
+static int codec_channel_count(const AVCodecContext *codec_ctx) {
+#if LIBAVUTIL_VERSION_MAJOR >= 57
+    if (codec_ctx->ch_layout.nb_channels > 0) {
+        return codec_ctx->ch_layout.nb_channels;
+    }
+#endif
+    if (codec_ctx->channels > 0) {
+        return codec_ctx->channels;
+    }
+    if (codec_ctx->channel_layout) {
+        return av_get_channel_layout_nb_channels(codec_ctx->channel_layout);
+    }
+    return 0;
+}
+
+static int init_resampler(SwrContext *swr_ctx,
+                          const AVCodecContext *codec_ctx,
+                          int input_channels,
+                          int output_channels,
+                          int output_sample_rate) {
+#if LIBAVUTIL_VERSION_MAJOR >= 57
+    AVChannelLayout in_ch_layout = codec_ctx->ch_layout;
+    AVChannelLayout out_ch_layout;
+    av_channel_layout_default(&out_ch_layout, output_channels);
+
+    av_opt_set_chlayout(swr_ctx, "in_chlayout", &in_ch_layout, 0);
+    av_opt_set_chlayout(swr_ctx, "out_chlayout", &out_ch_layout, 0);
+#else
+    int64_t in_channel_layout = codec_ctx->channel_layout;
+    int64_t out_channel_layout = av_get_default_channel_layout(output_channels);
+
+    if (!in_channel_layout) {
+        in_channel_layout = av_get_default_channel_layout(input_channels);
+    }
+
+    av_opt_set_channel_layout(swr_ctx, "in_channel_layout", in_channel_layout, 0);
+    av_opt_set_channel_layout(swr_ctx, "out_channel_layout", out_channel_layout, 0);
+#endif
+
+    av_opt_set_int(swr_ctx, "in_sample_rate", codec_ctx->sample_rate, 0);
+    av_opt_set_int(swr_ctx, "out_sample_rate", output_sample_rate, 0);
+    av_opt_set_sample_fmt(swr_ctx, "in_sample_fmt", codec_ctx->sample_fmt, 0);
+    av_opt_set_sample_fmt(swr_ctx, "out_sample_fmt", AV_SAMPLE_FMT_S16, 0);
+
+    return swr_init(swr_ctx);
 }
 
 static uint64_t audio_now_ms(void) {
@@ -76,13 +126,15 @@ static uint64_t audio_now_ms(void) {
     return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)(ts.tv_nsec / 1000000ULL);
 }
 
-#define PCM_QUEUE_CAPACITY 12
-#define PCM_QUEUE_PREFILL_TARGET 4
+#define PCM_QUEUE_CAPACITY 24
+#define PCM_QUEUE_MIN_PREFILL_MS 180
+#define PCM_QUEUE_MAX_PREFILL_MS 420
 
 typedef struct {
     int16_t *data;
     int frame_count;
     int bytes;
+    int capacity_bytes;
 } PCMChunk;
 
 typedef struct {
@@ -90,6 +142,7 @@ typedef struct {
     int read_index;
     int write_index;
     int count;
+    int buffered_frames;
 } PCMQueue;
 
 static int clamp_volume_percent(int volume) {
@@ -113,11 +166,29 @@ static int get_configured_latency_ms(void) {
     return latency_ms;
 }
 
+static int get_pcm_prefill_target_ms(int sample_rate) {
+    int prefill_ms = get_configured_latency_ms() * 3;
+    if (prefill_ms < PCM_QUEUE_MIN_PREFILL_MS) {
+        prefill_ms = PCM_QUEUE_MIN_PREFILL_MS;
+    }
+    if (sample_rate >= 88200 && prefill_ms < 240) {
+        prefill_ms = 240;
+    }
+    if (sample_rate >= 176400 && prefill_ms < 320) {
+        prefill_ms = 320;
+    }
+    if (prefill_ms > PCM_QUEUE_MAX_PREFILL_MS) {
+        prefill_ms = PCM_QUEUE_MAX_PREFILL_MS;
+    }
+    return prefill_ms;
+}
+
 void reset_visualizer_state(void) {
     pthread_mutex_lock(&g_visualizer_mutex);
     memset(g_visualizer_levels, 0, sizeof(g_visualizer_levels));
     memset(g_visualizer_peaks, 0, sizeof(g_visualizer_peaks));
     g_visualizer_last_update_ms = audio_now_ms();
+    g_visualizer_last_analysis_ms = 0;
     pthread_mutex_unlock(&g_visualizer_mutex);
 }
 
@@ -125,6 +196,16 @@ void push_visualizer_samples(const int16_t *samples, int frame_count, int channe
     if (!samples || frame_count <= 0 || channels <= 0) {
         return;
     }
+
+    uint64_t now_ms = audio_now_ms();
+    pthread_mutex_lock(&g_visualizer_mutex);
+    if (g_visualizer_last_analysis_ms > 0 &&
+        now_ms - g_visualizer_last_analysis_ms < VISUALIZER_UPDATE_INTERVAL_MS) {
+        pthread_mutex_unlock(&g_visualizer_mutex);
+        return;
+    }
+    g_visualizer_last_analysis_ms = now_ms;
+    pthread_mutex_unlock(&g_visualizer_mutex);
 
     static double window[VISUALIZER_ANALYSIS_SIZE];
     static int window_initialized = 0;
@@ -214,7 +295,7 @@ void push_visualizer_samples(const int16_t *samples, int frame_count, int channe
             g_visualizer_peaks[i] -= 1;
         }
     }
-    g_visualizer_last_update_ms = audio_now_ms();
+    g_visualizer_last_update_ms = now_ms;
     pthread_mutex_unlock(&g_visualizer_mutex);
 }
 
@@ -240,6 +321,29 @@ static void signal_playback_thread(void) {
     pthread_cond_broadcast(&g_play_control_cond);
 }
 
+static int pcm_chunk_ensure_capacity(PCMChunk *chunk, int required_bytes) {
+    if (!chunk || required_bytes <= 0) {
+        return -1;
+    }
+    if (chunk->capacity_bytes >= required_bytes) {
+        return 0;
+    }
+
+    int new_capacity = chunk->capacity_bytes > 0 ? chunk->capacity_bytes : MAX_AUDIO_BUFFER_SIZE;
+    while (new_capacity < required_bytes) {
+        new_capacity *= 2;
+    }
+
+    int16_t *new_data = realloc(chunk->data, (size_t)new_capacity);
+    if (!new_data) {
+        return -1;
+    }
+
+    chunk->data = new_data;
+    chunk->capacity_bytes = new_capacity;
+    return 0;
+}
+
 static void pcm_queue_reset(PCMQueue *queue) {
     if (!queue) {
         return;
@@ -248,6 +352,7 @@ static void pcm_queue_reset(PCMQueue *queue) {
     queue->read_index = 0;
     queue->write_index = 0;
     queue->count = 0;
+    queue->buffered_frames = 0;
     for (int i = 0; i < PCM_QUEUE_CAPACITY; i++) {
         queue->chunks[i].frame_count = 0;
         queue->chunks[i].bytes = 0;
@@ -269,6 +374,7 @@ static int pcm_queue_init(PCMQueue *queue) {
             }
             return -1;
         }
+        queue->chunks[i].capacity_bytes = MAX_AUDIO_BUFFER_SIZE;
     }
 
     pcm_queue_reset(queue);
@@ -303,6 +409,7 @@ static void pcm_queue_commit_write(PCMQueue *queue, int frame_count, int bytes) 
     queue->chunks[queue->write_index].bytes = bytes;
     queue->write_index = (queue->write_index + 1) % PCM_QUEUE_CAPACITY;
     queue->count++;
+    queue->buffered_frames += frame_count;
 }
 
 static PCMChunk *pcm_queue_peek(PCMQueue *queue) {
@@ -312,15 +419,27 @@ static PCMChunk *pcm_queue_peek(PCMQueue *queue) {
     return &queue->chunks[queue->read_index];
 }
 
+static int pcm_queue_buffered_ms(const PCMQueue *queue, int sample_rate) {
+    if (!queue || sample_rate <= 0 || queue->buffered_frames <= 0) {
+        return 0;
+    }
+    return (queue->buffered_frames * 1000) / sample_rate;
+}
+
 static void pcm_queue_consume(PCMQueue *queue) {
     if (!queue || queue->count <= 0) {
         return;
     }
 
+    int consumed_frames = queue->chunks[queue->read_index].frame_count;
     queue->chunks[queue->read_index].frame_count = 0;
     queue->chunks[queue->read_index].bytes = 0;
     queue->read_index = (queue->read_index + 1) % PCM_QUEUE_CAPACITY;
     queue->count--;
+    queue->buffered_frames -= consumed_frames;
+    if (queue->buffered_frames < 0) {
+        queue->buffered_frames = 0;
+    }
 }
 
 static void apply_volume_to_samples(int16_t *samples, int sample_count) {
@@ -905,9 +1024,12 @@ static int decode_next_pcm_chunk(AVFormatContext *fmt_ctx,
             if (!use_resampler) {
                 produced_bytes = av_samples_get_buffer_size(NULL, output_channels, frame->nb_samples,
                                                             AV_SAMPLE_FMT_S16, 1);
-                if (produced_bytes > 0 && produced_bytes <= MAX_AUDIO_BUFFER_SIZE) {
+                if (produced_bytes > 0 && pcm_chunk_ensure_capacity(slot, produced_bytes) == 0) {
                     memcpy(slot->data, frame->data[0], (size_t)produced_bytes);
                     produced_frames = frame->nb_samples;
+                } else if (produced_bytes > 0) {
+                    av_frame_unref(frame);
+                    return -1;
                 }
             } else {
                 int dst_nb_samples = av_rescale_rnd(
@@ -915,13 +1037,16 @@ static int decode_next_pcm_chunk(AVFormatContext *fmt_ctx,
                     output_sample_rate, codec_ctx->sample_rate, AV_ROUND_UP);
                 produced_bytes = av_samples_get_buffer_size(NULL, output_channels, dst_nb_samples,
                                                             AV_SAMPLE_FMT_S16, 1);
-                if (produced_bytes > 0 && produced_bytes <= MAX_AUDIO_BUFFER_SIZE) {
+                if (produced_bytes > 0 && pcm_chunk_ensure_capacity(slot, produced_bytes) == 0) {
                     uint8_t *output_planes[] = {(uint8_t *)slot->data};
                     produced_frames = swr_convert(swr_ctx, output_planes, dst_nb_samples,
                                                   (const uint8_t **)frame->data, frame->nb_samples);
                     if (produced_frames > 0) {
                         produced_bytes = produced_frames * output_channels * (int)sizeof(int16_t);
                     }
+                } else if (produced_bytes > 0) {
+                    av_frame_unref(frame);
+                    return -1;
                 }
             }
 
@@ -1016,6 +1141,7 @@ void *play_audio_thread(void *arg) {
     int decoder_draining = 0;
     int decoder_finished = 0;
     int playback_error = 0;
+    int prefill_target_frames = 0;
     PCMQueue pcm_queue;
     int pcm_queue_initialized = 0;
 
@@ -1102,12 +1228,13 @@ void *play_audio_thread(void *arg) {
         goto cleanup;
     }
     
-    input_channels = codec_ctx->ch_layout.nb_channels;
+    input_channels = codec_channel_count(codec_ctx);
     if (input_channels <= 0) {
         input_channels = 2;
     }
     output_channels = (input_channels == 1) ? 1 : 2;
     output_sample_rate = codec_ctx->sample_rate > 0 ? codec_ctx->sample_rate : 44100;
+    prefill_target_frames = (output_sample_rate * get_pcm_prefill_target_ms(output_sample_rate) + 999) / 1000;
     use_resampler = !(codec_ctx->sample_fmt == AV_SAMPLE_FMT_S16 && input_channels <= 2);
 
     if (use_resampler) {
@@ -1117,18 +1244,7 @@ void *play_audio_thread(void *arg) {
             goto cleanup;
         }
 
-        AVChannelLayout in_ch_layout = codec_ctx->ch_layout;
-        AVChannelLayout out_ch_layout;
-        av_channel_layout_default(&out_ch_layout, output_channels);
-
-        av_opt_set_chlayout(swr_ctx, "in_chlayout", &in_ch_layout, 0);
-        av_opt_set_chlayout(swr_ctx, "out_chlayout", &out_ch_layout, 0);
-        av_opt_set_int(swr_ctx, "in_sample_rate", codec_ctx->sample_rate, 0);
-        av_opt_set_int(swr_ctx, "out_sample_rate", output_sample_rate, 0);
-        av_opt_set_sample_fmt(swr_ctx, "in_sample_fmt", codec_ctx->sample_fmt, 0);
-        av_opt_set_sample_fmt(swr_ctx, "out_sample_fmt", AV_SAMPLE_FMT_S16, 0);
-
-        if (swr_init(swr_ctx) < 0) {
+        if (init_resampler(swr_ctx, codec_ctx, input_channels, output_channels, output_sample_rate) < 0) {
             update_controls_status(audio_text("无法初始化重采样器", "Cannot initialize resampler"));
             goto cleanup;
         }
@@ -1182,7 +1298,10 @@ void *play_audio_thread(void *arg) {
             continue;
         }
 
-        while (g_play_thread_running && !decoder_finished && pcm_queue.count < PCM_QUEUE_PREFILL_TARGET) {
+        while (g_play_thread_running &&
+               !decoder_finished &&
+               pcm_queue.count < PCM_QUEUE_CAPACITY &&
+               pcm_queue.buffered_frames < prefill_target_frames) {
             int decode_result = decode_next_pcm_chunk(fmt_ctx, codec_ctx, swr_ctx, packet, frame, &pcm_queue,
                                                       audio_stream_index, output_sample_rate, output_channels,
                                                       use_resampler, &decoder_draining, &decoder_finished);
@@ -1208,7 +1327,9 @@ void *play_audio_thread(void *arg) {
             continue;
         }
 
-        push_visualizer_samples(chunk->data, chunk->frame_count, output_channels);
+        if (pcm_queue_buffered_ms(&pcm_queue, output_sample_rate) > get_configured_latency_ms()) {
+            push_visualizer_samples(chunk->data, chunk->frame_count, output_channels);
+        }
         apply_volume_to_samples(chunk->data, chunk->frame_count * output_channels);
         if (audio_backend_write_samples(chunk->data, chunk->frame_count) < 0) {
             update_controls_status(audio_text("写入音频设备失败", "Audio device write failed"));
