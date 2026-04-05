@@ -1039,8 +1039,8 @@ void render_menu_hint_bar(void) {
     mvhline(max_y - 1, 0, ' ', max_x);
     mvprintw(max_y - 1, 2, "%s",
              use_english_ui()
-                 ? "F1:Home  F2:Settings  F3:History  F4:Playlists  F5:Favorites  F6:Info  F7:Quit  F8:Lang"
-                 : "F1:主页  F2:设置  F3:历史  F4:歌单  F5:收藏  F6:信息  F7:退出  F8:中/EN");
+                 ? "F1:Home  F2:Settings  F3:History  F4:Playlists  F5:Favorites  F6:Info  F7:Lang  F8:Quit"
+                 : "F1:主页  F2:设置  F3:历史  F4:歌单  F5:收藏  F6:信息  F7:中/EN  F8:退出");
     attroff(COLOR_PAIR(COLOR_PAIR_BORDER));
     refresh();
 }
@@ -1230,10 +1230,13 @@ void render_menu_sidebar(int selected_idx, const char **items, int item_count) {
     
     attron(COLOR_PAIR(COLOR_PAIR_SIDEBAR));
     
+    for (int y = start_y; y < max_y - 2; y++) {
+        mvhline(y, 1, ' ', menu_width - 1);
+    }
+    
     for (int i = 0; i < item_count && (start_y + i) < max_y - 2; i++) {
         if (i == selected_idx && g_focus_area == FOCUS_SIDEBAR) {
             attron(A_REVERSE);
-            mvhline(start_y + i, 1, ' ', menu_width - 1);
             mvprintw(start_y + i, 2, "%s", items[i]);
             attroff(A_REVERSE);
         } else {
@@ -1802,6 +1805,7 @@ void exit_current_view(void) {
     g_content_selected_idx = 0;
     g_focus_area = FOCUS_SIDEBAR;
     
+    clear();
     create_layout();
     render_playlist_content();
     render_controls();
@@ -1880,12 +1884,12 @@ void handle_function_keys(int fkey) {
             switch_to_view(VIEW_INFO);
             break;
         case KEY_F(7):
+            toggle_ui_language();
+            break;
+        case KEY_F(8):
             cleanup();
             printf("%s\n", menu_text("ter-music 已正常退出。", "ter-music exited cleanly."));
             exit(0);
-            break;
-        case KEY_F(8):
-            toggle_ui_language();
             break;
         default:
             break;

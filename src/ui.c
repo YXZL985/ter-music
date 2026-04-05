@@ -1452,6 +1452,10 @@ void run_event_loop() {
     // 降低空转刷新频率，实时进度由独立节流控制
     timeout(UI_INPUT_TIMEOUT_MS);
     
+    int esc_pending = 0;
+    uint64_t esc_pending_time = 0;
+    #define ESC_TIMEOUT_MS 3000
+    
     while (1) {
         reap_finished_playback_thread();
         process_pending_playback_action();
@@ -1468,6 +1472,40 @@ void run_event_loop() {
         
         // 如果用户没有按键，继续循环以允许进度条和歌词更新
         if (ch == ERR) {
+            if (esc_pending) {
+                uint64_t now = get_ui_time_ms();
+                if (now - esc_pending_time > ESC_TIMEOUT_MS) {
+                    esc_pending = 0;
+                }
+            }
+            continue;
+        }
+        
+        // 处理 ESC 前缀（用于 ESC+数字 备用快捷键）
+        if (esc_pending) {
+            uint64_t now = get_ui_time_ms();
+            if (now - esc_pending_time > ESC_TIMEOUT_MS) {
+                esc_pending = 0;
+            } else if (ch >= '1' && ch <= '8') {
+                int fnum = ch - '1';
+                handle_function_keys(KEY_F(1 + fnum));
+                esc_pending = 0;
+                continue;
+            }
+            // 超时或不是数字，重置 pending
+            esc_pending = 0;
+            // 如果是新的 ESC，重新开始
+            if (ch == 27) {
+                esc_pending = 1;
+                esc_pending_time = get_ui_time_ms();
+                continue;
+            }
+            // 否则 fall through 处理当前字符
+        }
+        
+        if (ch == 27) {
+            esc_pending = 1;
+            esc_pending_time = get_ui_time_ms();
             continue;
         }
         
