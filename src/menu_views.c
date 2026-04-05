@@ -399,6 +399,10 @@ void init_default_config(void) {
     g_app_config.auto_play_on_start = 0;
     g_app_config.remember_last_path = 1;
     g_app_config.clear_history_on_startup = 0;
+    g_app_config.resume_last_playback = 0;
+    g_app_config.last_played_position = 0;
+    g_app_config.last_played_folder_path[0] = '\0';
+    g_app_config.last_played_track_path[0] = '\0';
     g_app_config.ui_language = UI_LANG_ZH;
     g_app_config.volume_percent = 100;
     g_app_config.audio_latency_ms = 80;
@@ -441,6 +445,8 @@ void load_config(void) {
     
     extract_json_string(json, "default_startup_path", g_app_config.default_startup_path, MAX_PATH_LEN);
     extract_json_string(json, "last_opened_path", g_app_config.last_opened_path, MAX_PATH_LEN);
+    extract_json_string(json, "last_played_folder_path", g_app_config.last_played_folder_path, MAX_PATH_LEN);
+    extract_json_string(json, "last_played_track_path", g_app_config.last_played_track_path, MAX_PATH_LEN);
     
     const char *theme_pos = strstr(json, "\"theme\"");
     if (theme_pos) {
@@ -472,6 +478,12 @@ void load_config(void) {
     g_app_config.auto_play_on_start = (int)extract_json_int(json, "auto_play_on_start");
     g_app_config.remember_last_path = (int)extract_json_int(json, "remember_last_path");
     g_app_config.clear_history_on_startup = (int)extract_json_int(json, "clear_history_on_startup");
+    if (strstr(json, "\"resume_last_playback\"")) {
+        g_app_config.resume_last_playback = (int)extract_json_int(json, "resume_last_playback");
+    }
+    if (strstr(json, "\"last_played_position\"")) {
+        g_app_config.last_played_position = (int)extract_json_int(json, "last_played_position");
+    }
     if (strstr(json, "\"ui_language\"")) {
         g_app_config.ui_language = (int)extract_json_int(json, "ui_language");
     }
@@ -482,6 +494,10 @@ void load_config(void) {
         g_app_config.audio_latency_ms = (int)extract_json_int(json, "audio_latency_ms");
     }
 
+    g_app_config.resume_last_playback = g_app_config.resume_last_playback ? 1 : 0;
+    if (g_app_config.last_played_position < 0) {
+        g_app_config.last_played_position = 0;
+    }
     if (g_app_config.ui_language != UI_LANG_EN) {
         g_app_config.ui_language = UI_LANG_ZH;
     }
@@ -514,6 +530,12 @@ void save_config(void) {
     
     escape_json_string(g_app_config.last_opened_path, escaped_path, sizeof(escaped_path));
     fprintf(f, "  \"last_opened_path\": \"%s\",\n", escaped_path);
+
+    escape_json_string(g_app_config.last_played_folder_path, escaped_path, sizeof(escaped_path));
+    fprintf(f, "  \"last_played_folder_path\": \"%s\",\n", escaped_path);
+
+    escape_json_string(g_app_config.last_played_track_path, escaped_path, sizeof(escaped_path));
+    fprintf(f, "  \"last_played_track_path\": \"%s\",\n", escaped_path);
     
     fprintf(f, "  \"theme\": {\n");
     fprintf(f, "    \"playlist_fg\": %d,\n", g_app_config.theme.playlist_fg);
@@ -533,6 +555,8 @@ void save_config(void) {
     fprintf(f, "  \"auto_play_on_start\": %d,\n", g_app_config.auto_play_on_start);
     fprintf(f, "  \"remember_last_path\": %d,\n", g_app_config.remember_last_path);
     fprintf(f, "  \"clear_history_on_startup\": %d,\n", g_app_config.clear_history_on_startup);
+    fprintf(f, "  \"resume_last_playback\": %d,\n", g_app_config.resume_last_playback);
+    fprintf(f, "  \"last_played_position\": %d,\n", g_app_config.last_played_position);
     fprintf(f, "  \"ui_language\": %d,\n", g_app_config.ui_language);
     fprintf(f, "  \"volume_percent\": %d,\n", g_app_config.volume_percent);
     fprintf(f, "  \"audio_latency_ms\": %d\n", g_app_config.audio_latency_ms);
