@@ -1518,8 +1518,12 @@ void render_history_content(void) {
         }
         
         int bottom_y = max_y - 3;
-        mvprintw(bottom_y, content_start_x, "%s", menu_text("按 ENTER 打开选中的目录", "Press Enter to open the selected folder"));
-        mvprintw(bottom_y + 1, content_start_x, "%s", menu_text("按 'D' 删除当前项，按 'C' 清空全部", "Press 'D' to delete, 'C' to clear all"));
+        mvprintw(bottom_y, content_start_x, "%s",
+                 menu_text("按 ENTER 替换播放列表，按 'A' 追加到队列",
+                           "Press Enter to replace, 'A' to append"));
+        mvprintw(bottom_y + 1, content_start_x, "%s",
+                 menu_text("按 'D' 删除当前项，按 'C' 清空全部",
+                           "Press 'D' to delete, 'C' to clear all"));
     }
     
     attroff(COLOR_PAIR(COLOR_PAIR_PLAYLIST));
@@ -2282,6 +2286,37 @@ static void handle_history_input(int ch) {
                         show_status_message(menu_text("目录中没有音频文件", "No audio files in this folder"));
                         render_history_content();
                     }
+                }
+            }
+            break;
+
+        case 'a':
+        case 'A':
+            if (g_focus_area == FOCUS_CONTENT &&
+                g_dir_history.count > 0 &&
+                g_content_selected_idx >= 0 &&
+                g_content_selected_idx < g_dir_history.count) {
+
+                const char *path = g_dir_history.entries[g_content_selected_idx].path;
+                int count = append_playlist(path);
+
+                if (count > 0) {
+                    add_dir_history_entry(path);
+                    exit_current_view();
+                    if (g_app_config.remember_last_path) {
+                        snprintf(g_app_config.last_opened_path, sizeof(g_app_config.last_opened_path), "%s", path);
+                        save_config();
+                    }
+
+                    char msg[96];
+                    snprintf(msg, sizeof(msg), "%s %d %s",
+                             menu_text("已追加", "Appended"),
+                             count,
+                             menu_text("首歌曲到队列", "tracks to queue"));
+                    show_status_message(msg);
+                } else {
+                    show_status_message(menu_text("目录中没有新的音频文件", "No new audio files to append"));
+                    render_history_content();
                 }
             }
             break;

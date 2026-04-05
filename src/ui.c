@@ -79,6 +79,18 @@ static const char *ui_text(const char *utf8, const char *ascii) {
 
 static void format_display_text(char *dest, size_t dest_size, const char *src, int width, int pad);
 
+static const char *get_playlist_source_label(void) {
+    if (g_playlist.has_multiple_sources) {
+        return ui_text("多目录队列", "Mixed queue");
+    }
+
+    if (g_playlist.folder_path[0] != '\0') {
+        return g_playlist.folder_path;
+    }
+
+    return ui_text("(无)", "(none)");
+}
+
 static int get_controls_progress_row(int height) {
     if (height >= 9) {
         return 1;
@@ -829,10 +841,12 @@ void render_playlist_content() {
     if (!g_playlist.is_loaded) {
         char display_path[MAX_PATH_LEN];
         format_display_text(display_path, sizeof(display_path),
-                            g_playlist.folder_path[0] ? g_playlist.folder_path : ui_text("(无)", "(none)"),
+                            get_playlist_source_label(),
                             w - 10, 0);
         mvwprintw(win_playlist, h/2 - 1, 2, "%s", ui_text("播放列表为空。", "Playlist is empty."));
-        mvwprintw(win_playlist, h/2, 2, "%s", ui_text("按 'O' 打开音乐目录。", "Press 'O' to open a music folder."));
+        mvwprintw(win_playlist, h/2, 2, "%s",
+                  ui_text("按 'O' 打开目录，按 'I' 追加目录。",
+                          "Press 'O' to open a folder, 'I' to append one."));
         mvwprintw(win_playlist, h/2 + 1, 2, "%s%s", ui_text("当前路径：", "Path: "), display_path);
     } else {
         int start_idx = 0;
@@ -1246,7 +1260,7 @@ static void seek_relative_seconds(int delta_seconds) {
     }
 }
 
-void prompt_open_folder() {
+static void prompt_folder_input(int append_mode) {
     // 空指针检查：避免win_controls未初始化时崩溃
     if (!win_controls) {
         return;
@@ -1257,7 +1271,9 @@ void prompt_open_folder() {
     int max_y, max_x;
     getmaxyx(win_controls, max_y, max_x);
     
-    mvwprintw(win_controls, 4, 2, "%s", ui_text("输入目录路径：", "Folder path: "));
+    mvwprintw(win_controls, 4, 2, "%s",
+              append_mode ? ui_text("输入要追加的目录：", "Append folder: ")
+                          : ui_text("输入目录路径：", "Folder path: "));
     wclrtoeol(win_controls);
     wrefresh(win_controls);
     
@@ -1364,7 +1380,8 @@ void prompt_open_folder() {
         
         struct stat s;
         if (stat(expanded_path, &s) == 0 && S_ISDIR(s.st_mode)) {
-            int count = load_playlist(expanded_path);
+            int had_existing_playlist = g_playlist.is_loaded && g_playlist.count > 0;
+            int count = append_mode ? append_playlist(expanded_path) : load_playlist(expanded_path);
             if (count > 0) {
                 add_dir_history_entry(expanded_path);
                 
@@ -1372,21 +1389,52 @@ void prompt_open_folder() {
                     snprintf(g_app_config.last_opened_path, sizeof(g_app_config.last_opened_path), "%s", expanded_path);
                     save_config();
                 }
-                
-                update_controls_status(ui_text("目录加载成功", "Folder loaded"));
-                g_selected_index = 0;
+
+                if (!append_mode || !had_existing_playlist) {
+                    g_selected_index = 0;
+                }
+
+                if (append_mode && had_existing_playlist) {
+                    char msg[64];
+                    snprintf(msg, sizeof(msg), "%s %d %s",
+                             ui_text("已追加", "Appended"),
+                             count,
+                             ui_text("首歌曲", "tracks"));
+                    update_controls_status(msg);
+                } else {
+                    update_controls_status(ui_text("目录加载成功", "Folder loaded"));
+                }
                 render_playlist_content();
             } else {
-                update_controls_status(ui_text("未找到音频文件", "No audio files found"));
-                g_playlist.is_loaded = 0;
+                if (append_mode) {
+                    update_controls_status(ui_text("目录中没有新的音频文件", "No new audio files to append"));
+                } else {
+                    update_controls_status(ui_text("未找到音频文件", "No audio files found"));
+                    g_playlist.is_loaded = 0;
+                    g_playlist.count = 0;
+                    g_playlist.has_multiple_sources = 0;
+                }
                 render_playlist_content();
             }
         } else {
             update_controls_status(ui_text("路径无效", "Invalid path"));
-            g_playlist.is_loaded = 0;
+            if (!append_mode) {
+                g_playlist.is_loaded = 0;
+                g_playlist.count = 0;
+                g_playlist.has_multiple_sources = 0;
+                g_playlist.folder_path[0] = '\0';
+            }
             render_playlist_content();
         }
     }
+}
+
+void prompt_open_folder() {
+    prompt_folder_input(0);
+}
+
+static void prompt_append_folder() {
+    prompt_folder_input(1);
 }
 
 /**
@@ -1453,9 +1501,14 @@ void run_event_loop() {
         }
         
         if (!g_playlist.is_loaded && g_control_focus == 0) {
-            // 未加载文件夹且焦点在列表时，主要监听 'O' 或 'o'
+            // 未加载文件夹且焦点在列表时，支持打开或追加目录
             if (ch == 'O' || ch == 'o') {
                 prompt_open_folder();
+                render_playlist_content();
+                continue;
+            }
+            if (ch == 'I' || ch == 'i') {
+                prompt_append_folder();
                 render_playlist_content();
                 continue;
             }
@@ -1652,6 +1705,11 @@ void run_event_loop() {
                     case 'O':
                     case 'o':
                         prompt_open_folder();
+                        render_playlist_content();
+                        break;
+                    case 'I':
+                    case 'i':
+                        prompt_append_folder();
                         render_playlist_content();
                         break;
                     case 'f':
