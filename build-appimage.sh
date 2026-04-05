@@ -25,16 +25,18 @@ show_help() {
     cat << EOF
 用法: $0 [选项]
 
-将 ter-music RPM 包转换为 AppImage 格式
+直接从源码构建 ter-music AppImage 格式（也可从 RPM 转换）
 
 选项:
     -h, --help          显示此帮助信息
-    -r, --rpm FILE      指定要转换的RPM包文件
+    -v, --version VERSION  指定版本号（默认：自动检测）
+    -r, --rpm FILE      从指定的RPM包文件转换（可选）
     -k, --keep-temp     保留临时构建文件（用于调试）
 
 示例:
-    $0                                          使用默认RPM包构建AppImage
-    $0 -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm  使用指定RPM包构建
+    $0                                          自动检测版本，直接从源码构建
+    $0 -v 1.4.1                                 使用指定版本号直接从源码构建
+    $0 -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm  从指定RPM包转换
     $0 --keep-temp                              构建后保留临时文件
 
 输出:
@@ -45,21 +47,25 @@ EOF
 
 check_dependencies() {
     log_info "检查构建依赖..."
-    
+
     local missing_deps=()
-    
+
     if ! command -v unsquashfs &> /dev/null; then
         missing_deps+=("squashfs-tools")
     fi
-    
-    if ! command -v rpm2cpio &> /dev/null; then
-        missing_deps+=("rpm2cpio")
+
+    if ! command -v cmake &> /dev/null; then
+        missing_deps+=("cmake")
     fi
-    
-    if ! command -v cpio &> /dev/null; then
-        missing_deps+=("cpio")
+
+    if ! command -v make &> /dev/null; then
+        missing_deps+=("make")
     fi
-    
+
+    if ! command -v gcc &> /dev/null; then
+        missing_deps+=("gcc")
+    fi
+
     if [ ${#missing_deps[@]} -gt 0 ]; then
         log_error "缺少以下构建工具:"
         for dep in "${missing_deps[@]}"; do
@@ -67,22 +73,61 @@ check_dependencies() {
         done
         echo ""
         log_error "请使用以下命令安装缺失的工具:"
-        echo "  sudo dnf install ${missing_deps[*]}"
+        echo "  Debian/Ubuntu: sudo apt install squashfs-tools cmake make gcc"
+        echo "  Fedora/RHEL: sudo dnf install squashfs-tools cmake make gcc"
         exit 1
     fi
-    
+
     log_info "所有构建依赖已满足"
+}
+
+detect_version() {
+    local default_version="1.0.0"
+
+    if [ -d "${SCRIPT_DIR}/.git" ] && command -v git >/dev/null 2>&1; then
+        local git_version=$(git describe --tags --abbrev=0 2>/dev/null || true)
+        if [[ $git_version =~ ^v?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "${BASH_REMATCH[1]}"
+            return
+        fi
+    fi
+
+    if [ -f "${SCRIPT_DIR}/include/defs.h" ]; then
+        local match
+        match=$(grep -E 'APP_VERSION' "${SCRIPT_DIR}/include/defs.h" | head -1)
+        if [[ $match =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+            echo "${BASH_REMATCH[1]}"
+            return
+        fi
+    fi
+
+    if [ -f "${SCRIPT_DIR}/CMakeLists.txt" ]; then
+        local match
+        match=$(grep -E 'project.*VERSION' "${SCRIPT_DIR}/CMakeLists.txt" | head -1)
+        if [[ $match =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+            echo "${BASH_REMATCH[1]}"
+            return
+        else
+            match=$(grep -E 'set.*VERSION' "${SCRIPT_DIR}/CMakeLists.txt" | head -1)
+            if [[ $match =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+                echo "${BASH_REMATCH[1]}"
+                return
+            fi
+        fi
+    fi
+
+    echo "$default_version"
 }
 
 download_appimagetool() {
     local appimagetool_dir="${APPIMAGETOOL_DIR}"
-    
+
     if [ ! -f "${appimagetool_dir}/appimagetool" ]; then
         log_info "下载 appimagetool..."
         mkdir -p "${appimagetool_dir}"
-        
+
         local appimagetool_url="https://github.com/AppImage/AppImageKit/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-x86_64.AppImage"
-        
+
         if command -v wget &> /dev/null; then
             wget "${appimagetool_url}" -O "${appimagetool_dir}/appimagetool"
         elif command -v curl &> /dev/null; then
@@ -91,7 +136,7 @@ download_appimagetool() {
             log_error "需要 wget 或 curl 来下载 appimagetool"
             exit 1
         fi
-        
+
         chmod +x "${appimagetool_dir}/appimagetool"
         log_info "appimagetool 下载完成"
     fi
@@ -99,49 +144,64 @@ download_appimagetool() {
 
 find_rpm_package() {
     local rpm_file="$1"
-    
+
     if [ -z "$rpm_file" ]; then
         rpm_file=$(find "${SCRIPT_DIR}/build/rpm" -name "${PROJECT_NAME}-*.x86_64.rpm" -type f | grep -v debuginfo | grep -v debugsource | head -1)
     fi
-    
+
     if [ -z "$rpm_file" ] || [ ! -f "$rpm_file" ]; then
         log_error "未找到RPM包文件"
         log_error "请先运行 ./build-rpm.sh 构建RPM包，或使用 -r 选项指定RPM包路径"
         exit 1
     fi
-    
+
     echo "$rpm_file"
 }
 
 extract_rpm() {
     local rpm_file="$1"
     local extract_dir="$2"
-    
+
     log_info "解压RPM包: $rpm_file"
-    
+
     mkdir -p "${extract_dir}"
     cd "${extract_dir}"
-    
+
     rpm2cpio "$rpm_file" | cpio -idmv
-    
+
     log_info "RPM包解压完成"
 }
 
+build_from_source() {
+    local build_dir="$1"
+
+    log_info "从源码构建..."
+
+    mkdir -p "${build_dir}"
+    cd "${build_dir}"
+
+    cmake "${SCRIPT_DIR}" -DCMAKE_BUILD_TYPE=Release
+    make -j$(nproc)
+
+    log_info "源码构建完成"
+}
+
 create_appdir() {
-    local extract_dir="$1"
-    local appdir="$2"
-    local version="$3"
-    
+    local binary_source="$1"
+    local binary_name="$2"
+    local appdir="$3"
+    local version="$4"
+
     log_info "创建 AppDir 结构..."
-    
+
     mkdir -p "${appdir}"/{usr/bin,usr/lib,usr/share/applications,usr/share/icons/hicolor/256x256/apps}
-    
-    cp "${extract_dir}/usr/bin/${PROJECT_NAME}" "${appdir}/usr/bin/"
-    
-    if [ -d "${extract_dir}/usr/lib" ]; then
-        cp -r "${extract_dir}/usr/lib"/* "${appdir}/usr/lib/" 2>/dev/null || true
+
+    cp "${binary_source}/${binary_name}" "${appdir}/usr/bin/"
+
+    if [ -d "${SCRIPT_DIR}/share" ]; then
+        cp -r "${SCRIPT_DIR}/share"/* "${appdir}/usr/share/" 2>/dev/null || true
     fi
-    
+
     cat > "${appdir}/AppRun" << 'EOF'
 #!/bin/bash
 SELF=$(readlink -f "$0")
@@ -151,9 +211,9 @@ export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
 
 exec "${HERE}/usr/bin/ter-music" "$@"
 EOF
-    
+
     chmod +x "${appdir}/AppRun"
-    
+
     cat > "${appdir}/${PROJECT_NAME}.desktop" << EOF
 [Desktop Entry]
 Name=Ter-Music
@@ -165,7 +225,7 @@ Type=Application
 Categories=Audio;AudioVideo;Player;
 Keywords=Music;Player;Terminal;Console;
 EOF
-    
+
     cat > "${appdir}/AppInfo.xml" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <AppImage xmlns="http://www.appimage.org/1.0">
@@ -196,65 +256,65 @@ EOF
   <developer_name>Yanxi Bamboo Forest</developer_name>
 </AppImage>
 EOF
-    
+
     log_info "AppDir 结构创建完成"
 }
 
 copy_dependencies() {
     local appdir="$1"
-    
+
     log_info "复制依赖库..."
-    
+
     local binary="${appdir}/usr/bin/${PROJECT_NAME}"
     local lib_dir="${appdir}/usr/lib"
     local processed=()
-    
+
     if [ ! -f "$binary" ]; then
         log_error "未找到二进制文件: $binary"
         exit 1
     fi
-    
+
     process_dependency() {
         local dep="$1"
-        
+
         if [ ! -f "$dep" ]; then
             return
         fi
-        
+
         local dep_name=$(basename "$dep")
         if printf "%s\n" "${processed[@]}" | grep -qFx "$dep"; then
             return
         fi
-        
+
         processed+=("$dep")
-        
+
         if [ ! -f "${lib_dir}/${dep_name}" ]; then
             cp -L "$dep" "${lib_dir}/"
             log_info "  复制: $dep_name"
         fi
-        
+
         local sub_deps=$(ldd "$dep" | grep -E "^\s+/" | awk '{print $3}')
         for sub_dep in $sub_deps; do
             process_dependency "$sub_dep"
         done
     }
-    
-    local deps=$(ldd "$binary" | grep -E "^\s+/" | awk '{print $3}' | sort -u)
-    
+
+    local deps=$(ldd "$binary" | grep -E "=>\s+/" | awk '{print $3}' | sort -u)
+
     for dep in $deps; do
         process_dependency "$dep"
     done
-    
+
     log_info "依赖库复制完成（共 ${#processed[@]} 个库）"
 }
 
 create_icon() {
     local appdir="$1"
-    
+
     log_info "创建应用图标..."
-    
+
     local icon_file="${appdir}/ter-music.png"
-    
+
     if [ ! -f "$icon_file" ]; then
         convert -size 256x256 xc:transparent \
             -fill '#2ECC71' \
@@ -267,10 +327,10 @@ create_icon() {
             "$icon_file" 2>/dev/null || \
             echo "警告: 无法创建图标，需要 ImageMagick"
     fi
-    
+
     cp "$icon_file" "${appdir}/.DirIcon" 2>/dev/null || true
     cp "$icon_file" "${appdir}/usr/share/icons/hicolor/256x256/apps/ter-music.png" 2>/dev/null || true
-    
+
     log_info "应用图标创建完成"
 }
 
@@ -278,12 +338,12 @@ build_appimage() {
     local appdir="$1"
     local version="$2"
     local output_file="$3"
-    
+
     log_info "构建 AppImage..."
-    
+
     local appimagetool_dir="${APPIMAGETOOL_DIR}"
     local appimagetool_binary="${appimagetool_dir}/squashfs-root/usr/bin/appimagetool"
-    
+
     if [ ! -f "$appimagetool_binary" ]; then
         download_appimagetool
         chmod +x "${appimagetool_dir}/appimagetool"
@@ -291,9 +351,9 @@ build_appimage() {
         ./appimagetool --appimage-extract
         cd - > /dev/null
     fi
-    
+
     export ARCH=x86_64
-    
+
     if "$appimagetool_binary" --no-appstream "${appdir}" "${output_file}"; then
         chmod +x "${output_file}"
         log_info "AppImage 构建完成"
@@ -306,7 +366,7 @@ build_appimage() {
 
 cleanup() {
     local keep_temp="$1"
-    
+
     if [ "$keep_temp" != "true" ]; then
         log_clean "清理临时文件..."
         rm -rf "${TEMP_DIR}"
@@ -318,7 +378,7 @@ cleanup() {
 
 show_summary() {
     local output_file="$1"
-    
+
     echo ""
     echo "=========================================="
     echo "AppImage 构建完成！"
@@ -338,15 +398,31 @@ show_summary() {
     echo ""
 }
 
+prepare_directories() {
+    log_info "准备构建目录..."
+
+    mkdir -p "${OUTPUT_DIR}"
+
+    rm -rf "${TEMP_DIR}"
+    mkdir -p "${TEMP_DIR}"
+
+    log_clean "已清理并创建构建目录"
+}
+
 main() {
+    local version=""
     local rpm_file=""
     local keep_temp="false"
-    
+
     while [[ $# -gt 0 ]]; do
         case $1 in
             -h|--help)
                 show_help
                 exit 0
+                ;;
+            -v|--version)
+                version="$2"
+                shift 2
                 ;;
             -r|--rpm)
                 rpm_file="$2"
@@ -363,31 +439,54 @@ main() {
                 ;;
         esac
     done
-    
+
     echo "=========================================="
-    echo "Ter-Music RPM 到 AppImage 转换脚本"
+    echo "Ter-Music AppImage 构建脚本"
     echo "=========================================="
     echo ""
-    
+
     check_dependencies
-    
-    rpm_file=$(find_rpm_package "$rpm_file")
-    log_info "使用RPM包: $rpm_file"
-    
-    local version=$(basename "$rpm_file" | sed -E "s/${PROJECT_NAME}-([0-9]+\.[0-9]+\.[0-9]+).*/\1/")
-    log_info "版本: $version"
-    
+
+    if [ -z "$version" ]; then
+        version=$(detect_version)
+        if [ "$version" != "1.0.0" ]; then
+            log_info "从 Git/defs.h/CMakeLists.txt 检测到版本: $version"
+        else
+            log_info "无法检测版本，使用默认版本: $version"
+        fi
+    else
+        log_info "使用指定版本: $version"
+    fi
+
     prepare_directories
-    
-    local extract_dir="${TEMP_DIR}/rpm_extract"
+
     local appdir="${TEMP_DIR}/AppDir"
     local output_file="${OUTPUT_DIR}/${PROJECT_NAME}-${version}-x86_64.AppImage"
-    
-    extract_rpm "$rpm_file" "$extract_dir"
-    create_appdir "$extract_dir" "$appdir" "$version"
-    copy_dependencies "$appdir"
-    create_icon "$appdir"
-    
+
+    if [ -n "$rpm_file" ]; then
+        rpm_file=$(find_rpm_package "$rpm_file")
+        log_info "使用RPM包: $rpm_file"
+
+        local extract_dir="${TEMP_DIR}/rpm_extract"
+        extract_rpm "$rpm_file" "$extract_dir"
+
+        if [ -z "$version" ]; then
+            version=$(basename "$rpm_file" | sed -E "s/${PROJECT_NAME}-([0-9]+\.[0-9]+\.[0-9]+).*/\1/")
+            log_info "从RPM文件名提取版本: $version"
+        fi
+
+        create_appdir "$extract_dir/usr/bin" "$PROJECT_NAME" "$appdir" "$version"
+        copy_dependencies "$appdir"
+        create_icon "$appdir"
+    else
+        local build_dir="${TEMP_DIR}/build"
+        build_from_source "$build_dir"
+
+        create_appdir "$build_dir" "$PROJECT_NAME" "$appdir" "$version"
+        copy_dependencies "$appdir"
+        create_icon "$appdir"
+    fi
+
     if build_appimage "$appdir" "$version" "$output_file"; then
         cleanup "$keep_temp"
         show_summary "$output_file"
@@ -396,17 +495,6 @@ main() {
         cleanup "$keep_temp"
         exit 1
     fi
-}
-
-prepare_directories() {
-    log_info "准备构建目录..."
-    
-    mkdir -p "${OUTPUT_DIR}"
-    
-    rm -rf "${TEMP_DIR}"
-    mkdir -p "${TEMP_DIR}"
-    
-    log_clean "已清理并创建构建目录"
 }
 
 main "$@"

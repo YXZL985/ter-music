@@ -34,14 +34,17 @@ sudo dnf install build/rpm/ter-music-*.x86_64.rpm
 
 ### 2. build-appimage.sh - 构建 AppImage 包
 
-将 RPM 包转换为 AppImage 格式（需要 FUSE 支持）。
+直接从源码构建 AppImage 格式（也可从 RPM 转换，需要 FUSE 支持）。
 
 **使用方法：**
 ```bash
-# 使用默认 RPM 包构建
+# 自动检测版本，直接从源码构建
 ./build-appimage.sh
 
-# 指定 RPM 包文件
+# 指定版本号构建
+./build-appimage.sh -v 1.4.1
+
+# 从指定 RPM 包文件转换
 ./build-appimage.sh -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm
 
 # 保留临时文件用于调试
@@ -71,14 +74,17 @@ chmod +x build/appimage/ter-music-1.0.0-x86_64.AppImage
 
 ### 3. build-portable.sh - 构建可移植压缩包
 
-将 RPM 包转换为可移植的 tar.gz 压缩包，包含所有必要的依赖库。
+直接从源码构建可移植的 tar.gz 压缩包，包含所有必要的依赖库（也可从 RPM 转换）。
 
 **使用方法：**
 ```bash
-# 使用默认 RPM 包构建
+# 自动检测版本，直接从源码构建
 ./build-portable.sh
 
-# 指定 RPM 包文件
+# 指定版本号构建
+./build-portable.sh -v 1.4.1
+
+# 从指定 RPM 包文件转换
 ./build-portable.sh -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm
 
 # 保留临时文件用于调试
@@ -159,15 +165,19 @@ ll-cli run org.yxzl.ter-music
 
 ### build-appimage.sh 依赖：
 - `squashfs-tools`
-- `rpm2cpio`
-- `cpio`
+- `cmake`
+- `make`
+- `gcc`
 - `wget` 或 `curl`
 - FUSE（用于运行 AppImage）
+- `rpm2cpio` 和 `cpio`（仅当从 RPM 转换时需要）
 
 ### build-portable.sh 依赖：
-- `rpm2cpio`
-- `cpio`
+- `cmake`
+- `make`
+- `gcc`
 - `tar`
+- `rpm2cpio` 和 `cpio`（仅当从 RPM 转换时需要）
 
 ### build-linyaps.sh 依赖：
 - `linglong-builder` (ll-builder)
@@ -184,20 +194,23 @@ ll-cli run org.yxzl.ter-music
 
 ## 推荐的构建流程
 
-1. 首先构建 RPM 包：
-   ```bash
-   ./build-rpm.sh
-   ```
+现在可以直接构建可移植包或 AppImage，不需要先构建 RPM：
 
-2. 然后根据需要选择转换格式：
-   - 如果目标系统支持 FUSE，使用 AppImage：
-     ```bash
-     ./build-appimage.sh
-     ```
-   - 如果需要最大的兼容性，使用可移植包：
-     ```bash
-     ./build-portable.sh
-     ```
+- 直接构建可移植包（推荐，兼容性最好）：
+  ```bash
+  ./build-portable.sh
+  ```
+
+- 直接构建 AppImage：
+  ```bash
+  ./build-appimage.sh
+  ```
+
+- 如果需要构建 RPM 包，可以先构建 RPM 再转换：
+  ```bash
+  ./build-rpm.sh
+  ./build-portable.sh -r build/rpm/ter-music-*.rpm
+  ```
 
 ## 分发建议
 

@@ -23,16 +23,18 @@ show_help() {
     cat << EOF
 用法: $0 [选项]
 
-将 ter-music RPM 包转换为可移植的压缩包格式
+直接从源码构建 ter-music 可移植压缩包（也可从 RPM 转换）
 
 选项:
     -h, --help          显示此帮助信息
-    -r, --rpm FILE      指定要转换的RPM包文件
+    -v, --version VERSION  指定版本号（默认：自动检测）
+    -r, --rpm FILE      从指定的RPM包文件转换（可选）
     -k, --keep-temp     保留临时构建文件（用于调试）
 
 示例:
-    $0                                          使用默认RPM包构建可移植包
-    $0 -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm  使用指定RPM包构建
+    $0                                          自动检测版本，直接从源码构建
+    $0 -v 1.4.1                                 使用指定版本号直接从源码构建
+    $0 -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm  从指定RPM包转换
     $0 --keep-temp                              构建后保留临时文件
 
 输出:
@@ -43,21 +45,25 @@ EOF
 
 check_dependencies() {
     log_info "检查构建依赖..."
-    
+
     local missing_deps=()
-    
-    if ! command -v rpm2cpio &> /dev/null; then
-        missing_deps+=("rpm2cpio")
+
+    if ! command -v cmake &> /dev/null; then
+        missing_deps+=("cmake")
     fi
-    
-    if ! command -v cpio &> /dev/null; then
-        missing_deps+=("cpio")
+
+    if ! command -v make &> /dev/null; then
+        missing_deps+=("make")
     fi
-    
+
+    if ! command -v gcc &> /dev/null; then
+        missing_deps+=("gcc")
+    fi
+
     if ! command -v tar &> /dev/null; then
         missing_deps+=("tar")
     fi
-    
+
     if [ ${#missing_deps[@]} -gt 0 ]; then
         log_error "缺少以下构建工具:"
         for dep in "${missing_deps[@]}"; do
@@ -65,96 +71,148 @@ check_dependencies() {
         done
         echo ""
         log_error "请使用以下命令安装缺失的工具:"
-        echo "  sudo dnf install ${missing_deps[*]}"
+        echo "  Debian/Ubuntu: sudo apt install cmake make gcc tar"
+        echo "  Fedora/RHEL: sudo dnf install cmake make gcc tar"
         exit 1
     fi
-    
+
     log_info "所有构建依赖已满足"
+}
+
+detect_version() {
+    local default_version="1.0.0"
+
+    if [ -d "${SCRIPT_DIR}/.git" ] && command -v git >/dev/null 2>&1; then
+        local git_version=$(git describe --tags --abbrev=0 2>/dev/null || true)
+        if [[ $git_version =~ ^v?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "${BASH_REMATCH[1]}"
+            return
+        fi
+    fi
+
+    if [ -f "${SCRIPT_DIR}/include/defs.h" ]; then
+        local match
+        match=$(grep -E 'APP_VERSION' "${SCRIPT_DIR}/include/defs.h" | head -1)
+        if [[ $match =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+            echo "${BASH_REMATCH[1]}"
+            return
+        fi
+    fi
+
+    if [ -f "${SCRIPT_DIR}/CMakeLists.txt" ]; then
+        local match
+        match=$(grep -E 'project.*VERSION' "${SCRIPT_DIR}/CMakeLists.txt" | head -1)
+        if [[ $match =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+            echo "${BASH_REMATCH[1]}"
+            return
+        else
+            match=$(grep -E 'set.*VERSION' "${SCRIPT_DIR}/CMakeLists.txt" | head -1)
+            if [[ $match =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+                echo "${BASH_REMATCH[1]}"
+                return
+            fi
+        fi
+    fi
+
+    echo "$default_version"
 }
 
 find_rpm_package() {
     local rpm_file="$1"
-    
+
     if [ -z "$rpm_file" ]; then
         rpm_file=$(find "${SCRIPT_DIR}/build/rpm" -name "${PROJECT_NAME}-*.x86_64.rpm" -type f | grep -v debuginfo | grep -v debugsource | head -1)
     fi
-    
+
     if [ -z "$rpm_file" ] || [ ! -f "$rpm_file" ]; then
         log_error "未找到RPM包文件"
         log_error "请先运行 ./build-rpm.sh 构建RPM包，或使用 -r 选项指定RPM包路径"
         exit 1
     fi
-    
+
     echo "$rpm_file"
 }
 
 extract_rpm() {
     local rpm_file="$1"
     local extract_dir="$2"
-    
+
     log_info "解压RPM包: $rpm_file"
-    
+
     mkdir -p "${extract_dir}"
     cd "${extract_dir}"
-    
+
     rpm2cpio "$rpm_file" | cpio -idmv
-    
+
     log_info "RPM包解压完成"
 }
 
+build_from_source() {
+    local build_dir="$1"
+
+    log_info "从源码构建..."
+
+    mkdir -p "${build_dir}"
+    cd "${build_dir}"
+
+    cmake "${SCRIPT_DIR}" -DCMAKE_BUILD_TYPE=Release
+    make -j$(nproc)
+
+    log_info "源码构建完成"
+}
+
 copy_dependencies() {
-    local extract_dir="$1"
+    local binary="$1"
     local portable_dir="$2"
-    
+
     log_info "复制依赖库..."
-    
-    local binary="${extract_dir}/usr/bin/${PROJECT_NAME}"
+
     local lib_dir="${portable_dir}/lib"
     local processed=()
-    
+
     mkdir -p "${lib_dir}"
-    
+
     if [ ! -f "$binary" ]; then
         log_error "未找到二进制文件: $binary"
         exit 1
     fi
-    
+
     log_info "二进制文件: $binary"
     log_info "目标库目录: $lib_dir"
-    
-    local deps=$(ldd "$binary" | grep -E "^\s+/" | awk '{print $3}' | sort -u)
+
+    local deps=$(ldd "$binary" | grep -E "=>\s+/" | awk '{print $3}' | sort -u)
     log_info "找到直接依赖: $(echo "$deps" | wc -w) 个"
-    
+
     process_dependency() {
         local dep="$1"
         local target_lib_dir="$2"
-        
+
         if [ ! -f "$dep" ]; then
             return
         fi
-        
+
         local dep_name=$(basename "$dep")
         if printf "%s\n" "${processed[@]}" | grep -qFx "$dep"; then
             return
         fi
-        
+
         processed+=("$dep")
-        
+
         if [ ! -f "${target_lib_dir}/${dep_name}" ]; then
             cp -L "$dep" "${target_lib_dir}/"
             log_info "  复制: $dep_name"
         fi
-        
+
         local sub_deps=$(ldd "$dep" | grep -E "^\s+/" | awk '{print $3}')
         for sub_dep in $sub_deps; do
             process_dependency "$sub_dep" "$target_lib_dir"
         done
     }
-    
+
     for dep in $deps; do
         process_dependency "$dep" "$lib_dir"
     done
-    
+
     local copied=$(ls -1 "${lib_dir}" | wc -l)
     log_info "依赖库复制完成（共 ${#processed[@]} 个依赖，复制了 $copied 个文件到库目录）"
     if [ $copied -eq 0 ]; then
@@ -163,20 +221,21 @@ copy_dependencies() {
 }
 
 create_portable_package() {
-    local extract_dir="$1"
-    local portable_dir="$2"
-    local version="$3"
-    
+    local binary_source="$1"
+    local binary_name="$2"
+    local portable_dir="$3"
+    local version="$4"
+
     log_info "创建可移植包结构..."
-    
+
     mkdir -p "${portable_dir}"/{bin,lib,share}
-    
-    cp "${extract_dir}/usr/bin/${PROJECT_NAME}" "${portable_dir}/bin/"
-    
-    if [ -d "${extract_dir}/usr/share" ]; then
-        cp -r "${extract_dir}/usr/share"/* "${portable_dir}/share/" 2>/dev/null || true
+
+    cp "${binary_source}/${binary_name}" "${portable_dir}/bin/"
+
+    if [ -d "${SCRIPT_DIR}/share" ]; then
+        cp -r "${SCRIPT_DIR}/share"/* "${portable_dir}/share/" 2>/dev/null || true
     fi
-    
+
     cat > "${portable_dir}/run.sh" << 'EOF'
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -185,9 +244,9 @@ export LD_LIBRARY_PATH="${SCRIPT_DIR}/lib:${LD_LIBRARY_PATH}"
 
 exec "${SCRIPT_DIR}/bin/ter-music" "$@"
 EOF
-    
+
     chmod +x "${portable_dir}/run.sh"
-    
+
     cat > "${portable_dir}/README.txt" << EOF
 Ter-Music 可移植包
 ===================
@@ -220,24 +279,23 @@ Ter-Music 可移植包
 
 项目主页: https://gitee.com/yanxi-bamboo-forest/ter-music
 EOF
-    
+
     log_info "可移植包结构创建完成"
 }
 
 create_tarball() {
     local portable_dir="$1"
     local version="$2"
-    
+
     local package_name="${PROJECT_NAME}-${version}-portable-x86_64"
     local tarball_name="${package_name}.tar.gz"
     local tarball_path="${OUTPUT_DIR}/${tarball_name}"
-    
-    # 确保输出目录存在
+
     mkdir -p "${OUTPUT_DIR}"
-    
+
     local original_dir=$(pwd)
     cd "$(dirname "${portable_dir}")"
-    
+
     if [ -d "$(basename "${portable_dir}")" ]; then
         if tar -czf "${tarball_path}" "$(basename "${portable_dir}")"; then
             cd "$original_dir"
@@ -255,7 +313,7 @@ create_tarball() {
 
 cleanup() {
     local keep_temp="$1"
-    
+
     if [ "$keep_temp" != "true" ]; then
         log_clean "清理临时文件..."
         rm -rf "${TEMP_DIR}"
@@ -267,7 +325,7 @@ cleanup() {
 
 show_summary() {
     local tarball_path="$1"
-    
+
     echo ""
     echo "=========================================="
     echo "可移植包构建完成！"
@@ -285,15 +343,31 @@ show_summary() {
     echo ""
 }
 
+prepare_directories() {
+    log_info "准备构建目录..."
+
+    mkdir -p "${OUTPUT_DIR}"
+
+    rm -rf "${TEMP_DIR}"
+    mkdir -p "${TEMP_DIR}"
+
+    log_clean "已清理并创建构建目录"
+}
+
 main() {
+    local version=""
     local rpm_file=""
     local keep_temp="false"
-    
+
     while [[ $# -gt 0 ]]; do
         case $1 in
             -h|--help)
                 show_help
                 exit 0
+                ;;
+            -v|--version)
+                version="$2"
+                shift 2
                 ;;
             -r|--rpm)
                 rpm_file="$2"
@@ -310,39 +384,55 @@ main() {
                 ;;
         esac
     done
-    
+
     echo "=========================================="
-    echo "Ter-Music RPM 到可移植包转换脚本"
+    echo "Ter-Music 可移植包构建脚本"
     echo "=========================================="
     echo ""
-    
+
     check_dependencies
-    
-    rpm_file=$(find_rpm_package "$rpm_file")
-    log_info "使用RPM包: $rpm_file"
-    
-    local version=$(basename "$rpm_file" | sed -E "s/${PROJECT_NAME}-([0-9]+\.[0-9]+\.[0-9]+).*/\1/")
-    log_info "版本: $version"
-    
-    mkdir -p "${OUTPUT_DIR}"
-    
-    rm -rf "${TEMP_DIR}"
-    mkdir -p "${TEMP_DIR}"
-    
-    local extract_dir="${TEMP_DIR}/rpm_extract"
+
+    if [ -z "$version" ]; then
+        version=$(detect_version)
+        if [ "$version" != "1.0.0" ]; then
+            log_info "从 Git/defs.h/CMakeLists.txt 检测到版本: $version"
+        else
+            log_info "无法检测版本，使用默认版本: $version"
+        fi
+    else
+        log_info "使用指定版本: $version"
+    fi
+
+    prepare_directories
+
     local portable_dir="${TEMP_DIR}/${PROJECT_NAME}-portable"
-    
-    extract_rpm "$rpm_file" "$extract_dir"
-    
-    # 创建可移植目录
     mkdir -p "${portable_dir}"
-    
-    create_portable_package "$extract_dir" "$portable_dir" "$version"
-    copy_dependencies "$extract_dir" "$portable_dir"
-    
+
+    if [ -n "$rpm_file" ]; then
+        rpm_file=$(find_rpm_package "$rpm_file")
+        log_info "使用RPM包: $rpm_file"
+
+        local extract_dir="${TEMP_DIR}/rpm_extract"
+        extract_rpm "$rpm_file" "$extract_dir"
+
+        if [ -z "$version" ]; then
+            version=$(basename "$rpm_file" | sed -E "s/${PROJECT_NAME}-([0-9]+\.[0-9]+\.[0-9]+).*/\1/")
+            log_info "从RPM文件名提取版本: $version"
+        fi
+
+        create_portable_package "$extract_dir/usr/bin" "$PROJECT_NAME" "$portable_dir" "$version"
+        copy_dependencies "$extract_dir/usr/bin/${PROJECT_NAME}" "$portable_dir"
+    else
+        local build_dir="${TEMP_DIR}/build"
+        build_from_source "$build_dir"
+
+        create_portable_package "$build_dir" "$PROJECT_NAME" "$portable_dir" "$version"
+        copy_dependencies "$build_dir/${PROJECT_NAME}" "$portable_dir"
+    fi
+
     log_info "创建压缩包..."
     local tarball_path=$(create_tarball "$portable_dir" "$version")
-    
+
     if [ -n "$tarball_path" ] && [ -f "$tarball_path" ]; then
         log_info "压缩包已创建: ${tarball_path}"
         cleanup "$keep_temp"
