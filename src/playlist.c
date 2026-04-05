@@ -30,6 +30,56 @@ int g_control_focus = 0;
 // 当前选中的控件索引 (0:上一曲，1:播放/暂停，2:下一曲，3:停止，4:循环，5:音量，6:进度条)
 int g_current_control_idx = 1;
 
+int is_audio_file(const char *filename);
+void get_audio_metadata(const char *path, char *title, char *artist, char *album);
+
+static int playlist_contains_track(const char *path) {
+    if (!path || path[0] == '\0') {
+        return 0;
+    }
+
+    for (int i = 0; i < g_playlist.count; i++) {
+        if (strcmp(g_playlist.tracks[i].path, path) == 0) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static int scan_playlist_directory(const char *path, int append_mode) {
+    DIR *dir = opendir(path);
+    if (!dir) {
+        return -1;
+    }
+
+    int before_count = g_playlist.count;
+    struct dirent *entry;
+
+    while ((entry = readdir(dir)) != NULL && g_playlist.count < MAX_TRACKS) {
+        if (entry->d_type == DT_REG || entry->d_type == DT_UNKNOWN) {
+            char full_path[MAX_PATH_LEN];
+            snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+
+            if (!is_audio_file(entry->d_name)) {
+                continue;
+            }
+
+            if (append_mode && playlist_contains_track(full_path)) {
+                continue;
+            }
+
+            Track *t = &g_playlist.tracks[g_playlist.count];
+            snprintf(t->path, sizeof(t->path), "%s", full_path);
+            get_audio_metadata(full_path, t->title, t->artist, t->album);
+            g_playlist.count++;
+        }
+    }
+
+    closedir(dir);
+    return g_playlist.count - before_count;
+}
+
 static void copy_metadata_field(char *dest, size_t dest_size, const char *value) {
     if (!dest || dest_size == 0) {
         return;
@@ -214,34 +264,48 @@ void get_audio_metadata(const char *path, char *title, char *artist, char *album
  * 扫描目录，过滤支持的音频文件，并提取元数据
  */
 int load_playlist(const char *path) {
-    DIR *dir = opendir(path);
-    if (!dir) {
+    g_playlist.count = 0;
+    g_playlist.is_loaded = 0;
+    g_playlist.has_multiple_sources = 0;
+    g_playlist.folder_path[0] = '\0';
+
+    int added = scan_playlist_directory(path, 0);
+    if (added < 0) {
         return -1;
     }
 
-    g_playlist.count = 0;
-    struct dirent *entry;
-    
-    while ((entry = readdir(dir)) != NULL && g_playlist.count < MAX_TRACKS) {
-        if (entry->d_type == DT_REG || entry->d_type == DT_UNKNOWN) {
-            char full_path[MAX_PATH_LEN];
-            snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
-            
-            if (is_audio_file(entry->d_name)) {
-                Track *t = &g_playlist.tracks[g_playlist.count];
-                snprintf(t->path, sizeof(t->path), "%s", full_path);
-                
-                // 读取元数据
-                get_audio_metadata(full_path, t->title, t->artist, t->album);
-                
-                g_playlist.count++;
-            }
-        }
-    }
-    closedir(dir);
-    
     snprintf(g_playlist.folder_path, sizeof(g_playlist.folder_path), "%s", path);
     g_playlist.is_loaded = (g_playlist.count > 0);
-    
     return g_playlist.count;
+}
+
+int append_playlist(const char *path) {
+    int had_existing_tracks = g_playlist.count > 0;
+    char previous_folder[MAX_PATH_LEN];
+
+    snprintf(previous_folder, sizeof(previous_folder), "%s", g_playlist.folder_path);
+
+    if (!had_existing_tracks) {
+        return load_playlist(path);
+    }
+
+    int added = scan_playlist_directory(path, 1);
+    if (added < 0) {
+        return -1;
+    }
+
+    if (added > 0) {
+        g_playlist.is_loaded = 1;
+        if (!g_playlist.has_multiple_sources &&
+            previous_folder[0] != '\0' &&
+            strcmp(previous_folder, path) != 0) {
+            g_playlist.has_multiple_sources = 1;
+        }
+
+        if (g_playlist.folder_path[0] == '\0') {
+            snprintf(g_playlist.folder_path, sizeof(g_playlist.folder_path), "%s", path);
+        }
+    }
+
+    return added;
 }

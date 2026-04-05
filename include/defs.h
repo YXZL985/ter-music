@@ -152,6 +152,7 @@ typedef struct {
     int count;
     char folder_path[MAX_PATH_LEN];
     int is_loaded;
+    int has_multiple_sources;
 } Playlist;
 
 extern Playlist g_playlist;
@@ -187,6 +188,7 @@ extern int g_lyric_cursor_index;
 void init_ffmpeg();
 void init_audio_device();
 int load_playlist(const char *folder_path);
+int append_playlist(const char *folder_path);
 void play_audio(int index);
 void pause_audio();
 void resume_audio();

@@ -561,10 +561,35 @@ static void ffmpeg_log_callback(void *ptr, int level, const char *fmt, va_list v
     // 这防止了FFmpeg日志破坏ncurses界面
 }
 
+static void extract_parent_directory(const char *path, char *dest, size_t dest_size) {
+    if (!dest || dest_size == 0) {
+        return;
+    }
+
+    dest[0] = '\0';
+    if (!path || path[0] == '\0') {
+        return;
+    }
+
+    const char *slash = strrchr(path, '/');
+    if (!slash) {
+        return;
+    }
+
+    size_t length = (size_t)(slash - path);
+    if (length >= dest_size) {
+        length = dest_size - 1;
+    }
+
+    memcpy(dest, path, length);
+    dest[length] = '\0';
+}
+
 void persist_playback_session_state(void) {
     int should_resume = 0;
     int play_index = -1;
     int play_position = 0;
+    char track_folder_path[MAX_PATH_LEN];
 
     reap_finished_playback_thread();
 
@@ -597,10 +622,12 @@ void persist_playback_session_state(void) {
 
     g_app_config.resume_last_playback = 1;
     g_app_config.last_played_position = play_position;
-    snprintf(g_app_config.last_played_folder_path, sizeof(g_app_config.last_played_folder_path),
-             "%s", g_playlist.folder_path);
     snprintf(g_app_config.last_played_track_path, sizeof(g_app_config.last_played_track_path),
              "%s", g_playlist.tracks[play_index].path);
+    extract_parent_directory(g_playlist.tracks[play_index].path,
+                             track_folder_path, sizeof(track_folder_path));
+    snprintf(g_app_config.last_played_folder_path, sizeof(g_app_config.last_played_folder_path),
+             "%s", track_folder_path);
     save_config();
 }
 
