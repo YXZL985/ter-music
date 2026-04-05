@@ -527,6 +527,7 @@ LoopMode g_loop_mode = LOOP_OFF; // 当前循环模式
 pthread_t g_play_thread; // 播放线程
 int g_play_thread_running = 0; // 播放线程运行状态
 pthread_mutex_t g_play_mutex = PTHREAD_MUTEX_INITIALIZER; // 播放控制互斥锁
+static int g_play_thread_active = 0;
 static int g_play_thread_finished = 0;
 static int g_pending_playback_index = -1;
 
@@ -589,6 +590,7 @@ void persist_playback_session_state(void) {
     int should_resume = 0;
     int play_index = -1;
     int play_position = 0;
+    char track_path[MAX_PATH_LEN];
     char track_folder_path[MAX_PATH_LEN];
 
     reap_finished_playback_thread();
@@ -596,15 +598,14 @@ void persist_playback_session_state(void) {
     pthread_mutex_lock(&g_play_mutex);
     if (g_play_thread_running &&
         (g_play_state == PLAY_STATE_PLAYING || g_play_state == PLAY_STATE_PAUSED) &&
-        g_current_play_index >= 0 &&
-        g_current_play_index < g_playlist.count) {
+        g_current_play_index >= 0) {
         should_resume = 1;
         play_index = g_current_play_index;
         play_position = g_current_position;
     }
     pthread_mutex_unlock(&g_play_mutex);
 
-    if (!should_resume || play_index < 0 || play_index >= g_playlist.count) {
+    if (!should_resume || playlist_get_track_path(play_index, track_path, sizeof(track_path)) != 0) {
         g_app_config.resume_last_playback = 0;
         g_app_config.last_played_position = 0;
         g_app_config.last_played_folder_path[0] = '\0';
@@ -623,8 +624,8 @@ void persist_playback_session_state(void) {
     g_app_config.resume_last_playback = 1;
     g_app_config.last_played_position = play_position;
     snprintf(g_app_config.last_played_track_path, sizeof(g_app_config.last_played_track_path),
-             "%s", g_playlist.tracks[play_index]);
-    extract_parent_directory(g_playlist.tracks[play_index],
+             "%s", track_path);
+    extract_parent_directory(track_path,
                              track_folder_path, sizeof(track_folder_path));
     snprintf(g_app_config.last_played_folder_path, sizeof(g_app_config.last_played_folder_path),
              "%s", track_folder_path);
@@ -983,6 +984,9 @@ void reap_finished_playback_thread(void) {
 
     if (should_join && !pthread_equal(pthread_self(), thread_to_join)) {
         pthread_join(thread_to_join, NULL);
+        pthread_mutex_lock(&g_play_mutex);
+        g_play_thread_active = 0;
+        pthread_mutex_unlock(&g_play_mutex);
     }
 }
 
@@ -998,6 +1002,25 @@ void process_pending_playback_action(void) {
 
     if (pending_index >= 0) {
         play_audio(pending_index);
+    }
+}
+
+void wait_for_playback_thread_shutdown(void) {
+    while (1) {
+        reap_finished_playback_thread();
+
+        pthread_mutex_lock(&g_play_mutex);
+        int is_running = g_play_thread_running;
+        int is_active = g_play_thread_active;
+        int is_finished = g_play_thread_finished;
+        pthread_mutex_unlock(&g_play_mutex);
+
+        if (!is_running && !is_active && !is_finished) {
+            break;
+        }
+
+        signal_playback_thread();
+        usleep(10000);
     }
 }
 
@@ -1187,17 +1210,19 @@ void *play_audio_thread(void *arg) {
     free(arg);
     
     pthread_mutex_lock(&g_play_mutex);
-    if (index < 0 || index >= g_playlist.count || !g_play_thread_running) {
+    int thread_running = g_play_thread_running;
+    pthread_mutex_unlock(&g_play_mutex);
+
+    char file_path[MAX_PATH_LEN];
+    int valid_index = playlist_get_track_path(index, file_path, sizeof(file_path)) == 0;
+
+    if (!valid_index || !thread_running) {
+        pthread_mutex_lock(&g_play_mutex);
         g_play_thread_running = 0;
         g_play_thread_finished = 1;
         pthread_mutex_unlock(&g_play_mutex);
         return NULL;
     }
-    
-    char file_path[MAX_PATH_LEN];
-    snprintf(file_path, sizeof(file_path), "%s", g_playlist.tracks[index]);
-    
-    pthread_mutex_unlock(&g_play_mutex);
 
     AVFormatContext *fmt_ctx = NULL;
     AVCodecContext *codec_ctx = NULL;
@@ -1433,6 +1458,8 @@ cleanup:
         g_current_position = 0;
     }
 
+    int playlist_total = playlist_count();
+
     pthread_mutex_lock(&g_play_mutex);
     if (g_play_thread_running && reached_end_of_stream) {
         switch (g_loop_mode) {
@@ -1440,13 +1467,13 @@ cleanup:
                 followup_index = index;
                 break;
             case LOOP_LIST:
-                if (g_playlist.count > 0) {
-                    followup_index = (index + 1) % g_playlist.count;
+                if (playlist_total > 0) {
+                    followup_index = (index + 1) % playlist_total;
                 }
                 break;
             case LOOP_RANDOM:
-                if (g_playlist.count > 0) {
-                    followup_index = rand() % g_playlist.count;
+                if (playlist_total > 0) {
+                    followup_index = rand() % playlist_total;
                 }
                 break;
             case LOOP_OFF:
@@ -1460,7 +1487,7 @@ cleanup:
     g_play_state = PLAY_STATE_STOPPED;
     g_current_play_index = -1;
 
-    if (followup_index >= 0) {
+    if (followup_index >= 0 && g_pending_playback_index < 0) {
         g_pending_playback_index = followup_index;
     }
     pthread_mutex_unlock(&g_play_mutex);
@@ -1478,7 +1505,8 @@ cleanup:
  * 如果已有播放线程在运行，则先停止当前播放
  */
 void play_audio(int index) {
-    if (index < 0 || index >= g_playlist.count) {
+    char lyrics_path[MAX_PATH_LEN];
+    if (playlist_get_track_path(index, lyrics_path, sizeof(lyrics_path)) != 0) {
         return;
     }
 
@@ -1491,24 +1519,23 @@ void play_audio(int index) {
         return;
     }
     
-    int was_running = g_play_thread_running;
-    g_pending_playback_index = -1;
-    
-    if (was_running) {
+    if (g_play_thread_active) {
+        g_selected_index = index;
+        g_pending_playback_index = index;
         g_play_thread_running = 0;
         g_seek_request = 0;
-        
+        g_play_state = PLAY_STATE_STOPPED;
+
         pthread_mutex_unlock(&g_play_mutex);
         signal_playback_thread();
-        
-        pthread_join(g_play_thread, NULL);
-        
-        pthread_mutex_lock(&g_play_mutex);
-        g_play_thread_finished = 0;
+        request_ui_refresh(UI_DIRTY_PLAYLIST | UI_DIRTY_CONTROLS | UI_DIRTY_LYRICS);
+        return;
     }
-    
+
+    g_pending_playback_index = -1;
     g_current_play_index = index;
     g_selected_index = index;
+    g_play_thread_active = 1;
     g_play_thread_running = 1;
     g_play_thread_finished = 0;
     g_play_state = PLAY_STATE_STOPPED;
@@ -1518,6 +1545,7 @@ void play_audio(int index) {
     int *index_ptr = malloc(sizeof(int));
     if (!index_ptr) {
         pthread_mutex_lock(&g_play_mutex);
+        g_play_thread_active = 0;
         g_current_play_index = -1;
         pthread_mutex_unlock(&g_play_mutex);
         return;
@@ -1527,6 +1555,7 @@ void play_audio(int index) {
     if (pthread_create(&g_play_thread, NULL, play_audio_thread, index_ptr) != 0) {
         free(index_ptr);
         pthread_mutex_lock(&g_play_mutex);
+        g_play_thread_active = 0;
         g_play_thread_running = 0;
         g_play_state = PLAY_STATE_STOPPED;
         g_current_play_index = -1;
@@ -1551,7 +1580,7 @@ void play_audio(int index) {
     render_playlist_content();
     request_ui_refresh(UI_DIRTY_CONTROLS);
     
-    load_lyrics(g_playlist.tracks[index]);
+    load_lyrics(lyrics_path);
     render_lyrics();
 }
 
@@ -1569,7 +1598,7 @@ void pause_audio() {
     }
     
     // 验证当前播放索引有效
-    if (g_current_play_index < 0 || g_current_play_index >= g_playlist.count) {
+    if (g_current_play_index < 0 || g_current_play_index >= playlist_count()) {
         pthread_mutex_unlock(&g_play_mutex);
         return;
     }
@@ -1601,7 +1630,7 @@ void resume_audio() {
     }
     
     // 验证当前播放索引有效
-    if (g_current_play_index < 0 || g_current_play_index >= g_playlist.count) {
+    if (g_current_play_index < 0 || g_current_play_index >= playlist_count()) {
         pthread_mutex_unlock(&g_play_mutex);
         return;
     }
@@ -1628,43 +1657,20 @@ void resume_audio() {
 void stop_audio() {
     reap_finished_playback_thread();
 
-    pthread_mutex_lock(&g_play_mutex);  // 新增：加锁保护
-    
-    // 先设置停止标志
-    int was_running = g_play_thread_running;
+    pthread_mutex_lock(&g_play_mutex);
     g_play_thread_running = 0;
     g_pending_playback_index = -1;
-    
-    // 清除跳转请求，避免跳转线程继续执行
     g_seek_request = 0;
-
-    pthread_mutex_unlock(&g_play_mutex);  // 新增：解锁
-    signal_playback_thread();
-    
-    // 重置播放状态
     g_play_state = PLAY_STATE_STOPPED;
-    g_current_position = 0;
-    
-    // 重置进度跟踪器
-    progress_tracker_on_stop();
-    
-    // 等待线程结束（在锁外等待，避免死锁）
-    if (was_running) {
-        pthread_join(g_play_thread, NULL);
-        pthread_mutex_lock(&g_play_mutex);
-        g_play_thread_finished = 0;
-        pthread_mutex_unlock(&g_play_mutex);
-    }
-    
     g_current_play_index = -1;
-    
-    // 清空歌词
+    pthread_mutex_unlock(&g_play_mutex);
+    signal_playback_thread();
+
+    g_current_position = 0;
+    progress_tracker_on_stop();
     clear_lyrics();
     reset_visualizer_state();
-    
-    render_playlist_content();
-    render_controls();  // 新增：更新控制栏
-    render_lyrics();    // 更新歌词显示
+    request_ui_refresh(UI_DIRTY_PLAYLIST | UI_DIRTY_CONTROLS | UI_DIRTY_LYRICS);
 }
 
 /**
@@ -1672,24 +1678,22 @@ void stop_audio() {
  * 根据当前循环模式决定下一曲的选择逻辑
  */
 void next_track() {
-    if (g_playlist.count == 0) {
+    int playlist_total = playlist_count();
+    if (playlist_total == 0) {
         return;
     }
     
     int next_index;
     if (g_loop_mode == LOOP_RANDOM) {
-        // 随机播放
-        next_index = rand() % g_playlist.count;
+        next_index = rand() % playlist_total;
     } else {
-        // 顺序播放，使用当前播放索引或选中索引
         if (g_current_play_index >= 0) {
             next_index = g_current_play_index + 1;
         } else {
             next_index = g_selected_index + 1;
         }
 
-        // 循环到列表开头
-        if (next_index >= g_playlist.count) {
+        if (next_index >= playlist_total) {
             next_index = 0;
         }
     }
@@ -1702,25 +1706,23 @@ void next_track() {
  * 根据当前循环模式决定上一曲的选择逻辑
  */
 void prev_track() {
-    if (g_playlist.count == 0) {
+    int playlist_total = playlist_count();
+    if (playlist_total == 0) {
         return;
     }
     
     int prev_index;
     if (g_loop_mode == LOOP_RANDOM) {
-        // 随机播放
-        prev_index = rand() % g_playlist.count;
+        prev_index = rand() % playlist_total;
     } else {
-        // 顺序播放，使用当前播放索引或选中索引
         if (g_current_play_index >= 0) {
             prev_index = g_current_play_index - 1;
         } else {
             prev_index = g_selected_index - 1;
         }
 
-        // 循环到列表末尾
         if (prev_index < 0) {
-            prev_index = g_playlist.count - 1;
+            prev_index = playlist_total - 1;
         }
     }
     

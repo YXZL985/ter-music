@@ -110,17 +110,7 @@ static void clear_saved_playback_session(void) {
 }
 
 static int find_track_index_by_path(const char *track_path) {
-    if (!track_path || track_path[0] == '\0') {
-        return -1;
-    }
-
-    for (int i = 0; i < g_playlist.count; i++) {
-        if (strcmp(g_playlist.tracks[i], track_path) == 0) {
-            return i;
-        }
-    }
-
-    return -1;
+    return playlist_find_track_index_by_path(track_path);
 }
 
 static int restore_saved_playback_session(void) {
@@ -238,8 +228,7 @@ int main(int argc, char *argv[]) {
     
     create_layout();
     
-    g_playlist.is_loaded = 0;
-    g_playlist.folder_path[0] = '\0';
+    reset_playlist_state();
     
     int loaded = 0;
     int used_fallback = 0;
@@ -250,7 +239,7 @@ int main(int argc, char *argv[]) {
     int temp_loaded = load_temp_playlist();
     if (temp_loaded > 0) {
         loaded = 1;
-        snprintf(final_path, sizeof(final_path), "%s", g_playlist.folder_path);
+        playlist_copy_folder_path(final_path, sizeof(final_path));
     }
     
     if (open_path && strlen(open_path) > 0) {
@@ -346,7 +335,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        if (!resumed_playback && g_app_config.auto_play_on_start && g_playlist.count > 0) {
+        if (!resumed_playback && g_app_config.auto_play_on_start && playlist_count() > 0) {
             play_audio(0);
         }
         if (attempted_resume_load &&

@@ -328,6 +328,150 @@ static void escape_json_string(const char *src, char *dest, size_t dest_size) {
     dest[j] = '\0';
 }
 
+static const char *parse_json_string_value(const char *json, char *output, size_t output_size) {
+    if (!json || !output || output_size == 0) {
+        return NULL;
+    }
+
+    while (*json == ' ' || *json == '\t' || *json == '\n' || *json == '\r') {
+        json++;
+    }
+    if (*json != '"') {
+        output[0] = '\0';
+        return NULL;
+    }
+
+    json++;
+    size_t i = 0;
+    while (*json && *json != '"' && i < output_size - 1) {
+        if (*json == '\\' && *(json + 1)) {
+            json++;
+            switch (*json) {
+                case 'n': output[i++] = '\n'; break;
+                case 't': output[i++] = '\t'; break;
+                case '"': output[i++] = '"'; break;
+                case '\\': output[i++] = '\\'; break;
+                default: output[i++] = *json; break;
+            }
+            json++;
+        } else {
+            output[i++] = *json++;
+        }
+    }
+    output[i] = '\0';
+
+    if (*json == '"') {
+        json++;
+    }
+
+    return json;
+}
+
+#define TEMP_PLAYLIST_MAGIC "TER_MUSIC_TEMP_PLAYLIST_V2"
+
+static int hex_digit_value(char c) {
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    }
+    if (c >= 'a' && c <= 'f') {
+        return c - 'a' + 10;
+    }
+    if (c >= 'A' && c <= 'F') {
+        return c - 'A' + 10;
+    }
+    return -1;
+}
+
+static void trim_line_end(char *line) {
+    if (!line) {
+        return;
+    }
+
+    size_t len = strlen(line);
+    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+        line[--len] = '\0';
+    }
+}
+
+static void escape_temp_playlist_field(const char *src, char *dest, size_t dest_size) {
+    static const char hex[] = "0123456789ABCDEF";
+    size_t j = 0;
+
+    if (!dest || dest_size == 0) {
+        return;
+    }
+
+    dest[0] = '\0';
+    if (!src) {
+        return;
+    }
+
+    for (size_t i = 0; src[i] && j < dest_size - 1; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if (c == '%' || c < 0x20) {
+            if (j + 3 >= dest_size) {
+                break;
+            }
+            dest[j++] = '%';
+            dest[j++] = hex[(c >> 4) & 0x0F];
+            dest[j++] = hex[c & 0x0F];
+        } else {
+            dest[j++] = (char)c;
+        }
+    }
+
+    dest[j] = '\0';
+}
+
+static int unescape_temp_playlist_field(const char *src, char *dest, size_t dest_size) {
+    size_t j = 0;
+
+    if (!src || !dest || dest_size == 0) {
+        return -1;
+    }
+
+    while (*src && j < dest_size - 1) {
+        if (*src == '%') {
+            int hi = hex_digit_value(*(src + 1));
+            int lo = hex_digit_value(*(src + 2));
+            if (hi < 0 || lo < 0) {
+                return -1;
+            }
+            dest[j++] = (char)((hi << 4) | lo);
+            src += 3;
+            continue;
+        }
+
+        dest[j++] = *src++;
+    }
+
+    dest[j] = '\0';
+    return 0;
+}
+
+static void extract_parent_directory_for_playlist(const char *path, char *dest, size_t dest_size) {
+    if (!dest || dest_size == 0) {
+        return;
+    }
+
+    dest[0] = '\0';
+    if (!path || path[0] == '\0') {
+        return;
+    }
+
+    const char *slash = strrchr(path, '/');
+    if (!slash) {
+        return;
+    }
+
+    size_t len = (size_t)(slash - path);
+    if (len >= dest_size) {
+        len = dest_size - 1;
+    }
+    memcpy(dest, path, len);
+    dest[len] = '\0';
+}
+
 void ensure_config_dir_exists(void) {
     const char *home = getenv("HOME");
     if (!home) return;
@@ -1035,43 +1179,50 @@ void save_all_playlists(void) {
 }
 
 void save_temp_playlist(void) {
-    if (!g_playlist.is_loaded || g_playlist.count == 0) {
+    int snapshot_count = playlist_count();
+    if (!playlist_is_loaded() || snapshot_count == 0) {
+        return;
+    }
+
+    char folder_path[MAX_PATH_LEN];
+    playlist_copy_folder_path(folder_path, sizeof(folder_path));
+
+    char (*tracks)[MAX_PATH_LEN] = malloc((size_t)snapshot_count * sizeof(*tracks));
+    if (!tracks) {
+        return;
+    }
+
+    int saved_count = 0;
+    for (int i = 0; i < snapshot_count; i++) {
+        if (playlist_get_track_path(i, tracks[saved_count], MAX_PATH_LEN) == 0) {
+            saved_count++;
+        }
+    }
+
+    if (saved_count == 0) {
+        free(tracks);
         return;
     }
 
     FILE *f = fopen(temp_playlist_file, "w");
-    if (!f) return;
-
-    fprintf(f, "{\n");
-    fprintf(f, "  \"folder_path\": \"%s\",\n", g_playlist.folder_path);
-    fprintf(f, "  \"count\": %d,\n", g_playlist.count);
-    fprintf(f, "  \"tracks\": [\n");
-
-    for (int i = 0; i < g_playlist.count; i++) {
-        Track t;
-        get_track_metadata(i, &t);
-        char escaped_path[MAX_PATH_LEN * 2];
-        char escaped_title[MAX_META_LEN * 2];
-        char escaped_artist[MAX_META_LEN * 2];
-        char escaped_album[MAX_META_LEN * 2];
-
-        escape_json_string(t.path, escaped_path, sizeof(escaped_path));
-        escape_json_string(t.title, escaped_title, sizeof(escaped_title));
-        escape_json_string(t.artist, escaped_artist, sizeof(escaped_artist));
-        escape_json_string(t.album, escaped_album, sizeof(escaped_album));
-
-        fprintf(f, "    {\n");
-        fprintf(f, "      \"path\": \"%s\",\n", escaped_path);
-        fprintf(f, "      \"title\": \"%s\",\n", escaped_title);
-        fprintf(f, "      \"artist\": \"%s\",\n", escaped_artist);
-        fprintf(f, "      \"album\": \"%s\"\n", escaped_album);
-        fprintf(f, "    }%s\n", (i < g_playlist.count - 1) ? "," : "");
+    if (!f) {
+        free(tracks);
+        return;
     }
 
-    fprintf(f, "  ]\n");
-    fprintf(f, "}\n");
+    char escaped_folder[MAX_PATH_LEN * 3];
+    escape_temp_playlist_field(folder_path, escaped_folder, sizeof(escaped_folder));
+    fprintf(f, "%s\n", TEMP_PLAYLIST_MAGIC);
+    fprintf(f, "folder=%s\n", escaped_folder);
+
+    for (int i = 0; i < saved_count; i++) {
+        char escaped_path[MAX_PATH_LEN * 3];
+        escape_temp_playlist_field(tracks[i], escaped_path, sizeof(escaped_path));
+        fprintf(f, "track=%s\n", escaped_path);
+    }
 
     fclose(f);
+    free(tracks);
 }
 
 void cleanup_temp_playlist(void) {
@@ -1080,9 +1231,94 @@ void cleanup_temp_playlist(void) {
     }
 }
 
-int load_temp_playlist(void) {
+static int apply_restored_playlist(Playlist *restored,
+                                   int loaded_count,
+                                   int has_multiple_sources,
+                                   const char *folder_path,
+                                   const char *first_track_dir) {
+    if (!restored || loaded_count <= 0) {
+        return 0;
+    }
+
+    restored->count = loaded_count;
+    restored->is_loaded = 1;
+    restored->has_multiple_sources = has_multiple_sources;
+
+    struct stat st;
+    if (folder_path && folder_path[0] != '\0' &&
+        stat(folder_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+        strncpy(restored->folder_path, folder_path, sizeof(restored->folder_path) - 1);
+        restored->folder_path[sizeof(restored->folder_path) - 1] = '\0';
+    } else if (first_track_dir && first_track_dir[0] != '\0') {
+        strncpy(restored->folder_path, first_track_dir, sizeof(restored->folder_path) - 1);
+        restored->folder_path[sizeof(restored->folder_path) - 1] = '\0';
+    }
+
+    playlist_lock();
+    g_playlist = *restored;
+    playlist_unlock();
+    memset(&g_search_state, 0, sizeof(g_search_state));
+    return loaded_count;
+}
+
+static int load_temp_playlist_v2(FILE *f) {
+    Playlist *restored = calloc(1, sizeof(*restored));
+    if (!restored) {
+        return 0;
+    }
+
+    int loaded_count = 0;
+    int has_multiple_sources = 0;
+    char folder_path[MAX_PATH_LEN] = "";
+    char first_track_dir[MAX_PATH_LEN] = "";
+    char line[(MAX_PATH_LEN * 3) + 32];
+
+    while (fgets(line, sizeof(line), f)) {
+        trim_line_end(line);
+
+        if (strncmp(line, "folder=", 7) == 0) {
+            unescape_temp_playlist_field(line + 7, folder_path, sizeof(folder_path));
+            continue;
+        }
+
+        if (strncmp(line, "track=", 6) != 0 || loaded_count >= MAX_TRACKS) {
+            continue;
+        }
+
+        char path_buf[MAX_PATH_LEN];
+        if (unescape_temp_playlist_field(line + 6, path_buf, sizeof(path_buf)) != 0) {
+            continue;
+        }
+
+        if (path_buf[0] == '\0' || access(path_buf, R_OK) != 0) {
+            continue;
+        }
+
+        strncpy(restored->tracks[loaded_count], path_buf, MAX_PATH_LEN - 1);
+        restored->tracks[loaded_count][MAX_PATH_LEN - 1] = '\0';
+
+        char track_dir[MAX_PATH_LEN];
+        extract_parent_directory_for_playlist(path_buf, track_dir, sizeof(track_dir));
+        if (loaded_count == 0) {
+            snprintf(first_track_dir, sizeof(first_track_dir), "%s", track_dir);
+        } else if (!has_multiple_sources && strcmp(first_track_dir, track_dir) != 0) {
+            has_multiple_sources = 1;
+        }
+
+        loaded_count++;
+    }
+
+    int result = apply_restored_playlist(restored, loaded_count, has_multiple_sources,
+                                         folder_path, first_track_dir);
+    free(restored);
+    return result;
+}
+
+static int load_temp_playlist_legacy_json(void) {
     FILE *f = fopen(temp_playlist_file, "r");
-    if (!f) return 0;
+    if (!f) {
+        return 0;
+    }
 
     fseek(f, 0, SEEK_END);
     long fsize = ftell(f);
@@ -1111,68 +1347,122 @@ int load_temp_playlist(void) {
     char folder_path[MAX_PATH_LEN];
     extract_json_string(json, "folder_path", folder_path, sizeof(folder_path));
 
-    struct stat st;
-    if (stat(folder_path, &st) != 0 || !S_ISDIR(st.st_mode)) {
+    Playlist *restored = calloc(1, sizeof(*restored));
+    if (!restored) {
         free(json);
         return 0;
     }
-
-    memset(&g_playlist, 0, sizeof(g_playlist));
-    clear_metadata_cache();
 
     const char *tracks_start = strstr(json, "\"tracks\": [");
     if (!tracks_start) {
+        free(restored);
         free(json);
         return 0;
     }
 
-    const char *obj_end = strstr(json, "  ]\n}");
-    if (!obj_end) obj_end = json + strlen(json);
+    const char *array_start = strchr(tracks_start, '[');
+    const char *array_end = array_start ? strchr(array_start, ']') : NULL;
+    if (!array_start || !array_end || array_end <= array_start) {
+        free(restored);
+        free(json);
+        return 0;
+    }
 
     int loaded_count = 0;
-    const char *current_track = tracks_start;
+    int has_multiple_sources = 0;
+    char first_track_dir[MAX_PATH_LEN] = "";
+    const char *current_track = array_start + 1;
 
-    while (loaded_count < count) {
-        current_track = strstr(current_track, "{");
-        if (!current_track || current_track > obj_end) break;
+    while (current_track < array_end && loaded_count < count && loaded_count < MAX_TRACKS) {
+        while (current_track < array_end &&
+               (*current_track == ' ' || *current_track == '\t' || *current_track == '\n' ||
+                *current_track == '\r' || *current_track == ',')) {
+            current_track++;
+        }
 
-        const char *next_brace = current_track + 1;
-        const char *end_track = strstr(next_brace, "}");
-        if (!end_track || end_track > obj_end) break;
+        if (current_track >= array_end) {
+            break;
+        }
 
-        size_t obj_len = end_track - current_track + 1;
-        char *track_obj = malloc(obj_len + 1);
-        if (!track_obj) {
+        char path_buf[MAX_PATH_LEN];
+        path_buf[0] = '\0';
+
+        if (*current_track == '"') {
+            const char *next = parse_json_string_value(current_track, path_buf, sizeof(path_buf));
+            if (!next) {
+                break;
+            }
+            current_track = next;
+        } else if (*current_track == '{') {
+            const char *end_track = strchr(current_track, '}');
+            if (!end_track || end_track > array_end) {
+                break;
+            }
+
+            size_t obj_len = (size_t)(end_track - current_track + 1);
+            char *track_obj = malloc(obj_len + 1);
+            if (!track_obj) {
+                current_track = end_track + 1;
+                continue;
+            }
+
+            strncpy(track_obj, current_track, obj_len);
+            track_obj[obj_len] = '\0';
+            extract_json_string(track_obj, "path", path_buf, sizeof(path_buf));
+            free(track_obj);
             current_track = end_track + 1;
+        } else {
+            current_track++;
             continue;
         }
 
-        strncpy(track_obj, current_track, obj_len);
-        track_obj[obj_len] = '\0';
-
-        char path_buf[MAX_PATH_LEN];
-        extract_json_string(track_obj, "path", path_buf, sizeof(path_buf));
-
-        free(track_obj);
-
-        if (path_buf[0] != '\0') {
-            strncpy(g_playlist.tracks[loaded_count], path_buf, MAX_PATH_LEN - 1);
-            g_playlist.tracks[loaded_count][MAX_PATH_LEN - 1] = '\0';
-            loaded_count++;
+        if (path_buf[0] == '\0' || access(path_buf, R_OK) != 0) {
+            continue;
         }
 
-        current_track = end_track + 1;
+        strncpy(restored->tracks[loaded_count], path_buf, MAX_PATH_LEN - 1);
+        restored->tracks[loaded_count][MAX_PATH_LEN - 1] = '\0';
+
+        char track_dir[MAX_PATH_LEN];
+        extract_parent_directory_for_playlist(path_buf, track_dir, sizeof(track_dir));
+        if (loaded_count == 0) {
+            snprintf(first_track_dir, sizeof(first_track_dir), "%s", track_dir);
+        } else if (!has_multiple_sources && strcmp(first_track_dir, track_dir) != 0) {
+            has_multiple_sources = 1;
+        }
+
+        loaded_count++;
     }
 
-    if (loaded_count > 0) {
-        g_playlist.count = loaded_count;
-        g_playlist.is_loaded = 1;
-        strncpy(g_playlist.folder_path, folder_path, sizeof(g_playlist.folder_path) - 1);
-        g_playlist.folder_path[sizeof(g_playlist.folder_path) - 1] = '\0';
-    }
+    int result = apply_restored_playlist(restored, loaded_count, has_multiple_sources,
+                                         folder_path, first_track_dir);
 
+    free(restored);
     free(json);
-    return loaded_count > 0 ? loaded_count : 0;
+    return result;
+}
+
+int load_temp_playlist(void) {
+    FILE *f = fopen(temp_playlist_file, "r");
+    if (!f) {
+        return 0;
+    }
+
+    char header[128];
+    if (!fgets(header, sizeof(header), f)) {
+        fclose(f);
+        return 0;
+    }
+
+    trim_line_end(header);
+    if (strcmp(header, TEMP_PLAYLIST_MAGIC) == 0) {
+        int result = load_temp_playlist_v2(f);
+        fclose(f);
+        return result;
+    }
+
+    fclose(f);
+    return load_temp_playlist_legacy_json();
 }
 
 void render_menu_hint_bar(void) {
@@ -2423,6 +2713,7 @@ static void handle_history_input(int ch) {
                     g_content_selected_idx < g_dir_history.count) {
                     
                     const char *path = g_dir_history.entries[g_content_selected_idx].path;
+                    stop_audio();
                     int count = load_playlist(path);
                     
                     if (count > 0) {
@@ -2798,13 +3089,7 @@ static void handle_playlist_input(int ch) {
                         if (g_content_selected_idx >= 0 && g_content_selected_idx < pl->track_count) {
                             Track *t = &pl->tracks[g_content_selected_idx];
                             
-                            int found = -1;
-                            for (int i = 0; i < g_playlist.count; i++) {
-                                if (strcmp(g_playlist.tracks[i], t->path) == 0) {
-                                    found = i;
-                                    break;
-                                }
-                            }
+                            int found = playlist_find_track_index_by_path(t->path);
                             
                             if (found >= 0) {
                                 play_audio(found);
@@ -2908,13 +3193,7 @@ static void handle_favorites_input(int ch) {
                     
                     Track *t = &g_favorites.tracks[g_content_selected_idx];
                     
-                    int found = -1;
-                    for (int i = 0; i < g_playlist.count; i++) {
-                        if (strcmp(g_playlist.tracks[i], t->path) == 0) {
-                            found = i;
-                            break;
-                        }
-                    }
+                    int found = playlist_find_track_index_by_path(t->path);
                     
                     if (found >= 0) {
                         play_audio(found);
