@@ -1775,6 +1775,7 @@ void run_event_loop() {
  * 释放窗口并结束ncurses模式
  */
 void cleanup() {
+    persist_playback_session_state();
     stop_audio();
 
     if (win_playlist) {

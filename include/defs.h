@@ -134,10 +134,14 @@ typedef struct {
 typedef struct {
     char default_startup_path[MAX_PATH_LEN];
     char last_opened_path[MAX_PATH_LEN];
+    char last_played_folder_path[MAX_PATH_LEN];
+    char last_played_track_path[MAX_PATH_LEN];
     ColorTheme theme;
     int auto_play_on_start;
     int remember_last_path;
     int clear_history_on_startup;
+    int resume_last_playback;
+    int last_played_position;
     int ui_language;
     int volume_percent;
     int audio_latency_ms;
@@ -197,6 +201,7 @@ int get_and_clear_initial_seek_position(void);
 int get_volume_percent(void);
 void set_volume_percent(int volume);
 void adjust_volume(int delta);
+void persist_playback_session_state(void);
 
 int utf8_str_truncate(char *dest, const char *src, int max_cols);
 int utf8_str_width(const char *src);

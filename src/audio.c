@@ -559,6 +559,49 @@ static void ffmpeg_log_callback(void *ptr, int level, const char *fmt, va_list v
     // 这防止了FFmpeg日志破坏ncurses界面
 }
 
+void persist_playback_session_state(void) {
+    int should_resume = 0;
+    int play_index = -1;
+    int play_position = 0;
+
+    reap_finished_playback_thread();
+
+    pthread_mutex_lock(&g_play_mutex);
+    if (g_play_thread_running &&
+        (g_play_state == PLAY_STATE_PLAYING || g_play_state == PLAY_STATE_PAUSED) &&
+        g_current_play_index >= 0 &&
+        g_current_play_index < g_playlist.count) {
+        should_resume = 1;
+        play_index = g_current_play_index;
+        play_position = g_current_position;
+    }
+    pthread_mutex_unlock(&g_play_mutex);
+
+    if (!should_resume || play_index < 0 || play_index >= g_playlist.count) {
+        g_app_config.resume_last_playback = 0;
+        g_app_config.last_played_position = 0;
+        g_app_config.last_played_folder_path[0] = '\0';
+        g_app_config.last_played_track_path[0] = '\0';
+        save_config();
+        return;
+    }
+
+    if (play_position < 0) {
+        play_position = 0;
+    }
+    if (g_total_duration > 0 && play_position >= g_total_duration) {
+        play_position = g_total_duration > 1 ? g_total_duration - 1 : 0;
+    }
+
+    g_app_config.resume_last_playback = 1;
+    g_app_config.last_played_position = play_position;
+    snprintf(g_app_config.last_played_folder_path, sizeof(g_app_config.last_played_folder_path),
+             "%s", g_playlist.folder_path);
+    snprintf(g_app_config.last_played_track_path, sizeof(g_app_config.last_played_track_path),
+             "%s", g_playlist.tracks[play_index].path);
+    save_config();
+}
+
 static int audio_backend_prepare_stream(int sample_rate, int channels) {
     g_output_sample_rate = sample_rate;
     g_output_channels = channels;
