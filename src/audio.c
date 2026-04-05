@@ -30,6 +30,7 @@
 #include <libavutil/opt.h>
 #include <libavutil/channel_layout.h>
 #include <libavutil/samplefmt.h>
+#include <libavutil/version.h>
 
 // 确保DT_REG和DT_UNKNOWN被定义
 #ifndef DT_REG
@@ -68,6 +69,53 @@ static uint64_t g_visualizer_last_update_ms = 0;
 
 static const char *audio_text(const char *utf8, const char *ascii) {
     return use_english_ui() ? ascii : utf8;
+}
+
+static int codec_channel_count(const AVCodecContext *codec_ctx) {
+#if LIBAVUTIL_VERSION_MAJOR >= 57
+    if (codec_ctx->ch_layout.nb_channels > 0) {
+        return codec_ctx->ch_layout.nb_channels;
+    }
+#endif
+    if (codec_ctx->channels > 0) {
+        return codec_ctx->channels;
+    }
+    if (codec_ctx->channel_layout) {
+        return av_get_channel_layout_nb_channels(codec_ctx->channel_layout);
+    }
+    return 0;
+}
+
+static int init_resampler(SwrContext *swr_ctx,
+                          const AVCodecContext *codec_ctx,
+                          int input_channels,
+                          int output_channels,
+                          int output_sample_rate) {
+#if LIBAVUTIL_VERSION_MAJOR >= 57
+    AVChannelLayout in_ch_layout = codec_ctx->ch_layout;
+    AVChannelLayout out_ch_layout;
+    av_channel_layout_default(&out_ch_layout, output_channels);
+
+    av_opt_set_chlayout(swr_ctx, "in_chlayout", &in_ch_layout, 0);
+    av_opt_set_chlayout(swr_ctx, "out_chlayout", &out_ch_layout, 0);
+#else
+    int64_t in_channel_layout = codec_ctx->channel_layout;
+    int64_t out_channel_layout = av_get_default_channel_layout(output_channels);
+
+    if (!in_channel_layout) {
+        in_channel_layout = av_get_default_channel_layout(input_channels);
+    }
+
+    av_opt_set_channel_layout(swr_ctx, "in_channel_layout", in_channel_layout, 0);
+    av_opt_set_channel_layout(swr_ctx, "out_channel_layout", out_channel_layout, 0);
+#endif
+
+    av_opt_set_int(swr_ctx, "in_sample_rate", codec_ctx->sample_rate, 0);
+    av_opt_set_int(swr_ctx, "out_sample_rate", output_sample_rate, 0);
+    av_opt_set_sample_fmt(swr_ctx, "in_sample_fmt", codec_ctx->sample_fmt, 0);
+    av_opt_set_sample_fmt(swr_ctx, "out_sample_fmt", AV_SAMPLE_FMT_S16, 0);
+
+    return swr_init(swr_ctx);
 }
 
 static uint64_t audio_now_ms(void) {
@@ -1102,7 +1150,7 @@ void *play_audio_thread(void *arg) {
         goto cleanup;
     }
     
-    input_channels = codec_ctx->ch_layout.nb_channels;
+    input_channels = codec_channel_count(codec_ctx);
     if (input_channels <= 0) {
         input_channels = 2;
     }
@@ -1117,18 +1165,7 @@ void *play_audio_thread(void *arg) {
             goto cleanup;
         }
 
-        AVChannelLayout in_ch_layout = codec_ctx->ch_layout;
-        AVChannelLayout out_ch_layout;
-        av_channel_layout_default(&out_ch_layout, output_channels);
-
-        av_opt_set_chlayout(swr_ctx, "in_chlayout", &in_ch_layout, 0);
-        av_opt_set_chlayout(swr_ctx, "out_chlayout", &out_ch_layout, 0);
-        av_opt_set_int(swr_ctx, "in_sample_rate", codec_ctx->sample_rate, 0);
-        av_opt_set_int(swr_ctx, "out_sample_rate", output_sample_rate, 0);
-        av_opt_set_sample_fmt(swr_ctx, "in_sample_fmt", codec_ctx->sample_fmt, 0);
-        av_opt_set_sample_fmt(swr_ctx, "out_sample_fmt", AV_SAMPLE_FMT_S16, 0);
-
-        if (swr_init(swr_ctx) < 0) {
+        if (init_resampler(swr_ctx, codec_ctx, input_channels, output_channels, output_sample_rate) < 0) {
             update_controls_status(audio_text("无法初始化重采样器", "Cannot initialize resampler"));
             goto cleanup;
         }
