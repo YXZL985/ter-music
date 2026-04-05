@@ -78,7 +78,8 @@ static int codec_channel_count(const AVCodecContext *codec_ctx) {
     if (codec_ctx->ch_layout.nb_channels > 0) {
         return codec_ctx->ch_layout.nb_channels;
     }
-#endif
+    return 0;
+#else
     if (codec_ctx->channels > 0) {
         return codec_ctx->channels;
     }
@@ -86,6 +87,7 @@ static int codec_channel_count(const AVCodecContext *codec_ctx) {
         return av_get_channel_layout_nb_channels(codec_ctx->channel_layout);
     }
     return 0;
+#endif
 }
 
 static int init_resampler(SwrContext *swr_ctx,
