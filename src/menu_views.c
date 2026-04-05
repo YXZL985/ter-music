@@ -47,6 +47,7 @@ static char history_file[MAX_PATH_LEN];
 static char favorites_file[MAX_PATH_LEN];
 static char dir_history_file[MAX_PATH_LEN];
 static char playlists_dir[MAX_PATH_LEN];
+static char temp_playlist_file[MAX_PATH_LEN];
 
 static char g_status_message[256] = "";
 static time_t g_status_message_time = 0;
@@ -330,14 +331,16 @@ static void escape_json_string(const char *src, char *dest, size_t dest_size) {
 void ensure_config_dir_exists(void) {
     const char *home = getenv("HOME");
     if (!home) return;
-    
+
+    uid_t uid = getuid();
     snprintf(config_dir, sizeof(config_dir), "%s/.config/ter-music", home);
     snprintf(config_file, sizeof(config_file), "%s/config.json", config_dir);
     snprintf(history_file, sizeof(history_file), "%s/history.json", config_dir);
     snprintf(favorites_file, sizeof(favorites_file), "%s/favorites.json", config_dir);
     snprintf(dir_history_file, sizeof(dir_history_file), "%s/dir_history.json", config_dir);
     snprintf(playlists_dir, sizeof(playlists_dir), "%s/playlists", config_dir);
-    
+    snprintf(temp_playlist_file, sizeof(temp_playlist_file), "/tmp/ter-music-%d-temp-playlist.json", (int)uid);
+
     mkdir(config_dir, 0755);
     mkdir(playlists_dir, 0755);
 }
@@ -1029,6 +1032,147 @@ void save_all_playlists(void) {
         
         fclose(f);
     }
+}
+
+void save_temp_playlist(void) {
+    if (!g_playlist.is_loaded || g_playlist.count == 0) {
+        return;
+    }
+
+    FILE *f = fopen(temp_playlist_file, "w");
+    if (!f) return;
+
+    fprintf(f, "{\n");
+    fprintf(f, "  \"folder_path\": \"%s\",\n", g_playlist.folder_path);
+    fprintf(f, "  \"count\": %d,\n", g_playlist.count);
+    fprintf(f, "  \"tracks\": [\n");
+
+    for (int i = 0; i < g_playlist.count; i++) {
+        Track t;
+        get_track_metadata(i, &t);
+        char escaped_path[MAX_PATH_LEN * 2];
+        char escaped_title[MAX_META_LEN * 2];
+        char escaped_artist[MAX_META_LEN * 2];
+        char escaped_album[MAX_META_LEN * 2];
+
+        escape_json_string(t.path, escaped_path, sizeof(escaped_path));
+        escape_json_string(t.title, escaped_title, sizeof(escaped_title));
+        escape_json_string(t.artist, escaped_artist, sizeof(escaped_artist));
+        escape_json_string(t.album, escaped_album, sizeof(escaped_album));
+
+        fprintf(f, "    {\n");
+        fprintf(f, "      \"path\": \"%s\",\n", escaped_path);
+        fprintf(f, "      \"title\": \"%s\",\n", escaped_title);
+        fprintf(f, "      \"artist\": \"%s\",\n", escaped_artist);
+        fprintf(f, "      \"album\": \"%s\"\n", escaped_album);
+        fprintf(f, "    }%s\n", (i < g_playlist.count - 1) ? "," : "");
+    }
+
+    fprintf(f, "  ]\n");
+    fprintf(f, "}\n");
+
+    fclose(f);
+}
+
+void cleanup_temp_playlist(void) {
+    if (temp_playlist_file[0] != '\0') {
+        unlink(temp_playlist_file);
+    }
+}
+
+int load_temp_playlist(void) {
+    FILE *f = fopen(temp_playlist_file, "r");
+    if (!f) return 0;
+
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    if (fsize <= 0) {
+        fclose(f);
+        return 0;
+    }
+
+    char *json = malloc(fsize + 1);
+    if (!json) {
+        fclose(f);
+        return 0;
+    }
+
+    fseek(f, 0, SEEK_SET);
+    fread(json, 1, fsize, f);
+    json[fsize] = '\0';
+    fclose(f);
+
+    int count = (int)extract_json_int(json, "count");
+    if (count <= 0 || count > MAX_TRACKS) {
+        free(json);
+        return 0;
+    }
+
+    char folder_path[MAX_PATH_LEN];
+    extract_json_string(json, "folder_path", folder_path, sizeof(folder_path));
+
+    struct stat st;
+    if (stat(folder_path, &st) != 0 || !S_ISDIR(st.st_mode)) {
+        free(json);
+        return 0;
+    }
+
+    memset(&g_playlist, 0, sizeof(g_playlist));
+    clear_metadata_cache();
+
+    const char *tracks_start = strstr(json, "\"tracks\": [");
+    if (!tracks_start) {
+        free(json);
+        return 0;
+    }
+
+    const char *obj_end = strstr(json, "  ]\n}");
+    if (!obj_end) obj_end = json + strlen(json);
+
+    int loaded_count = 0;
+    const char *current_track = tracks_start;
+
+    while (loaded_count < count) {
+        current_track = strstr(current_track, "{");
+        if (!current_track || current_track > obj_end) break;
+
+        const char *next_brace = current_track + 1;
+        const char *end_track = strstr(next_brace, "}");
+        if (!end_track || end_track > obj_end) break;
+
+        size_t obj_len = end_track - current_track + 1;
+        char *track_obj = malloc(obj_len + 1);
+        if (!track_obj) {
+            current_track = end_track + 1;
+            continue;
+        }
+
+        strncpy(track_obj, current_track, obj_len);
+        track_obj[obj_len] = '\0';
+
+        char path_buf[MAX_PATH_LEN];
+        extract_json_string(track_obj, "path", path_buf, sizeof(path_buf));
+
+        free(track_obj);
+
+        if (path_buf[0] != '\0') {
+            strncpy(g_playlist.tracks[loaded_count], path_buf, MAX_PATH_LEN - 1);
+            g_playlist.tracks[loaded_count][MAX_PATH_LEN - 1] = '\0';
+            loaded_count++;
+        }
+
+        current_track = end_track + 1;
+    }
+
+    if (loaded_count > 0) {
+        g_playlist.count = loaded_count;
+        g_playlist.is_loaded = 1;
+        strncpy(g_playlist.folder_path, folder_path, sizeof(g_playlist.folder_path) - 1);
+        g_playlist.folder_path[sizeof(g_playlist.folder_path) - 1] = '\0';
+    }
+
+    free(json);
+    return loaded_count > 0 ? loaded_count : 0;
 }
 
 void render_menu_hint_bar(void) {
@@ -2656,7 +2800,7 @@ static void handle_playlist_input(int ch) {
                             
                             int found = -1;
                             for (int i = 0; i < g_playlist.count; i++) {
-                                if (strcmp(g_playlist.tracks[i].path, t->path) == 0) {
+                                if (strcmp(g_playlist.tracks[i], t->path) == 0) {
                                     found = i;
                                     break;
                                 }
@@ -2766,7 +2910,7 @@ static void handle_favorites_input(int ch) {
                     
                     int found = -1;
                     for (int i = 0; i < g_playlist.count; i++) {
-                        if (strcmp(g_playlist.tracks[i].path, t->path) == 0) {
+                        if (strcmp(g_playlist.tracks[i], t->path) == 0) {
                             found = i;
                             break;
                         }

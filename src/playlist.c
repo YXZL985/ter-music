@@ -30,6 +30,8 @@ int g_control_focus = 0;
 // 当前选中的控件索引 (0:上一曲，1:播放/暂停，2:下一曲，3:停止，4:循环，5:音量，6:进度条)
 int g_current_control_idx = 1;
 
+SearchState g_search_state = {0};
+
 int is_audio_file(const char *filename);
 void get_audio_metadata(const char *path, char *title, char *artist, char *album);
 
@@ -39,7 +41,7 @@ static int playlist_contains_track(const char *path) {
     }
 
     for (int i = 0; i < g_playlist.count; i++) {
-        if (strcmp(g_playlist.tracks[i].path, path) == 0) {
+        if (strcmp(g_playlist.tracks[i], path) == 0) {
             return 1;
         }
     }
@@ -69,9 +71,8 @@ static int scan_playlist_directory(const char *path, int append_mode) {
                 continue;
             }
 
-            Track *t = &g_playlist.tracks[g_playlist.count];
-            snprintf(t->path, sizeof(t->path), "%s", full_path);
-            get_audio_metadata(full_path, t->title, t->artist, t->album);
+            strncpy(g_playlist.tracks[g_playlist.count], full_path, MAX_PATH_LEN - 1);
+            g_playlist.tracks[g_playlist.count][MAX_PATH_LEN - 1] = '\0';
             g_playlist.count++;
         }
     }
@@ -268,6 +269,7 @@ int load_playlist(const char *path) {
     g_playlist.is_loaded = 0;
     g_playlist.has_multiple_sources = 0;
     g_playlist.folder_path[0] = '\0';
+    clear_metadata_cache();
 
     int added = scan_playlist_directory(path, 0);
     if (added < 0) {
@@ -289,6 +291,8 @@ int append_playlist(const char *path) {
         return load_playlist(path);
     }
 
+    clear_metadata_cache();
+
     int added = scan_playlist_directory(path, 1);
     if (added < 0) {
         return -1;
@@ -308,4 +312,90 @@ int append_playlist(const char *path) {
     }
 
     return added;
+}
+
+void clear_metadata_cache(void) {
+    memset(g_playlist.cache, 0, sizeof(g_playlist.cache));
+    g_playlist.cache_count = 0;
+}
+
+static CachedTrack *find_in_cache(int index) {
+    for (int i = 0; i < g_playlist.cache_count; i++) {
+        if (g_playlist.cache[i].valid && g_playlist.cache[i].index == index) {
+            g_playlist.cache[i].last_used = time(NULL);
+            return &g_playlist.cache[i];
+        }
+    }
+    return NULL;
+}
+
+static int evict_one(void) {
+    if (g_playlist.cache_count < MAX_CACHE_SIZE) {
+        return g_playlist.cache_count++;
+    }
+
+    time_t oldest = g_playlist.cache[0].last_used;
+    int oldest_idx = 0;
+
+    for (int i = 1; i < g_playlist.cache_count; i++) {
+        if (g_playlist.cache[i].last_used < oldest) {
+            oldest = g_playlist.cache[i].last_used;
+            oldest_idx = i;
+        }
+    }
+
+    g_playlist.cache[oldest_idx].valid = 0;
+    return oldest_idx;
+}
+
+int get_track_metadata(int index, Track *out) {
+    if (index < 0 || index >= g_playlist.count || !out) {
+        return -1;
+    }
+
+    CachedTrack *cached = find_in_cache(index);
+    if (cached) {
+        strncpy(out->path, g_playlist.tracks[index], MAX_PATH_LEN - 1);
+        out->path[MAX_PATH_LEN - 1] = '\0';
+        strncpy(out->title, cached->title, MAX_META_LEN - 1);
+        out->title[MAX_META_LEN - 1] = '\0';
+        strncpy(out->artist, cached->artist, MAX_META_LEN - 1);
+        out->artist[MAX_META_LEN - 1] = '\0';
+        strncpy(out->album, cached->album, MAX_META_LEN - 1);
+        out->album[MAX_META_LEN - 1] = '\0';
+        return 0;
+    }
+
+    int cache_idx = evict_one();
+    CachedTrack *new_cache = &g_playlist.cache[cache_idx];
+    new_cache->index = index;
+    new_cache->valid = 1;
+    new_cache->last_used = time(NULL);
+
+    char *path = g_playlist.tracks[index];
+    get_audio_metadata(path, new_cache->title, new_cache->artist, new_cache->album);
+
+    strncpy(out->path, path, MAX_PATH_LEN - 1);
+    out->path[MAX_PATH_LEN - 1] = '\0';
+    strncpy(out->title, new_cache->title, MAX_META_LEN - 1);
+    out->title[MAX_META_LEN - 1] = '\0';
+    strncpy(out->artist, new_cache->artist, MAX_META_LEN - 1);
+    out->artist[MAX_META_LEN - 1] = '\0';
+    strncpy(out->album, new_cache->album, MAX_META_LEN - 1);
+    out->album[MAX_META_LEN - 1] = '\0';
+
+    return 0;
+}
+
+void preload_visible_tracks(int start, int end) {
+    if (start < 0) start = 0;
+    if (end >= g_playlist.count) end = g_playlist.count - 1;
+    if (start > end) return;
+
+    Track track;
+    for (int i = start; i <= end; i++) {
+        if (!find_in_cache(i)) {
+            get_track_metadata(i, &track);
+        }
+    }
 }

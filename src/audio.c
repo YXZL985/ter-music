@@ -623,8 +623,8 @@ void persist_playback_session_state(void) {
     g_app_config.resume_last_playback = 1;
     g_app_config.last_played_position = play_position;
     snprintf(g_app_config.last_played_track_path, sizeof(g_app_config.last_played_track_path),
-             "%s", g_playlist.tracks[play_index].path);
-    extract_parent_directory(g_playlist.tracks[play_index].path,
+             "%s", g_playlist.tracks[play_index]);
+    extract_parent_directory(g_playlist.tracks[play_index],
                              track_folder_path, sizeof(track_folder_path));
     snprintf(g_app_config.last_played_folder_path, sizeof(g_app_config.last_played_folder_path),
              "%s", track_folder_path);
@@ -1195,7 +1195,7 @@ void *play_audio_thread(void *arg) {
     }
     
     char file_path[MAX_PATH_LEN];
-    snprintf(file_path, sizeof(file_path), "%s", g_playlist.tracks[index].path);
+    snprintf(file_path, sizeof(file_path), "%s", g_playlist.tracks[index]);
     
     pthread_mutex_unlock(&g_play_mutex);
 
@@ -1539,16 +1539,19 @@ void play_audio(int index) {
     pthread_mutex_unlock(&g_play_mutex);
     signal_playback_thread();
     
+    Track track;
+    get_track_metadata(index, &track);
+    
     char msg[64];
     snprintf(msg, sizeof(msg), "%s%s - %s",
         audio_text("正在播放：", "Playing: "),
-        g_playlist.tracks[index].title, g_playlist.tracks[index].artist);
+        track.title, track.artist);
     update_controls_status(msg);
-    add_history_entry(&g_playlist.tracks[index]);
+    add_history_entry(&track);
     render_playlist_content();
     request_ui_refresh(UI_DIRTY_CONTROLS);
     
-    load_lyrics(g_playlist.tracks[index].path);
+    load_lyrics(g_playlist.tracks[index]);
     render_lyrics();
 }
 

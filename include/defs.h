@@ -61,6 +61,7 @@ typedef enum {
 #define MAX_PATH_LEN 512
 #define MAX_TRACKS 1000
 #define MAX_META_LEN 256
+#define MAX_SEARCH_RESULTS 1000
 
 #define MAX_HISTORY_COUNT 100
 #define MAX_FAVORITES_COUNT 200
@@ -68,6 +69,7 @@ typedef enum {
 #define MAX_PLAYLISTS_COUNT 50
 #define MAX_PLAYLIST_NAME_LEN 64
 #define VISUALIZER_BAND_COUNT 64
+#define MAX_CACHE_SIZE 100
 
 typedef struct {
     char path[MAX_PATH_LEN];
@@ -75,6 +77,15 @@ typedef struct {
     char artist[MAX_META_LEN];
     char album[MAX_META_LEN];
 } Track;
+
+typedef struct {
+    int index;
+    int valid;
+    time_t last_used;
+    char title[MAX_META_LEN];
+    char artist[MAX_META_LEN];
+    char album[MAX_META_LEN];
+} CachedTrack;
 
 typedef struct {
     char path[MAX_PATH_LEN];
@@ -148,12 +159,21 @@ typedef struct {
 } AppConfig;
 
 typedef struct {
-    Track tracks[MAX_TRACKS];
+    char tracks[MAX_TRACKS][MAX_PATH_LEN];
     int count;
     char folder_path[MAX_PATH_LEN];
     int is_loaded;
     int has_multiple_sources;
+    CachedTrack cache[MAX_CACHE_SIZE];
+    int cache_count;
 } Playlist;
+
+typedef struct {
+    int result_indices[MAX_SEARCH_RESULTS];
+    int result_count;
+    int active;
+    int selected_index;
+} SearchState;
 
 extern Playlist g_playlist;
 extern int g_selected_index;
@@ -184,6 +204,8 @@ extern pthread_mutex_t g_seek_mutex;
 
 extern int g_lyric_cursor_mode;
 extern int g_lyric_cursor_index;
+
+extern SearchState g_search_state;
 
 void init_ffmpeg();
 void init_audio_device();
@@ -224,5 +246,9 @@ void push_visualizer_samples(const int16_t *samples, int frame_count, int channe
 void get_visualizer_snapshot(int *levels, int *peaks, int max_levels, uint64_t *last_update_ms);
 
 void apply_color_theme(void);
+
+int get_track_metadata(int index, Track *out);
+void preload_visible_tracks(int start, int end);
+void clear_metadata_cache(void);
 
 #endif

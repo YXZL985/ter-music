@@ -60,6 +60,10 @@ int rename_user_playlist(int index, const char *new_name);
 void ensure_config_dir_exists(void);
 void init_all_persistent_data(void);
 
+void save_temp_playlist(void);
+void cleanup_temp_playlist(void);
+int load_temp_playlist(void);
+
 void show_status_message(const char *msg);
 
 void render_menu_hint_bar(void);

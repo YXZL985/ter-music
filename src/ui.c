@@ -830,12 +830,27 @@ void render_playlist_content() {
     }
     werase(win_playlist); // 清空窗口内容
     box(win_playlist, 0, 0);
-    mvwprintw(win_playlist, 0, 2, "%s", ui_text(" 播放列表 ", " Playlist "));
+    if (g_search_state.active) {
+        mvwprintw(win_playlist, 0, 2, "%s (%d %s) ", ui_text(" 搜索结果 ", " Search Results "), g_search_state.result_count, ui_text("个", "found"));
+    } else {
+        mvwprintw(win_playlist, 0, 2, "%s", ui_text(" 播放列表 ", " Playlist "));
+    }
     wbkgd(win_playlist, COLOR_PAIR(COLOR_PAIR_PLAYLIST));
 
     int h, w;
     getmaxyx(win_playlist, h, w);
     int content_height = h - 2; // 可用行数
+    
+    int total_tracks;
+    int current_selected;
+    
+    if (g_search_state.active && g_search_state.result_count > 0) {
+        total_tracks = g_search_state.result_count;
+        current_selected = g_search_state.selected_index;
+    } else {
+        total_tracks = g_playlist.count;
+        current_selected = g_selected_index;
+    }
     
     // 如果未加载，显示提示信息
     if (!g_playlist.is_loaded) {
@@ -852,14 +867,28 @@ void render_playlist_content() {
         int start_idx = 0;
         int visible_lines = content_height - 5; // 预留 5 行给底部状态栏
         
-        // 简单的滚动逻辑：保持选中项在可视范围内
-        if (g_selected_index >= visible_lines) {
-            start_idx = g_selected_index - visible_lines + 1;
+        if (g_search_state.active) {
+            if (g_search_state.selected_index >= visible_lines) {
+                start_idx = g_search_state.selected_index - visible_lines + 1;
+            }
+        } else {
+            if (g_selected_index >= visible_lines) {
+                start_idx = g_selected_index - visible_lines + 1;
+            }
         }
+
+        preload_visible_tracks(start_idx, start_idx + visible_lines - 1);
         
-        for (int i = 0; i < visible_lines && (start_idx + i) < g_playlist.count; i++) {
+        for (int i = 0; i < visible_lines && (start_idx + i) < total_tracks; i++) {
             int idx = start_idx + i;
-            Track *t = &g_playlist.tracks[idx];
+            int actual_idx = idx;
+            Track t;
+            
+            if (g_search_state.active) {
+                actual_idx = g_search_state.result_indices[idx];
+            }
+            
+            get_track_metadata(actual_idx, &t);
             
             // 计算可用宽度，为不同字段分配空间
             int title_width = (w - 4) * 3 / 5;  // 标题占3/5
@@ -869,10 +898,17 @@ void render_playlist_content() {
             char truncated_title[MAX_META_LEN];
             char truncated_artist[MAX_META_LEN];
             
-            format_display_text(truncated_title, sizeof(truncated_title), t->title, title_width - 1, 1);
-            format_display_text(truncated_artist, sizeof(truncated_artist), t->artist, artist_width - 1, 1);
+            format_display_text(truncated_title, sizeof(truncated_title), t.title, title_width - 1, 1);
+            format_display_text(truncated_artist, sizeof(truncated_artist), t.artist, artist_width - 1, 1);
 
-            if (idx == g_selected_index && g_control_focus == 0) {
+            int is_selected;
+            if (g_search_state.active) {
+                is_selected = (idx == g_search_state.selected_index);
+            } else {
+                is_selected = (idx == g_selected_index && g_control_focus == 0);
+            }
+            
+            if (is_selected) {
                 wattron(win_playlist, A_REVERSE);
                 mvwprintw(win_playlist, i + 1, 1, " %s %s ", truncated_title, truncated_artist);
                 wattroff(win_playlist, A_REVERSE);
@@ -881,8 +917,12 @@ void render_playlist_content() {
             }
         }
         
-        if (g_playlist.count == 0) {
-             mvwprintw(win_playlist, 1, 2, "%s", ui_text("当前目录下没有音频文件。", "No audio files found here."));
+        if (total_tracks == 0) {
+             if (g_search_state.active) {
+                 mvwprintw(win_playlist, 1, 2, "%s", ui_text("没有找到匹配的歌曲。", "No matching tracks found."));
+             } else {
+                 mvwprintw(win_playlist, 1, 2, "%s", ui_text("当前目录下没有音频文件。", "No audio files found here."));
+             }
         }
 
         // --- 新增：在播放列表底部绘制状态栏 ---
@@ -905,14 +945,9 @@ void render_playlist_content() {
         }
         
         if (g_playlist.count > 0) {
-            Track *t;
-            if (g_current_play_index >= 0) {
-                // 显示当前正在播放的歌曲
-                t = &g_playlist.tracks[g_current_play_index];
-            } else {
-                // 显示当前选中的歌曲
-                t = &g_playlist.tracks[g_selected_index];
-            }
+            Track t;
+            int index = g_current_play_index >= 0 ? g_current_play_index : g_selected_index;
+            get_track_metadata(index, &t);
             
             // 计算可用宽度，确保不超出边框
             int content_width = w - 4;  // 减去左右边框和空格
@@ -926,9 +961,9 @@ void render_playlist_content() {
             char truncated_artist[MAX_META_LEN];
             char truncated_album[MAX_META_LEN];
             
-            format_display_text(truncated_title, sizeof(truncated_title), t->title, title_width - 1, 0);
-            format_display_text(truncated_artist, sizeof(truncated_artist), t->artist, artist_width - 1, 0);
-            format_display_text(truncated_album, sizeof(truncated_album), t->album, album_width - 1, 0);
+            format_display_text(truncated_title, sizeof(truncated_title), t.title, title_width - 1, 0);
+            format_display_text(truncated_artist, sizeof(truncated_artist), t.artist, artist_width - 1, 0);
+            format_display_text(truncated_album, sizeof(truncated_album), t.album, album_width - 1, 0);
             
             mvwprintw(win_playlist, status_line + 1, 2, "%s%s | %s%s",
                       ui_text("状态：", "State: "), status_msg,
@@ -1437,6 +1472,300 @@ static void prompt_append_folder() {
     prompt_folder_input(1);
 }
 
+static void perform_search(const char *query);
+
+static void search_prompt() {
+    if (!win_controls || !g_playlist.is_loaded || g_playlist.count == 0) {
+        if (!g_playlist.is_loaded || g_playlist.count == 0) {
+            update_controls_status(ui_text("播放列表为空，无法搜索", "Playlist is empty"));
+        }
+        return;
+    }
+
+    echo();
+    curs_set(1);
+
+    int max_y, max_x;
+    getmaxyx(win_controls, max_y, max_x);
+
+    mvwprintw(win_controls, 4, 2, "%s", ui_text("搜索歌曲: ", "Search: "));
+    wclrtoeol(win_controls);
+    wrefresh(win_controls);
+
+    char input[MAX_META_LEN];
+    memset(input, 0, sizeof(input));
+    int pos = 0;
+    int ch;
+
+    flushinp();
+
+    while ((ch = getch()) != '\n' && ch != KEY_ENTER && ch != 27 && pos < MAX_META_LEN - 1) {
+        if (ch == ERR) {
+            continue;
+        }
+        if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
+            if (pos > 0) {
+                int cx = getcurx(win_controls);
+                int cy = getcury(win_controls);
+
+                unsigned char last_c = (unsigned char)input[pos - 1];
+                int bytes_to_remove = 1;
+                if (last_c >= 0x80) {
+                    if ((last_c & 0xE0) == 0xC0) bytes_to_remove = 2;
+                    else if ((last_c & 0xF0) == 0xE0) bytes_to_remove = 3;
+                    else if ((last_c & 0xF8) == 0xF0) bytes_to_remove = 4;
+                    else if ((last_c & 0xC0) == 0x80) {
+                        bytes_to_remove = 2;
+                        while (pos - bytes_to_remove >= 0 &&
+                               (unsigned char)input[pos - bytes_to_remove] >= 0x80 &&
+                               (unsigned char)input[pos - bytes_to_remove] < 0xC0) {
+                            bytes_to_remove++;
+                        }
+                    }
+                    if (bytes_to_remove > pos) bytes_to_remove = pos;
+                    pos -= bytes_to_remove;
+
+                    if ((last_c & 0xF0) == 0xE0 || (last_c & 0xE0) == 0xC0) {
+                        move(cy, cx - 2);
+                    } else {
+                        move(cy, cx - 1);
+                    }
+                } else {
+                    pos--;
+                    move(cy, cx - 1);
+                }
+                clrtoeol();
+                wrefresh(win_controls);
+            }
+        } else if (ch >= 0x20 && ch <= 0x7E) {
+            input[pos++] = (char)ch;
+            waddch(win_controls, ch);
+            wrefresh(win_controls);
+        } else if ((ch & 0xC0) == 0x80 || ch >= 0x80) {
+            if (pos < MAX_META_LEN - 1) {
+                input[pos++] = (char)ch;
+                if ((ch & 0xE0) == 0xC0 || (ch & 0xF0) == 0xE0) {
+                    waddch(win_controls, ch);
+                    wrefresh(win_controls);
+                }
+            }
+        } else {
+            input[pos++] = (char)ch;
+            waddch(win_controls, ch);
+            wrefresh(win_controls);
+        }
+    }
+
+    input[pos] = '\0';
+    flushinp();
+
+    noecho();
+    curs_set(0);
+
+    mvwprintw(win_controls, 4, 2, "                    ");
+    wclrtoeol(win_controls);
+    wrefresh(win_controls);
+
+    if (ch == 27) {
+        update_controls_status(ui_text("搜索已取消", "Search cancelled"));
+        return;
+    }
+
+    if (strlen(input) > 0) {
+        perform_search(input);
+    } else {
+        g_search_state.active = 0;
+        render_playlist_content();
+        update_controls_status(ui_text("搜索已取消", "Search cancelled"));
+    }
+}
+
+static const char *pinyin_initial[] = {
+    "a", "ai", "an", "ang", "ao", "ba", "bai", "ban", "bang", "bao", "bei", "ben", "beng", "bi", "bian", "biao", "bie", "bin", "bing", "bo", "bu",
+    "ca", "cai", "can", "cang", "cao", "ce", "ceng", "cha", "chai", "chan", "chang", "chao", "che", "chen", "cheng", "chi", "chong", "chou", "chu", "chuan", "chuang", "chui", "chun", "ci", "cong", "cou", "cu", "cuan", "cui", "cun", "cuo",
+    "da", "dai", "dan", "dang", "dao", "de", "deng", "di", "dian", "diao", "die", "ding", "dong", "dou", "du", "duan", "dui", "dun", "duo",
+    "e", "en", "er",
+    "fa", "fan", "fang", "fei", "fen", "feng", "fo", "fou", "fu",
+    "ga", "gai", "gan", "gang", "gao", "ge", "gei", "gen", "geng", "gong", "gou", "gu", "gua", "guai", "guan", "guang", "gui", "gun", "guo",
+    "ha", "hai", "han", "hang", "hao", "he", "hei", "hen", "heng", "hong", "hou", "hu", "hua", "huai", "huan", "huang", "hui", "hun", "huo",
+    "ji", "jia", "jian", "jiang", "jiao", "jie", "jin", "jing", "jiong", "jiu", "ju", "juan", "jue", "jun",
+    "ka", "kai", "kan", "kang", "kao", "ke", "ken", "keng", "kong", "kou", "ku", "kua", "kuai", "kuan", "kuang", "kui", "kun", "kuo",
+    "la", "lai", "lan", "lang", "lao", "le", "lei", "leng", "li", "lia", "lian", "liang", "liao", "lie", "lin", "ling", "liu", "long", "lou", "lu", "luan", "lun", "luo", "lv",
+    "ma", "mai", "man", "mang", "mao", "mei", "men", "meng", "mi", "mian", "miao", "mie", "min", "ming", "miu", "mo", "mou", "mu",
+    "na", "nai", "nan", "nang", "nao", "ne", "nei", "nen", "neng", "ni", "nian", "niang", "niao", "nie", "nin", "ning", "niu", "nong", "nu", "nuan", "nuo", "nv",
+    "o", "ou",
+    "pa", "pai", "pan", "pang", "pao", "pei", "pen", "peng", "pi", "pian", "piao", "pie", "pin", "ping", "po", "pu",
+    "qi", "qia", "qian", "qiang", "qiao", "qie", "qin", "qing", "qiong", "qiu", "qu", "quan", "que", "qun",
+    "ran", "rang", "rao", "re", "ren", "reng", "rong", "rou", "ru", "ruan", "rui", "run", "ruo",
+    "sa", "sai", "san", "sang", "sao", "se", "sen", "seng", "sha", "shai", "shan", "shang", "shao", "she", "shen", "sheng", "shi", "shou", "shu", "shua", "shuai", "shuan", "shuang", "shui", "shun", "si", "song", "sou", "su", "suan", "sui", "sun", "suo",
+    "ta", "tai", "tan", "tang", "tao", "te", "teng", "ti", "tian", "tiao", "tie", "ting", "tong", "tou", "tu", "tuan", "tui", "tun", "tuo",
+    "wa", "wai", "wan", "wang", "wei", "wen", "weng", "wo", "wu",
+    "xi", "xia", "xian", "xiang", "xiao", "xie", "xin", "xing", "xiong", "xiu", "xu", "xuan", "xue", "xun",
+    "ya", "yan", "yang", "yao", "ye", "yi", "yin", "ying", "yong", "you", "yu", "yuan", "yue", "yun",
+    "za", "zai", "zan", "zang", "zao", "ze", "zei", "zen", "zeng", "zheng", "zhi", "zhong", "zhou", "zhu", "zhua", "zhuai", "zhuan", "zhuang", "zhui", "zhun", "zi", "zong", "zou", "zu", "zuan", "zui", "zun", "zuo"
+};
+
+static const char pinyin_first_letter[] = {
+    'a', 'a', 'a', 'a', 'a', 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b',
+    'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c',
+    'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd',
+    'e', 'e', 'e',
+    'f', 'f', 'f', 'f', 'f', 'f', 'f', 'f', 'f',
+    'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g',
+    'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h',
+    'j', 'j', 'j', 'j', 'j', 'j', 'j', 'j', 'j', 'j', 'j', 'j', 'j', 'j', 'j',
+    'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k',
+    'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l',
+    'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm',
+    'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n',
+    'o', 'o',
+    'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p',
+    'q', 'q', 'q', 'q', 'q', 'q', 'q', 'q', 'q', 'q', 'q', 'q', 'q', 'q', 'q',
+    'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r',
+    's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's',
+    't', 't', 't', 't', 't', 't', 't', 't', 't', 't', 't', 't', 't', 't', 't', 't', 't', 't',
+    'w', 'w', 'w', 'w', 'w', 'w', 'w', 'w', 'w',
+    'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x',
+    'y', 'y', 'y', 'y', 'y', 'y', 'y', 'y', 'y', 'y', 'y', 'y', 'y', 'y', 'y',
+    'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z'
+};
+
+static int get_unicode_from_utf8(const unsigned char *str, int *len) {
+    if ((str[0] & 0xF0) == 0xE0) {
+        if (len) *len = 3;
+        return ((str[0] & 0x0F) << 12) | ((str[1] & 0x3F) << 6) | (str[2] & 0x3F);
+    } else if ((str[0] & 0xE0) == 0xC0) {
+        if (len) *len = 2;
+        return ((str[0] & 0x1F) << 6) | (str[1] & 0x3F);
+    } else if ((str[0] & 0xF8) == 0xF0) {
+        if (len) *len = 4;
+        return 0;
+    } else {
+        if (len) *len = 1;
+        return str[0];
+    }
+}
+
+static int is_chinese(int unicode) {
+    return (unicode >= 0x4e00 && unicode <= 0x9fa5);
+}
+
+static char get_pinyin_first_char(int gb) {
+    int idx = gb - 0x4e00;
+    if (idx < 0 || idx >= (int)(sizeof(pinyin_initial) / sizeof(pinyin_initial[0]))) {
+        return 0;
+    }
+    return pinyin_first_letter[idx];
+}
+
+static int string_contains_ci(const char *haystack, const char *needle) {
+    if (!needle || !needle[0]) return 1;
+    if (!haystack || !haystack[0]) return 0;
+
+    char h_lower[256], n_lower[256];
+    int hi = 0, ni = 0;
+    while (*haystack && hi < (int)sizeof(h_lower) - 1) {
+        h_lower[hi++] = tolower((unsigned char)*haystack++);
+    }
+    h_lower[hi] = '\0';
+    while (*needle && ni < (int)sizeof(n_lower) - 1) {
+        n_lower[ni++] = tolower((unsigned char)*needle++);
+    }
+    n_lower[ni] = '\0';
+
+    return strstr(h_lower, n_lower) != NULL;
+}
+
+static int pinyin_match(const char *text, const char *query) {
+    char query_lower[256];
+    int q_len = 0;
+    while (*query && q_len < (int)sizeof(query_lower) - 1) {
+        query_lower[q_len++] = tolower((unsigned char)*query++);
+    }
+    query_lower[q_len] = '\0';
+
+    if (strlen(query_lower) == 0) return 1;
+
+    const unsigned char *ptr = (const unsigned char *)text;
+    char initials[256];
+    int i_len = 0;
+
+    while (*ptr && i_len < (int)sizeof(initials) - 1) {
+        int utf8_len;
+        int unicode = get_unicode_from_utf8(ptr, &utf8_len);
+        if (is_chinese(unicode)) {
+            char c = get_pinyin_first_char(unicode);
+            if (c != 0 && i_len < (int)sizeof(initials) - 1) {
+                initials[i_len++] = tolower(c);
+            }
+        } else {
+            if (utf8_len == 1 && isalpha(*ptr) && i_len < (int)sizeof(initials) - 1) {
+                initials[i_len++] = tolower(*ptr);
+            }
+        }
+        ptr += utf8_len;
+    }
+    initials[i_len] = '\0';
+
+    if (strlen(initials) >= strlen(query_lower) && strstr(initials, query_lower) != NULL) {
+        return 1;
+    }
+
+    return 0;
+}
+
+static int track_matches(Track *track, const char *query) {
+    if (string_contains_ci(track->title, query)) {
+        return 1;
+    }
+    if (string_contains_ci(track->artist, query)) {
+        return 1;
+    }
+    if (string_contains_ci(track->album, query)) {
+        return 1;
+    }
+
+    if (pinyin_match(track->title, query)) {
+        return 1;
+    }
+    if (pinyin_match(track->artist, query)) {
+        return 1;
+    }
+    if (pinyin_match(track->album, query)) {
+        return 1;
+    }
+
+    return 0;
+}
+
+static void perform_search(const char *query) {
+    memset(&g_search_state, 0, sizeof(g_search_state));
+    g_search_state.selected_index = 0;
+
+    for (int i = 0; i < g_playlist.count && g_search_state.result_count < MAX_SEARCH_RESULTS; i++) {
+        Track track;
+        get_track_metadata(i, &track);
+        if (track_matches(&track, query)) {
+            g_search_state.result_indices[g_search_state.result_count++] = i;
+        }
+    }
+
+    if (g_search_state.result_count > 0) {
+        g_search_state.active = 1;
+    } else {
+        g_search_state.active = 0;
+    }
+
+    render_playlist_content();
+
+    char msg[64];
+    snprintf(msg, sizeof(msg), "%s: %d %s",
+             ui_text("搜索完成", "Search completed"),
+             g_search_state.result_count,
+             ui_text("个结果", "results"));
+    update_controls_status(msg);
+}
+
 /**
  * 主事件循环
  * 处理用户输入、焦点切换和功能调用
@@ -1704,6 +2033,12 @@ void run_event_loop() {
                             } else {
                                 pthread_mutex_unlock(&g_lyrics.lock);
                             }
+                        } else if (g_search_state.active) {
+                            // 搜索模式下，方向键控制搜索结果选中项
+                            if (g_search_state.selected_index > 0) {
+                                g_search_state.selected_index--;
+                                render_playlist_content();
+                            }
                         } else {
                             // 正常模式下，方向键控制播放列表选中项
                             if (g_selected_index > 0) {
@@ -1728,6 +2063,12 @@ void run_event_loop() {
                             } else {
                                 pthread_mutex_unlock(&g_lyrics.lock);
                             }
+                        } else if (g_search_state.active) {
+                            // 搜索模式下，方向键控制搜索结果选中项
+                            if (g_search_state.selected_index < g_search_state.result_count - 1) {
+                                g_search_state.selected_index++;
+                                render_playlist_content();
+                            }
                         } else {
                             // 正常模式下，方向键控制播放列表选中项
                             if (g_selected_index < g_playlist.count - 1) {
@@ -1738,7 +2079,15 @@ void run_event_loop() {
                         break;
                     case ' ':
                     case 10:
-                        play_audio(g_selected_index);
+                        if (g_search_state.active && g_search_state.result_count > 0) {
+                            int original_index = g_search_state.result_indices[g_search_state.selected_index];
+                            g_selected_index = original_index;
+                            play_audio(original_index);
+                            g_search_state.active = 0;
+                            render_playlist_content();
+                        } else {
+                            play_audio(g_selected_index);
+                        }
                         break;
                     case 'O':
                     case 'o':
@@ -1753,8 +2102,9 @@ void run_event_loop() {
                     case 'f':
                     case 'F':
                         if (g_playlist.count > 0) {
-                            Track *t = &g_playlist.tracks[g_selected_index];
-                            int result = add_to_favorites(t);
+                            Track t;
+                            get_track_metadata(g_selected_index, &t);
+                            int result = add_to_favorites(&t);
                             if (result == 0) {
                                 update_controls_status(ui_text("已添加到收藏", "Added to favorites"));
                             } else {
@@ -1762,10 +2112,27 @@ void run_event_loop() {
                             }
                         }
                         break;
+                    case 's':
+                    case 'S':
+                        if (ch == 'S' && g_current_view == VIEW_MAIN) {
+                            search_prompt();
+                            continue;
+                        }
+                        break;
+                    case 27:
+                        if (g_search_state.active) {
+                            g_search_state.active = 0;
+                            render_playlist_content();
+                            update_controls_status(ui_text("搜索已取消", "Search cancelled"));
+                            continue;
+                        }
+                        break;
                     case 'a':
                     case 'A':
                         if (g_playlist.count > 0 && g_playlist_manager.count > 0) {
-                            Track *t = &g_playlist.tracks[g_selected_index];
+                            Track t;
+                            get_track_metadata(g_selected_index, &t);
+                            Track *tp = &t;
 
                             int max_y, max_x;
                             getmaxyx(stdscr, max_y, max_x);
@@ -1824,7 +2191,7 @@ void run_event_loop() {
                                         }
                                     }
                                 } else if (c == 10 || c == ' ') {
-                                    int result = add_track_to_playlist(selected, t);
+                                    int result = add_track_to_playlist(selected, tp);
                                       if (result == 0) {
                                           update_controls_status(ui_text("已添加到歌单", "Added to playlist"));
                                       } else if (result == -3) {

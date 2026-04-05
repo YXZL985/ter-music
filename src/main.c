@@ -20,6 +20,7 @@ extern void prompt_open_folder();
 
 void crash_handler(int sig) {
     endwin();
+    cleanup_temp_playlist();
     fprintf(stderr, "致命错误：收到信号 %d\n", sig);
     exit(1);
 }
@@ -114,7 +115,7 @@ static int find_track_index_by_path(const char *track_path) {
     }
 
     for (int i = 0; i < g_playlist.count; i++) {
-        if (strcmp(g_playlist.tracks[i].path, track_path) == 0) {
+        if (strcmp(g_playlist.tracks[i], track_path) == 0) {
             return i;
         }
     }
@@ -245,6 +246,12 @@ int main(int argc, char *argv[]) {
     int attempted_resume_load = 0;
     int resumed_playback = 0;
     char final_path[MAX_PATH_LEN] = "";
+
+    int temp_loaded = load_temp_playlist();
+    if (temp_loaded > 0) {
+        loaded = 1;
+        snprintf(final_path, sizeof(final_path), "%s", g_playlist.folder_path);
+    }
     
     if (open_path && strlen(open_path) > 0) {
         char expanded_path[MAX_PATH_LEN];
@@ -353,7 +360,9 @@ int main(int argc, char *argv[]) {
     
     run_event_loop();
     
+    save_temp_playlist();
     cleanup();
+    cleanup_temp_playlist();
     
     printf("%s\n", use_english_ui() ? "ter-music exited cleanly." : "ter-music 已正常退出。");
     return 0;
