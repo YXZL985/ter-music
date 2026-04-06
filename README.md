@@ -402,6 +402,7 @@ Menu: Options Menu
 | `O` / `o` | Open new music folder |
 | `F` / `f` | Add selected song to favorites |
 | `A` / `a` | Add selected song to first custom playlist |
+| `S` | Activate search functionality, supports pinyin search for song titles and artists |
 
 #### Control Area Operations (Focus on Control Bar)
 
@@ -558,6 +559,7 @@ All user data is stored in the `~/.config/ter-music/` directory:
 | <br /> | `O` | Open folder |
 | <br /> | `F` | Add to favorites |
 | <br /> | `A` | Add to playlist |
+| <br /> | `S` | Activate pinyin search |
 | **Control** | `←`/`→` | Select control |
 | <br /> | `Space` | Activate control |
 | <br /> | `,` | Back 5 sec |
