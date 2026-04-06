@@ -175,7 +175,7 @@ package:
 command:
   - /opt/apps/${app_id}/files/bin/${PROJECT_NAME}
 
-base: org.deepin.base/23.1.0
+base: org.deepin.base/25.2.2
 
 sources:
   - kind: file
