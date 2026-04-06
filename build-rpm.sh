@@ -168,11 +168,23 @@ make %{?_smp_mflags}
 %install
 rm -rf %{buildroot}
 mkdir -p %{buildroot}%{_bindir}
+mkdir -p %{buildroot}%{_datadir}/applications
+mkdir -p %{buildroot}%{_datadir}/icons/hicolor/32x32/apps
+mkdir -p %{buildroot}%{_datadir}/icons/hicolor/48x48/apps
+mkdir -p %{buildroot}%{_datadir}/icons/hicolor/128x128/apps
+mkdir -p %{buildroot}%{_datadir}/icons/hicolor/scalable/apps
 cd build
 install -m 755 %{name} %{buildroot}%{_bindir}/%{name}
+install -m 644 ../share/applications/%{name}.desktop %{buildroot}%{_datadir}/applications/%{name}.desktop
+install -m 644 ../img/icons/hicolor/32x32/apps/%{name}.png %{buildroot}%{_datadir}/icons/hicolor/32x32/apps/%{name}.png
+install -m 644 ../img/icons/hicolor/48x48/apps/%{name}.png %{buildroot}%{_datadir}/icons/hicolor/48x48/apps/%{name}.png
+install -m 644 ../img/icons/hicolor/128x128/apps/%{name}.png %{buildroot}%{_datadir}/icons/hicolor/128x128/apps/%{name}.png
+install -m 644 ../img/icons/hicolor/scalable/apps/%{name}.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/%{name}.svg
 
 %files
 %{_bindir}/%{name}
+%{_datadir}/applications/%{name}.desktop
+%{_datadir}/icons/hicolor/*/apps/%{name}.*
 
 %changelog
 * $(LANG=C date +'%a %b %d %Y') Packager <packager@example.com> - ${version}-1
@@ -204,7 +216,7 @@ create_source_tarball() {
     rm -rf "$source_dir"
     mkdir -p "$package_dir"
     
-    local files=("src" "include" "CMakeLists.txt" "README.md" "LICENSE")
+    local files=("src" "include" "share" "img" "CMakeLists.txt" "README.md" "LICENSE")
     local missing_files=()
     
     for file in "${files[@]}"; do

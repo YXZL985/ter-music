@@ -194,7 +194,7 @@ create_appdir() {
 
     log_info "创建 AppDir 结构..."
 
-    mkdir -p "${appdir}"/{usr/bin,usr/lib,usr/share/applications,usr/share/icons/hicolor/256x256/apps}
+    mkdir -p "${appdir}"/{usr/bin,usr/lib,usr/share/applications,usr/share/icons/hicolor/128x128/apps}
 
     cp "${binary_source}/${binary_name}" "${appdir}/usr/bin/"
 
@@ -331,27 +331,13 @@ copy_dependencies() {
 create_icon() {
     local appdir="$1"
 
-    log_info "创建应用图标..."
+    log_info "复制应用图标..."
 
-    local icon_file="${appdir}/ter-music.png"
+    cp "${SCRIPT_DIR}/img/icons/hicolor/128x128/apps/ter-music.png" "${appdir}/ter-music.png"
+    cp "${SCRIPT_DIR}/img/icons/hicolor/128x128/apps/ter-music.png" "${appdir}/.DirIcon"
+    cp "${SCRIPT_DIR}/img/icons/hicolor/128x128/apps/ter-music.png" "${appdir}/usr/share/icons/hicolor/128x128/apps/ter-music.png"
 
-    if [ ! -f "$icon_file" ]; then
-        convert -size 256x256 xc:transparent \
-            -fill '#2ECC71' \
-            -draw 'circle 128,128 128,20' \
-            -fill white \
-            -font DejaVu-Sans-Bold \
-            -pointsize 72 \
-            -gravity center \
-            -annotate +0+0 'T' \
-            "$icon_file" 2>/dev/null || \
-            echo "警告: 无法创建图标，需要 ImageMagick"
-    fi
-
-    cp "$icon_file" "${appdir}/.DirIcon" 2>/dev/null || true
-    cp "$icon_file" "${appdir}/usr/share/icons/hicolor/256x256/apps/ter-music.png" 2>/dev/null || true
-
-    log_info "应用图标创建完成"
+    log_info "应用图标复制完成"
 }
 
 build_appimage() {

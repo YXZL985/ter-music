@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Ter-Music
+Name[zh_CN]=端闱乐
+Comment=Lightweight terminal-based music player for Linux
+Comment[zh_CN]=轻量级Linux终端音乐播放器
+Exec=ter-music
+Icon=ter-music
+Terminal=true
+Type=Application
+Categories=Audio;AudioVideo;Player;Music;
+Keywords=Music;Player;Terminal;Console;Audio;
