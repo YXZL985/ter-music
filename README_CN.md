@@ -195,40 +195,52 @@ rm -rf build
 本器备二营构之脚本，以造异式之可执行文。
 
 #### 1. AppImage营构脚本
-`build-appimage.sh` 脚本，以RPM包转成AppImage之式，通于诸种麟纳克斯发行版。
+`build-appimage.sh` 脚本，直从源本营构AppImage之式（亦可从已有RPM包转换），通于诸种麟纳克斯发行版。
 
 **用法**：
 ```bash
-# 以默认RPM包营构AppImage
+# 指定版号直从源本营构（荐举）
+./build-appimage.sh -v 1.4.1
+
+# 自动检核版号，直从源本营构
 ./build-appimage.sh
 
-# 以指定RPM包营构AppImage
+# 从指定RPM包转换
 ./build-appimage.sh -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm
 
 # 营构毕留存临时之文（调试用）
 ./build-appimage.sh --keep-temp
+
+# 显助益之文
+./build-appimage.sh --help
 ```
 
 **所出**：AppImage包将出于`build/appimage/`
 
 #### 2. 可携包营构脚本
-`build-portable.sh` 脚本，以RPM包转成可携压缩之式，尽纳必需之凭藉库。
+`build-portable.sh` 脚本，直从源本营构可携压缩之式（亦可从已有RPM包转换），尽纳必需之凭藉库。
 
 **用法**：
 ```bash
-# 以默认RPM包营构可携包
+# 指定版号直从源本营构（荐举）
+./build-portable.sh -v 1.4.1
+
+# 自动检核版号，直从源本营构
 ./build-portable.sh
 
-# 以指定RPM包营构可携包
+# 从指定RPM包转换
 ./build-portable.sh -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm
 
 # 营构毕留存临时之文（调试用）
 ./build-portable.sh --keep-temp
+
+# 显助益之文
+./build-portable.sh --help
 ```
 
 **所出**：可携包将出于`build/portable/`
 
-**注**：二脚本必先运行`build-rpm.sh`以生RPM包，或以`-r`选项指定已有RPM包之路径。
+**注**：二脚本今已支持直从源本营构。亦可先运行`build-rpm.sh`以生RPM包，然后以`-r`选项指定已有RPM包之路径转换。
 
 #### 3. 如意玲珑Linyaps营构脚本
 `build-linyaps.sh` 脚本，直从源本营构如意玲珑之包，宜于deepin/UOS等用玲珑包管之统。

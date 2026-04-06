@@ -233,19 +233,25 @@ Ter-Music provides two build scripts for creating executable files in different 
 
 #### 4.9.1 AppImage Build Script
 
-The `build-appimage.sh` script converts RPM packages to AppImage format, suitable for various Linux distributions:
+The `build-appimage.sh` script builds AppImage format directly from source code (can also convert from existing RPM packages), suitable for various Linux distributions:
 
 **Usage:**
 
 ```bash
-# Build AppImage using default RPM package
+# Specify version number and build directly from source code (recommended)
+./build-appimage.sh -v 1.4.1
+
+# Auto-detect version, build directly from source code
 ./build-appimage.sh
 
-# Build AppImage using specified RPM package
+# Convert from specified RPM package
 ./build-appimage.sh -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm
 
 # Keep temporary files after build (for debugging)
 ./build-appimage.sh --keep-temp
+
+# Show help information
+./build-appimage.sh --help
 ```
 
 **Output:**
@@ -254,26 +260,32 @@ The `build-appimage.sh` script converts RPM packages to AppImage format, suitabl
 
 #### 4.9.2 Portable Package Build Script
 
-The `build-portable.sh` script converts RPM packages to a portable compressed package format, containing all necessary dependency libraries:
+The `build-portable.sh` script builds a portable compressed package format directly from source code (can also convert from existing RPM packages), containing all necessary dependency libraries:
 
 **Usage:**
 
 ```bash
-# Build portable package using default RPM package
+# Specify version number and build directly from source code (recommended)
+./build-portable.sh -v 1.4.1
+
+# Auto-detect version, build directly from source code
 ./build-portable.sh
 
-# Build portable package using specified RPM package
+# Convert from specified RPM package
 ./build-portable.sh -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm
 
 # Keep temporary files after build (for debugging)
 ./build-portable.sh --keep-temp
+
+# Show help information
+./build-portable.sh --help
 ```
 
 **Output:**
 
 - Portable package will be output to: `build/portable/`
 
-**Note:** Both scripts require running `build-rpm.sh` first to generate an RPM package, or use the `-r` option to specify the path to an existing RPM package.
+**Note:** Both scripts now support building directly from source code. You can also run `build-rpm.sh` first to generate an RPM package, then use the `-r` option to specify the path to an existing RPM package for conversion.
 
 #### 4.9.3 Linyaps Build Script
 

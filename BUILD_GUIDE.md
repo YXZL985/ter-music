@@ -194,21 +194,27 @@ ll-cli run org.yxzl.ter-music
 
 ## 推荐的构建流程
 
-现在可以直接构建可移植包或 AppImage，不需要先构建 RPM：
+现在可以直接构建可移植包或 AppImage，不需要先构建 RPM。推荐直接指定版本号构建：
 
-- 直接构建可移植包（推荐，兼容性最好）：
+- 直接指定版本号构建可移植包（推荐，兼容性最好）：
   ```bash
-  ./build-portable.sh
+  ./build-portable.sh -v 1.4.1
   ```
 
-- 直接构建 AppImage：
+- 直接指定版本号构建 AppImage（推荐）：
   ```bash
+  ./build-appimage.sh -v 1.4.1
+  ```
+
+- 自动检测版本直接构建：
+  ```bash
+  ./build-portable.sh
   ./build-appimage.sh
   ```
 
 - 如果需要构建 RPM 包，可以先构建 RPM 再转换：
   ```bash
-  ./build-rpm.sh
+  ./build-rpm.sh -v 1.4.1
   ./build-portable.sh -r build/rpm/ter-music-*.rpm
   ```
 
