@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=Ter-Music
-Name[zh_CN]=端闱乐
+Name[zh_CN]=端闱乐部
 Comment=Lightweight terminal-based music player for Linux
 Comment[zh_CN]=轻量级Linux终端音乐播放器
 Exec=ter-music
