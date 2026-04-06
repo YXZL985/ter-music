@@ -80,12 +80,15 @@ static const char *ui_text(const char *utf8, const char *ascii) {
 static void format_display_text(char *dest, size_t dest_size, const char *src, int width, int pad);
 
 static const char *get_playlist_source_label(void) {
-    if (g_playlist.has_multiple_sources) {
+    static char folder_path[MAX_PATH_LEN];
+
+    if (playlist_has_multiple_sources()) {
         return ui_text("多目录队列", "Mixed queue");
     }
 
-    if (g_playlist.folder_path[0] != '\0') {
-        return g_playlist.folder_path;
+    playlist_copy_folder_path(folder_path, sizeof(folder_path));
+    if (folder_path[0] != '\0') {
+        return folder_path;
     }
 
     return ui_text("(无)", "(none)");
@@ -840,6 +843,8 @@ void render_playlist_content() {
     int h, w;
     getmaxyx(win_playlist, h, w);
     int content_height = h - 2; // 可用行数
+    int playlist_total = playlist_count();
+    int playlist_loaded = playlist_is_loaded();
     
     int total_tracks;
     int current_selected;
@@ -848,12 +853,12 @@ void render_playlist_content() {
         total_tracks = g_search_state.result_count;
         current_selected = g_search_state.selected_index;
     } else {
-        total_tracks = g_playlist.count;
+        total_tracks = playlist_total;
         current_selected = g_selected_index;
     }
     
     // 如果未加载，显示提示信息
-    if (!g_playlist.is_loaded) {
+    if (!playlist_loaded) {
         char display_path[MAX_PATH_LEN];
         format_display_text(display_path, sizeof(display_path),
                             get_playlist_source_label(),
@@ -944,9 +949,15 @@ void render_playlist_content() {
                 break;
         }
         
-        if (g_playlist.count > 0) {
+        if (playlist_total > 0) {
             Track t;
             int index = g_current_play_index >= 0 ? g_current_play_index : g_selected_index;
+            if (index < 0) {
+                index = 0;
+            }
+            if (index >= playlist_total) {
+                index = playlist_total - 1;
+            }
             get_track_metadata(index, &t);
             
             // 计算可用宽度，确保不超出边框
@@ -1415,7 +1426,10 @@ static void prompt_folder_input(int append_mode) {
         
         struct stat s;
         if (stat(expanded_path, &s) == 0 && S_ISDIR(s.st_mode)) {
-            int had_existing_playlist = g_playlist.is_loaded && g_playlist.count > 0;
+            int had_existing_playlist = playlist_is_loaded() && playlist_count() > 0;
+            if (!append_mode) {
+                stop_audio();
+            }
             int count = append_mode ? append_playlist(expanded_path) : load_playlist(expanded_path);
             if (count > 0) {
                 add_dir_history_entry(expanded_path);
@@ -1445,19 +1459,15 @@ static void prompt_folder_input(int append_mode) {
                     update_controls_status(ui_text("目录中没有新的音频文件", "No new audio files to append"));
                 } else {
                     update_controls_status(ui_text("未找到音频文件", "No audio files found"));
-                    g_playlist.is_loaded = 0;
-                    g_playlist.count = 0;
-                    g_playlist.has_multiple_sources = 0;
+                    reset_playlist_state();
                 }
                 render_playlist_content();
             }
         } else {
             update_controls_status(ui_text("路径无效", "Invalid path"));
             if (!append_mode) {
-                g_playlist.is_loaded = 0;
-                g_playlist.count = 0;
-                g_playlist.has_multiple_sources = 0;
-                g_playlist.folder_path[0] = '\0';
+                stop_audio();
+                reset_playlist_state();
             }
             render_playlist_content();
         }
@@ -1475,8 +1485,8 @@ static void prompt_append_folder() {
 static void perform_search(const char *query);
 
 static void search_prompt() {
-    if (!win_controls || !g_playlist.is_loaded || g_playlist.count == 0) {
-        if (!g_playlist.is_loaded || g_playlist.count == 0) {
+    if (!win_controls || !playlist_is_loaded() || playlist_count() == 0) {
+        if (!playlist_is_loaded() || playlist_count() == 0) {
             update_controls_status(ui_text("播放列表为空，无法搜索", "Playlist is empty"));
         }
         return;
@@ -1580,172 +1590,14 @@ static void search_prompt() {
     }
 }
 
-static const char *pinyin_initial[] = {
-    "a", "ai", "an", "ang", "ao", "ba", "bai", "ban", "bang", "bao", "bei", "ben", "beng", "bi", "bian", "biao", "bie", "bin", "bing", "bo", "bu",
-    "ca", "cai", "can", "cang", "cao", "ce", "ceng", "cha", "chai", "chan", "chang", "chao", "che", "chen", "cheng", "chi", "chong", "chou", "chu", "chuan", "chuang", "chui", "chun", "ci", "cong", "cou", "cu", "cuan", "cui", "cun", "cuo",
-    "da", "dai", "dan", "dang", "dao", "de", "deng", "di", "dian", "diao", "die", "ding", "dong", "dou", "du", "duan", "dui", "dun", "duo",
-    "e", "en", "er",
-    "fa", "fan", "fang", "fei", "fen", "feng", "fo", "fou", "fu",
-    "ga", "gai", "gan", "gang", "gao", "ge", "gei", "gen", "geng", "gong", "gou", "gu", "gua", "guai", "guan", "guang", "gui", "gun", "guo",
-    "ha", "hai", "han", "hang", "hao", "he", "hei", "hen", "heng", "hong", "hou", "hu", "hua", "huai", "huan", "huang", "hui", "hun", "huo",
-    "ji", "jia", "jian", "jiang", "jiao", "jie", "jin", "jing", "jiong", "jiu", "ju", "juan", "jue", "jun",
-    "ka", "kai", "kan", "kang", "kao", "ke", "ken", "keng", "kong", "kou", "ku", "kua", "kuai", "kuan", "kuang", "kui", "kun", "kuo",
-    "la", "lai", "lan", "lang", "lao", "le", "lei", "leng", "li", "lia", "lian", "liang", "liao", "lie", "lin", "ling", "liu", "long", "lou", "lu", "luan", "lun", "luo", "lv",
-    "ma", "mai", "man", "mang", "mao", "mei", "men", "meng", "mi", "mian", "miao", "mie", "min", "ming", "miu", "mo", "mou", "mu",
-    "na", "nai", "nan", "nang", "nao", "ne", "nei", "nen", "neng", "ni", "nian", "niang", "niao", "nie", "nin", "ning", "niu", "nong", "nu", "nuan", "nuo", "nv",
-    "o", "ou",
-    "pa", "pai", "pan", "pang", "pao", "pei", "pen", "peng", "pi", "pian", "piao", "pie", "pin", "ping", "po", "pu",
-    "qi", "qia", "qian", "qiang", "qiao", "qie", "qin", "qing", "qiong", "qiu", "qu", "quan", "que", "qun",
-    "ran", "rang", "rao", "re", "ren", "reng", "rong", "rou", "ru", "ruan", "rui", "run", "ruo",
-    "sa", "sai", "san", "sang", "sao", "se", "sen", "seng", "sha", "shai", "shan", "shang", "shao", "she", "shen", "sheng", "shi", "shou", "shu", "shua", "shuai", "shuan", "shuang", "shui", "shun", "si", "song", "sou", "su", "suan", "sui", "sun", "suo",
-    "ta", "tai", "tan", "tang", "tao", "te", "teng", "ti", "tian", "tiao", "tie", "ting", "tong", "tou", "tu", "tuan", "tui", "tun", "tuo",
-    "wa", "wai", "wan", "wang", "wei", "wen", "weng", "wo", "wu",
-    "xi", "xia", "xian", "xiang", "xiao", "xie", "xin", "xing", "xiong", "xiu", "xu", "xuan", "xue", "xun",
-    "ya", "yan", "yang", "yao", "ye", "yi", "yin", "ying", "yong", "you", "yu", "yuan", "yue", "yun",
-    "za", "zai", "zan", "zang", "zao", "ze", "zei", "zen", "zeng", "zheng", "zhi", "zhong", "zhou", "zhu", "zhua", "zhuai", "zhuan", "zhuang", "zhui", "zhun", "zi", "zong", "zou", "zu", "zuan", "zui", "zun", "zuo"
-};
-
-static const char pinyin_first_letter[] = {
-    'a', 'a', 'a', 'a', 'a', 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b',
-    'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c', 'c',
-    'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd', 'd',
-    'e', 'e', 'e',
-    'f', 'f', 'f', 'f', 'f', 'f', 'f', 'f', 'f',
-    'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g', 'g',
-    'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h', 'h',
-    'j', 'j', 'j', 'j', 'j', 'j', 'j', 'j', 'j', 'j', 'j', 'j', 'j', 'j', 'j',
-    'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k', 'k',
-    'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l', 'l',
-    'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm', 'm',
-    'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n', 'n',
-    'o', 'o',
-    'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p',
-    'q', 'q', 'q', 'q', 'q', 'q', 'q', 'q', 'q', 'q', 'q', 'q', 'q', 'q', 'q',
-    'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r',
-    's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's', 's',
-    't', 't', 't', 't', 't', 't', 't', 't', 't', 't', 't', 't', 't', 't', 't', 't', 't', 't',
-    'w', 'w', 'w', 'w', 'w', 'w', 'w', 'w', 'w',
-    'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x',
-    'y', 'y', 'y', 'y', 'y', 'y', 'y', 'y', 'y', 'y', 'y', 'y', 'y', 'y', 'y',
-    'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z'
-};
-
-static int get_unicode_from_utf8(const unsigned char *str, int *len) {
-    if ((str[0] & 0xF0) == 0xE0) {
-        if (len) *len = 3;
-        return ((str[0] & 0x0F) << 12) | ((str[1] & 0x3F) << 6) | (str[2] & 0x3F);
-    } else if ((str[0] & 0xE0) == 0xC0) {
-        if (len) *len = 2;
-        return ((str[0] & 0x1F) << 6) | (str[1] & 0x3F);
-    } else if ((str[0] & 0xF8) == 0xF0) {
-        if (len) *len = 4;
-        return 0;
-    } else {
-        if (len) *len = 1;
-        return str[0];
-    }
-}
-
-static int is_chinese(int unicode) {
-    return (unicode >= 0x4e00 && unicode <= 0x9fa5);
-}
-
-static char get_pinyin_first_char(int gb) {
-    int idx = gb - 0x4e00;
-    if (idx < 0 || idx >= (int)(sizeof(pinyin_initial) / sizeof(pinyin_initial[0]))) {
-        return 0;
-    }
-    return pinyin_first_letter[idx];
-}
-
-static int string_contains_ci(const char *haystack, const char *needle) {
-    if (!needle || !needle[0]) return 1;
-    if (!haystack || !haystack[0]) return 0;
-
-    char h_lower[256], n_lower[256];
-    int hi = 0, ni = 0;
-    while (*haystack && hi < (int)sizeof(h_lower) - 1) {
-        h_lower[hi++] = tolower((unsigned char)*haystack++);
-    }
-    h_lower[hi] = '\0';
-    while (*needle && ni < (int)sizeof(n_lower) - 1) {
-        n_lower[ni++] = tolower((unsigned char)*needle++);
-    }
-    n_lower[ni] = '\0';
-
-    return strstr(h_lower, n_lower) != NULL;
-}
-
-static int pinyin_match(const char *text, const char *query) {
-    char query_lower[256];
-    int q_len = 0;
-    while (*query && q_len < (int)sizeof(query_lower) - 1) {
-        query_lower[q_len++] = tolower((unsigned char)*query++);
-    }
-    query_lower[q_len] = '\0';
-
-    if (strlen(query_lower) == 0) return 1;
-
-    const unsigned char *ptr = (const unsigned char *)text;
-    char initials[256];
-    int i_len = 0;
-
-    while (*ptr && i_len < (int)sizeof(initials) - 1) {
-        int utf8_len;
-        int unicode = get_unicode_from_utf8(ptr, &utf8_len);
-        if (is_chinese(unicode)) {
-            char c = get_pinyin_first_char(unicode);
-            if (c != 0 && i_len < (int)sizeof(initials) - 1) {
-                initials[i_len++] = tolower(c);
-            }
-        } else {
-            if (utf8_len == 1 && isalpha(*ptr) && i_len < (int)sizeof(initials) - 1) {
-                initials[i_len++] = tolower(*ptr);
-            }
-        }
-        ptr += utf8_len;
-    }
-    initials[i_len] = '\0';
-
-    if (strlen(initials) >= strlen(query_lower) && strstr(initials, query_lower) != NULL) {
-        return 1;
-    }
-
-    return 0;
-}
-
-static int track_matches(Track *track, const char *query) {
-    if (string_contains_ci(track->title, query)) {
-        return 1;
-    }
-    if (string_contains_ci(track->artist, query)) {
-        return 1;
-    }
-    if (string_contains_ci(track->album, query)) {
-        return 1;
-    }
-
-    if (pinyin_match(track->title, query)) {
-        return 1;
-    }
-    if (pinyin_match(track->artist, query)) {
-        return 1;
-    }
-    if (pinyin_match(track->album, query)) {
-        return 1;
-    }
-
-    return 0;
-}
-
 static void perform_search(const char *query) {
+    int playlist_total = playlist_count();
+
     memset(&g_search_state, 0, sizeof(g_search_state));
     g_search_state.selected_index = 0;
 
-    for (int i = 0; i < g_playlist.count && g_search_state.result_count < MAX_SEARCH_RESULTS; i++) {
-        Track track;
-        get_track_metadata(i, &track);
-        if (track_matches(&track, query)) {
+    for (int i = 0; i < playlist_total && g_search_state.result_count < MAX_SEARCH_RESULTS; i++) {
+        if (track_matches_query(i, query)) {
             g_search_state.result_indices[g_search_state.result_count++] = i;
         }
     }
@@ -1867,7 +1719,7 @@ void run_event_loop() {
             continue;
         }
         
-        if (!g_playlist.is_loaded && g_control_focus == 0) {
+        if (!playlist_is_loaded() && g_control_focus == 0) {
             // 未加载文件夹且焦点在列表时，支持打开或追加目录
             if (ch == 'O' || ch == 'o') {
                 prompt_open_folder();
@@ -1983,11 +1835,11 @@ void run_event_loop() {
                                 } else if (current_state == PLAY_STATE_PAUSED && is_thread_running) {
                                     resume_audio();
                                 } else if (current_state == PLAY_STATE_STOPPED) {
-                                    // 停止状态，播放当前选中的歌曲
-                                    if (g_playlist.is_loaded && g_playlist.count > 0) {
+                                    int playlist_total = playlist_count();
+                                    if (playlist_is_loaded() && playlist_total > 0) {
                                         int target_index = (g_current_play_index >= 0) ? 
                                                            g_current_play_index : g_selected_index;
-                                        if (target_index >= 0 && target_index < g_playlist.count) {
+                                        if (target_index >= 0 && target_index < playlist_total) {
                                             play_audio(target_index);
                                         }
                                     }
@@ -2015,7 +1867,7 @@ void run_event_loop() {
                     break;
             }
         } else {
-            if (g_playlist.is_loaded) {
+            if (playlist_is_loaded()) {
                 switch (ch) {
                     case KEY_UP:
                         if (g_lyric_cursor_mode && g_lyrics.has_lyrics) {
@@ -2071,7 +1923,7 @@ void run_event_loop() {
                             }
                         } else {
                             // 正常模式下，方向键控制播放列表选中项
-                            if (g_selected_index < g_playlist.count - 1) {
+                            if (g_selected_index < playlist_count() - 1) {
                                 g_selected_index++;
                                 render_playlist_content();
                             }
@@ -2101,7 +1953,7 @@ void run_event_loop() {
                         break;
                     case 'f':
                     case 'F':
-                        if (g_playlist.count > 0) {
+                        if (playlist_count() > 0) {
                             Track t;
                             get_track_metadata(g_selected_index, &t);
                             int result = add_to_favorites(&t);
@@ -2129,7 +1981,7 @@ void run_event_loop() {
                         break;
                     case 'a':
                     case 'A':
-                        if (g_playlist.count > 0 && g_playlist_manager.count > 0) {
+                        if (playlist_count() > 0 && g_playlist_manager.count > 0) {
                             Track t;
                             get_track_metadata(g_selected_index, &t);
                             Track *tp = &t;
@@ -2240,6 +2092,7 @@ void run_event_loop() {
 void cleanup() {
     persist_playback_session_state();
     stop_audio();
+    wait_for_playback_thread_shutdown();
 
     if (win_playlist) {
         delwin(win_playlist);

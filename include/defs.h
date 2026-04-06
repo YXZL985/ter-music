@@ -61,6 +61,7 @@ typedef enum {
 #define MAX_PATH_LEN 512
 #define MAX_TRACKS 1000
 #define MAX_META_LEN 256
+#define MAX_SEARCH_KEY_LEN (MAX_META_LEN * 8)
 #define MAX_SEARCH_RESULTS 1000
 
 #define MAX_HISTORY_COUNT 100
@@ -85,6 +86,9 @@ typedef struct {
     char title[MAX_META_LEN];
     char artist[MAX_META_LEN];
     char album[MAX_META_LEN];
+    char title_search[MAX_SEARCH_KEY_LEN];
+    char artist_search[MAX_SEARCH_KEY_LEN];
+    char album_search[MAX_SEARCH_KEY_LEN];
 } CachedTrack;
 
 typedef struct {
@@ -211,10 +215,21 @@ void init_ffmpeg();
 void init_audio_device();
 int load_playlist(const char *folder_path);
 int append_playlist(const char *folder_path);
+void reset_playlist_state(void);
+void playlist_lock(void);
+void playlist_unlock(void);
+int playlist_count(void);
+int playlist_is_loaded(void);
+int playlist_has_multiple_sources(void);
+void playlist_copy_folder_path(char *dest, size_t dest_size);
+int playlist_get_track_path(int index, char *dest, size_t dest_size);
+int playlist_find_track_index_by_path(const char *track_path);
+int track_matches_query(int index, const char *query);
 void play_audio(int index);
 void pause_audio();
 void resume_audio();
 void stop_audio();
+void wait_for_playback_thread_shutdown(void);
 void prev_track();
 void next_track();
 void toggle_loop_mode();
