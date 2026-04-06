@@ -282,6 +282,26 @@ copy_dependencies() {
         fi
 
         local dep_name=$(basename "$dep")
+
+        if [[ "$dep_name" =~ ^libc\.so.* ]]; then
+            return
+        fi
+        if [[ "$dep_name" =~ ^ld-linux.*\.so.* ]]; then
+            return
+        fi
+        if [[ "$dep_name" =~ ^libpthread\.so.* ]]; then
+            return
+        fi
+        if [[ "$dep_name" =~ ^libdl\.so.* ]]; then
+            return
+        fi
+        if [[ "$dep_name" =~ ^librt\.so.* ]]; then
+            return
+        fi
+        if [[ "$dep_name" =~ ^libm\.so.* ]]; then
+            return
+        fi
+
         if printf "%s\n" "${processed[@]}" | grep -qFx "$dep"; then
             return
         fi
