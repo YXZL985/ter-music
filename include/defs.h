@@ -11,7 +11,7 @@
 #define APP_VERSION "v1.5.1"
 #define APP_AUTHORS "@燕戏竹林, @罐子(-.-)"
 #define APP_EMAIL "yxzl666xx@outlook.com"
-#define APP_REPO "https://gitee.com/yanxi-bamboo-forest/ter-music.git"
+#define APP_REPO "https://github.com/YXZL985/ter-music.git"
 
 typedef enum {
     LOOP_OFF = 0,
