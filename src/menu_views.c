@@ -553,6 +553,7 @@ void init_default_config(void) {
     g_app_config.ui_language = UI_LANG_ZH;
     g_app_config.volume_percent = 100;
     g_app_config.audio_latency_ms = 80;
+    g_app_config.show_lyrics_panel = 1;
 }
 
 void apply_color_theme(void) {
@@ -640,6 +641,9 @@ void load_config(void) {
     if (strstr(json, "\"audio_latency_ms\"")) {
         g_app_config.audio_latency_ms = (int)extract_json_int(json, "audio_latency_ms");
     }
+    if (strstr(json, "\"show_lyrics_panel\"")) {
+        g_app_config.show_lyrics_panel = (int)extract_json_int(json, "show_lyrics_panel");
+    }
 
     g_app_config.resume_last_playback = g_app_config.resume_last_playback ? 1 : 0;
     if (g_app_config.last_played_position < 0) {
@@ -706,7 +710,8 @@ void save_config(void) {
     fprintf(f, "  \"last_played_position\": %d,\n", g_app_config.last_played_position);
     fprintf(f, "  \"ui_language\": %d,\n", g_app_config.ui_language);
     fprintf(f, "  \"volume_percent\": %d,\n", g_app_config.volume_percent);
-    fprintf(f, "  \"audio_latency_ms\": %d\n", g_app_config.audio_latency_ms);
+    fprintf(f, "  \"audio_latency_ms\": %d,\n", g_app_config.audio_latency_ms);
+    fprintf(f, "  \"show_lyrics_panel\": %d\n", g_app_config.show_lyrics_panel);
     
     fprintf(f, "}\n");
     
@@ -1775,7 +1780,8 @@ static const char *settings_options[] = {
     "启动时清空历史",
     "界面语言",
     "默认音量",
-    "输出时延"
+    "输出时延",
+    "显示歌词面板"
 };
 static const char *settings_options_ascii[] = {
     "Playlist Foreground",
@@ -1796,9 +1802,10 @@ static const char *settings_options_ascii[] = {
     "Clear History On Start",
     "Language",
     "Default Volume",
-    "Output Latency"
+    "Output Latency",
+    "Show Lyrics Panel"
 };
-#define SETTINGS_OPTION_COUNT 19
+#define SETTINGS_OPTION_COUNT 20
 
 enum {
     SETTINGS_IDX_DEFAULT_PATH = 12,
@@ -1807,7 +1814,8 @@ enum {
     SETTINGS_IDX_CLEAR_HISTORY = 15,
     SETTINGS_IDX_LANGUAGE = 16,
     SETTINGS_IDX_VOLUME = 17,
-    SETTINGS_IDX_LATENCY = 18
+    SETTINGS_IDX_LATENCY = 18,
+    SETTINGS_IDX_SHOW_LYRICS = 19
 };
 
 void render_settings_content(void) {
@@ -1868,8 +1876,11 @@ void render_settings_content(void) {
                     menu_language_name(g_app_config.ui_language));
         } else if (i == SETTINGS_IDX_VOLUME) {
             snprintf(line, sizeof(line), "%s%s%d%%", current_settings_options[i], separator, g_app_config.volume_percent);
-        } else {
+        } else if (i == SETTINGS_IDX_LATENCY) {
             snprintf(line, sizeof(line), "%s%s%d ms", current_settings_options[i], separator, g_app_config.audio_latency_ms);
+        } else {
+            snprintf(line, sizeof(line), "%s%s%s", current_settings_options[i], separator,
+                    menu_bool_text(g_app_config.show_lyrics_panel));
         }
         
         move(start_y + i, content_start_x);
@@ -2416,6 +2427,10 @@ static void handle_settings_input(int ch) {
                 g_app_config.audio_latency_ms = clamp_latency_ms(g_app_config.audio_latency_ms - 10);
                 save_config();
                 render_settings_content();
+            } else if (g_focus_area == FOCUS_CONTENT && g_settings_current_option == SETTINGS_IDX_SHOW_LYRICS) {
+                g_app_config.show_lyrics_panel = !g_app_config.show_lyrics_panel;
+                save_config();
+                render_settings_content();
             } else if (g_focus_area == FOCUS_CONTENT) {
                 g_focus_area = FOCUS_SIDEBAR;
                 render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
@@ -2467,6 +2482,10 @@ static void handle_settings_input(int ch) {
                 render_settings_content();
             } else if (g_focus_area == FOCUS_CONTENT && g_settings_current_option == SETTINGS_IDX_LATENCY) {
                 g_app_config.audio_latency_ms = clamp_latency_ms(g_app_config.audio_latency_ms + 10);
+                save_config();
+                render_settings_content();
+            } else if (g_focus_area == FOCUS_CONTENT && g_settings_current_option == SETTINGS_IDX_SHOW_LYRICS) {
+                g_app_config.show_lyrics_panel = !g_app_config.show_lyrics_panel;
                 save_config();
                 render_settings_content();
             } else if (g_focus_area == FOCUS_SIDEBAR) {
@@ -2629,6 +2648,10 @@ static void handle_settings_input(int ch) {
                                                   "Output latency applies on next playback"));
                     render_menu_frame("设置 [F2]");
                     render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
+                    render_settings_content();
+                } else if (g_settings_current_option == SETTINGS_IDX_SHOW_LYRICS) {
+                    g_app_config.show_lyrics_panel = !g_app_config.show_lyrics_panel;
+                    save_config();
                     render_settings_content();
                 }
             }

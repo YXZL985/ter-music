@@ -8,7 +8,7 @@
 #include <time.h>
 
 #define APP_NAME "ter-music"
-#define APP_VERSION "v1.5.1"
+#define APP_VERSION "v1.6.0"
 #define APP_AUTHORS "@燕戏竹林, @罐子(-.-)"
 #define APP_EMAIL "yxzl666xx@outlook.com"
 #define APP_REPO "https://github.com/YXZL985/ter-music.git"
@@ -160,6 +160,7 @@ typedef struct {
     int ui_language;
     int volume_percent;
     int audio_latency_ms;
+    int show_lyrics_panel;
 } AppConfig;
 
 typedef struct {
@@ -177,12 +178,14 @@ typedef struct {
     int result_count;
     int active;
     int selected_index;
+    int result_offset;
 } SearchState;
 
 extern Playlist g_playlist;
 extern int g_selected_index;
 extern int g_control_focus;
 extern int g_current_control_idx;
+extern int g_control_count;
 extern PlayState g_play_state;
 extern int g_current_play_index;
 extern LoopMode g_loop_mode;

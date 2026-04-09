@@ -1065,7 +1065,7 @@ void update_lyrics_display(void) {
 }
 
 void render_lyrics(void) {
-    if (!win_lyrics) {
+    if (!win_lyrics || !g_app_config.show_lyrics_panel) {
         return;
     }
     
