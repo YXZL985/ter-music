@@ -192,7 +192,7 @@ rm -rf build
 ```
 
 ### 九 营构脚本之用
-本器备二营构之脚本，以造异式之可执行文。
+本器备五营构之脚本，以造异式之可执行文。
 
 #### 1. AppImage营构脚本
 `build-appimage.sh` 脚本，直从源本营构AppImage之式（亦可从已有RPM包转换），通于诸种麟纳克斯发行版。
@@ -240,9 +240,34 @@ rm -rf build
 
 **所出**：可携包将出于`build/portable/`
 
-**注**：二脚本今已支持直从源本营构。亦可先运行`build-rpm.sh`以生RPM包，然后以`-r`选项指定已有RPM包之路径转换。
+**注**：此脚本今已支持直从源本营构。亦可先运行`build-rpm.sh`以生RPM包，然后以`-r`选项指定已有RPM包之路径转换。
 
-#### 3. 如意玲珑Linyaps营构脚本
+#### 3. RPM包营构脚本
+`build-rpm.sh` 脚本，直从源本营构标准 RPM 包，宜于 Fedora/RHEL 等基于 RPM 发行之统。
+
+**用法**：
+```bash
+# 以自动检核之版营构 RPM 包
+./build-rpm.sh
+
+# 指定版号营构
+./build-rpm.sh -v 1.2.3
+
+# 营构毕留存临时之文（调试用）
+./build-rpm.sh --keep-temp
+
+# 显助益之文
+./build-rpm.sh --help
+```
+
+**所出**：RPM包将出于`build/rpm/`
+
+**纳置**：
+```bash
+sudo dnf install build/rpm/ter-music-*.x86_64.rpm
+```
+
+#### 4. 如意玲珑Linyaps营构脚本
 `build-linyaps.sh` 脚本，直从源本营构如意玲珑之包，宜于deepin/UOS等用玲珑包管之统。
 
 **用法**：
@@ -276,6 +301,38 @@ ll-cli run org.yxzl.ter-music
 sudo apt install linglong-builder cmake make pkg-config
 sudo apt install libncurses-dev libavformat-dev libavcodec-dev libswresample-dev
 sudo apt install libavutil-dev libtag1-dev libpulse-dev
+```
+
+#### 5. DEB包营构脚本
+`build-deb.sh` 脚本，直从源本营构标准 Debian/Ubuntu DEB 包，宜于 Debian、Ubuntu、Linux Mint、deepin 等基于 Debian 发行之统。
+
+**用法**：
+```bash
+# 指定版号直从源本营构（荐举）
+./build-deb.sh -v 1.4.1
+
+# 自动检核版号，直从源本营构
+./build-deb.sh
+
+# 营构毕留存临时之文（调试用）
+./build-deb.sh --keep-temp
+
+# 显助益之文
+./build-deb.sh --help
+```
+
+**所出**：DEB包将出于`build/deb/`
+
+**纳置**：
+```bash
+sudo dpkg -i build/deb/ter-music_*_amd64.deb
+# 若阙乏凭藉，请运行：
+sudo apt install -f
+```
+
+**营构凭藉（Debian/Ubuntu/deepin）**：
+```bash
+sudo apt install dpkg-dev fakeroot cmake make gcc
 ```
 
 ## 卷五 施用之法

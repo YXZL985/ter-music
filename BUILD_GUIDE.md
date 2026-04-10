@@ -151,6 +151,40 @@ ll-cli run org.yxzl.ter-music
 - 自动处理依赖关系
 - 适合 deepin/UOS 系统用户
 
+### 5. build-deb.sh - 构建 DEB 包
+
+将项目构建为标准的 Debian/Ubuntu DEB 包，适合 Debian、Ubuntu、Linux Mint、deepin 等基于 Debian 的发行版。
+
+**使用方法：**
+```bash
+# 使用自动检测的版本号构建 DEB
+./build-deb.sh
+
+# 指定版本号构建
+./build-deb.sh -v 1.2.3
+
+# 保留临时文件用于调试
+./build-deb.sh --keep-temp
+
+# 显示帮助信息
+./build-deb.sh --help
+```
+
+**输出：**
+- DEB 包将输出到 `build/deb/` 目录
+
+**安装：**
+```bash
+sudo dpkg -i build/deb/ter-music_*_amd64.deb
+# 如果缺少依赖，请运行：
+sudo apt install -f
+```
+
+**优点：**
+- 标准 DEB 格式，适合 Debian/Ubuntu 系发行版
+- 自动处理依赖关系
+- 可通过 `apt` 工具管理安装和卸载
+
 ## 构建依赖
 
 ### build-rpm.sh 依赖：
@@ -192,6 +226,19 @@ ll-cli run org.yxzl.ter-music
 - `libtag1-dev`
 - `libpulse-dev`
 
+### build-deb.sh 依赖：
+- `dpkg-dev`
+- `fakeroot`
+- `cmake`
+- `make`
+- `gcc`
+- `tar`
+
+在 Debian/Ubuntu 上安装构建依赖：
+```bash
+sudo apt install dpkg-dev fakeroot cmake make gcc
+```
+
 ## 推荐的构建流程
 
 现在可以直接构建可移植包或 AppImage，不需要先构建 RPM。推荐直接指定版本号构建：
@@ -220,7 +267,8 @@ ll-cli run org.yxzl.ter-music
 
 ## 分发建议
 
-- **RPM 包**：适合 Fedora 系统用户，可以通过包管理器安装
+- **RPM 包**：适合 Fedora/RHEL 系统用户，可以通过包管理器安装
+- **DEB 包**：适合 Debian/Ubuntu 系发行版（Ubuntu、Linux Mint、deepin 等），可以通过 dpkg/apt 安装
 - **AppImage**：适合支持 FUSE 的 Linux 系统，单文件分发
 - **可移植包**：适合所有 Linux 系统，兼容性最好
 

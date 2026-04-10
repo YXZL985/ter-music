@@ -229,7 +229,7 @@ Solution: Install ffmpeg-devel (Fedora) or libavcodec-dev libavformat-dev... (Ub
 
 ### 4.9 Using Build Scripts
 
-Ter-Music provides two build scripts for creating executable files in different formats:
+Ter-Music provides five build scripts for creating executable files in different formats:
 
 #### 4.9.1 AppImage Build Script
 
@@ -285,9 +285,39 @@ The `build-portable.sh` script builds a portable compressed package format direc
 
 - Portable package will be output to: `build/portable/`
 
-**Note:** Both scripts now support building directly from source code. You can also run `build-rpm.sh` first to generate an RPM package, then use the `-r` option to specify the path to an existing RPM package for conversion.
+**Note:** This script now supports building directly from source code. You can also run `build-rpm.sh` first to generate an RPM package, then use the `-r` option to specify the path to an existing RPM package for conversion.
 
-#### 4.9.3 Linyaps Build Script
+#### 4.9.3 RPM Package Build Script
+
+The `build-rpm.sh` script builds standard RPM packages directly from source code, suitable for Fedora/RHEL-based distributions:
+
+**Usage:**
+
+```bash
+# Build RPM package with automatic version detection
+./build-rpm.sh
+
+# Build with specified version number
+./build-rpm.sh -v 1.2.3
+
+# Keep temporary files after build (for debugging)
+./build-rpm.sh --keep-temp
+
+# Show help information
+./build-rpm.sh --help
+```
+
+**Output:**
+
+- RPM package will be output to: `build/rpm/`
+
+**Install:**
+
+```bash
+sudo dnf install build/rpm/ter-music-*.x86_64.rpm
+```
+
+#### 4.9.4 Linyaps Build Script
 
 The `build-linyaps.sh` script builds Linyaps (Linglong) format packages directly from source, suitable for systems like deepin/UOS that use Linglong package management:
 
@@ -327,6 +357,44 @@ ll-cli run org.yxzl.ter-music
 sudo apt install linglong-builder cmake make pkg-config
 sudo apt install libncurses-dev libavformat-dev libavcodec-dev libswresample-dev
 sudo apt install libavutil-dev libtag1-dev libpulse-dev
+```
+
+#### 4.9.5 DEB Package Build Script
+
+The `build-deb.sh` script builds standard Debian/Ubuntu DEB packages directly from source code, suitable for Debian-based distributions such as Debian, Ubuntu, Linux Mint, deepin, etc.
+
+**Usage:**
+
+```bash
+# Specify version number and build directly from source code (recommended)
+./build-deb.sh -v 1.4.1
+
+# Auto-detect version, build directly from source code
+./build-deb.sh
+
+# Keep temporary files after build (for debugging)
+./build-deb.sh --keep-temp
+
+# Show help information
+./build-deb.sh --help
+```
+
+**Output:**
+
+- DEB package will be output to: `build/deb/`
+
+**Install:**
+
+```bash
+sudo dpkg -i build/deb/ter-music_*_amd64.deb
+# If dependencies are missing, run:
+sudo apt install -f
+```
+
+**Build Dependencies (Debian/Ubuntu/deepin):**
+
+```bash
+sudo apt install dpkg-dev fakeroot cmake make gcc
 ```
 
 ## 5. Usage
