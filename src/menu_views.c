@@ -1818,25 +1818,79 @@ enum {
     SETTINGS_IDX_SHOW_LYRICS = 19
 };
 
-void render_settings_content(void) {
-    int max_y, max_x;
-    getmaxyx(stdscr, max_y, max_x);
-    
-    int menu_width = max_x / 4;
-    int content_start_x = menu_width + 2;
-    int start_y = 2;
-    
-    attron(COLOR_PAIR(COLOR_PAIR_PLAYLIST));
+typedef struct {
+    const int *indices;
+    int count;
+} SettingsSectionSpec;
 
+static const int settings_theme_option_indices[] = {
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11
+};
+
+static const int settings_path_option_indices[] = {
+    SETTINGS_IDX_DEFAULT_PATH
+};
+
+static const int settings_playback_option_indices[] = {
+    SETTINGS_IDX_AUTO_PLAY,
+    SETTINGS_IDX_REMEMBER_PATH,
+    SETTINGS_IDX_CLEAR_HISTORY,
+    SETTINGS_IDX_LANGUAGE,
+    SETTINGS_IDX_VOLUME,
+    SETTINGS_IDX_LATENCY,
+    SETTINGS_IDX_SHOW_LYRICS
+};
+
+static SettingsSectionSpec get_settings_section_spec_for_sidebar(int sidebar_idx) {
+    switch (sidebar_idx) {
+        case 0:
+            return (SettingsSectionSpec){settings_theme_option_indices, (int)(sizeof(settings_theme_option_indices) / sizeof(settings_theme_option_indices[0]))};
+        case 1:
+            return (SettingsSectionSpec){settings_path_option_indices, (int)(sizeof(settings_path_option_indices) / sizeof(settings_path_option_indices[0]))};
+        case 2:
+            return (SettingsSectionSpec){settings_playback_option_indices, (int)(sizeof(settings_playback_option_indices) / sizeof(settings_playback_option_indices[0]))};
+        default:
+            return (SettingsSectionSpec){NULL, 0};
+    }
+}
+
+static SettingsSectionSpec get_active_settings_section_spec(void) {
+    return get_settings_section_spec_for_sidebar(g_menu_selected_idx);
+}
+
+static int get_settings_section_position(SettingsSectionSpec spec, int option_index) {
+    for (int i = 0; i < spec.count; i++) {
+        if (spec.indices[i] == option_index) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void sync_settings_selection_to_sidebar(void) {
+    SettingsSectionSpec spec = get_active_settings_section_spec();
+    if (spec.count <= 0) {
+        g_settings_current_option = -1;
+        return;
+    }
+
+    if (get_settings_section_position(spec, g_settings_current_option) < 0) {
+        g_settings_current_option = spec.indices[0];
+    }
+}
+
+static void rerender_settings_view(void) {
+    render_menu_frame("设置 [F2]");
+    render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
+    render_settings_content();
+    render_menu_hint_bar();
+}
+
+static void format_settings_option_line(int option_index, char *line, size_t line_size) {
     const char **current_settings_options = use_english_ui() ? settings_options_ascii : settings_options;
     const char *separator = use_english_ui() ? ": " : "：";
     const char *unset_label = use_english_ui() ? "(Not set)" : "(未设置)";
 
-    mvprintw(start_y, content_start_x, "%s",
-             menu_text("设置：↑/↓ 选择，←/→ 修改，ENTER 编辑",
-                       "Settings: Up/Down select, Left/Right adjust, Enter edit"));
-    start_y += 2;
-    
     int *color_values[] = {
         &g_app_config.theme.playlist_fg,
         &g_app_config.theme.playlist_bg,
@@ -1851,40 +1905,61 @@ void render_settings_content(void) {
         &g_app_config.theme.border_fg,
         &g_app_config.theme.border_bg
     };
-    
-    for (int i = 0; i < SETTINGS_OPTION_COUNT && start_y + i < max_y - 2; i++) {
+
+    if (!line || line_size == 0 || option_index < 0 || option_index >= SETTINGS_OPTION_COUNT) {
+        return;
+    }
+
+    if (option_index < 12) {
+        int color_val = *color_values[option_index];
+        snprintf(line, line_size, "%s%s%s (%d)",
+                 current_settings_options[option_index], separator,
+                 menu_color_name(color_val), color_val);
+    } else if (option_index == SETTINGS_IDX_DEFAULT_PATH) {
+        snprintf(line, line_size, "%s%s%s",
+                 current_settings_options[option_index], separator,
+                 g_app_config.default_startup_path[0] ? g_app_config.default_startup_path : unset_label);
+    } else if (option_index == SETTINGS_IDX_AUTO_PLAY) {
+        snprintf(line, line_size, "%s%s%s",
+                 current_settings_options[option_index], separator,
+                 menu_bool_text(g_app_config.auto_play_on_start));
+    } else if (option_index == SETTINGS_IDX_REMEMBER_PATH) {
+        snprintf(line, line_size, "%s%s%s",
+                 current_settings_options[option_index], separator,
+                 menu_bool_text(g_app_config.remember_last_path));
+    } else if (option_index == SETTINGS_IDX_CLEAR_HISTORY) {
+        snprintf(line, line_size, "%s%s%s",
+                 current_settings_options[option_index], separator,
+                 menu_bool_text(g_app_config.clear_history_on_startup));
+    } else if (option_index == SETTINGS_IDX_LANGUAGE) {
+        snprintf(line, line_size, "%s%s%s",
+                 current_settings_options[option_index], separator,
+                 menu_language_name(g_app_config.ui_language));
+    } else if (option_index == SETTINGS_IDX_VOLUME) {
+        snprintf(line, line_size, "%s%s%d%%",
+                 current_settings_options[option_index], separator,
+                 g_app_config.volume_percent);
+    } else if (option_index == SETTINGS_IDX_LATENCY) {
+        snprintf(line, line_size, "%s%s%d ms",
+                 current_settings_options[option_index], separator,
+                 g_app_config.audio_latency_ms);
+    } else if (option_index == SETTINGS_IDX_SHOW_LYRICS) {
+        snprintf(line, line_size, "%s%s%s",
+                 current_settings_options[option_index], separator,
+                 menu_bool_text(g_app_config.show_lyrics_panel));
+    } else {
+        snprintf(line, line_size, "%s", current_settings_options[option_index]);
+    }
+}
+
+static void render_settings_option_group(int start_y, int content_start_x, int max_y, SettingsSectionSpec spec) {
+    for (int i = 0; i < spec.count && start_y + i < max_y - 2; i++) {
+        int option_index = spec.indices[i];
         char line[256];
-        
-        if (i < 12) {
-            int color_val = *color_values[i];
-            const char *color_name = menu_color_name(color_val);
-            snprintf(line, sizeof(line), "%s%s%s (%d)", current_settings_options[i], separator, color_name, color_val);
-        } else if (i == SETTINGS_IDX_DEFAULT_PATH) {
-            snprintf(line, sizeof(line), "%s%s%s", current_settings_options[i], separator,
-                    g_app_config.default_startup_path[0] ? g_app_config.default_startup_path : unset_label);
-        } else if (i == SETTINGS_IDX_AUTO_PLAY) {
-            snprintf(line, sizeof(line), "%s%s%s", current_settings_options[i], separator,
-                    menu_bool_text(g_app_config.auto_play_on_start));
-        } else if (i == SETTINGS_IDX_REMEMBER_PATH) {
-            snprintf(line, sizeof(line), "%s%s%s", current_settings_options[i], separator,
-                    menu_bool_text(g_app_config.remember_last_path));
-        } else if (i == SETTINGS_IDX_CLEAR_HISTORY) {
-            snprintf(line, sizeof(line), "%s%s%s", current_settings_options[i], separator,
-                    menu_bool_text(g_app_config.clear_history_on_startup));
-        } else if (i == SETTINGS_IDX_LANGUAGE) {
-            snprintf(line, sizeof(line), "%s%s%s", current_settings_options[i], separator,
-                    menu_language_name(g_app_config.ui_language));
-        } else if (i == SETTINGS_IDX_VOLUME) {
-            snprintf(line, sizeof(line), "%s%s%d%%", current_settings_options[i], separator, g_app_config.volume_percent);
-        } else if (i == SETTINGS_IDX_LATENCY) {
-            snprintf(line, sizeof(line), "%s%s%d ms", current_settings_options[i], separator, g_app_config.audio_latency_ms);
-        } else {
-            snprintf(line, sizeof(line), "%s%s%s", current_settings_options[i], separator,
-                    menu_bool_text(g_app_config.show_lyrics_panel));
-        }
-        
+
+        format_settings_option_line(option_index, line, sizeof(line));
         move(start_y + i, content_start_x);
-        if (i == g_settings_current_option && g_focus_area == FOCUS_CONTENT) {
+        if (option_index == g_settings_current_option && g_focus_area == FOCUS_CONTENT) {
             attron(A_REVERSE);
             printw("%s", line);
             clrtoeol();
@@ -1894,16 +1969,308 @@ void render_settings_content(void) {
             clrtoeol();
         }
     }
-    
-    start_y += SETTINGS_OPTION_COUNT + 2;
+}
 
-    mvprintw(start_y, content_start_x, "%s",
-             menu_text("按 ENTER 编辑默认启动路径", "Press Enter to edit the startup path"));
-    mvprintw(start_y + 1, content_start_x, "%s",
-             menu_text("音量即时生效，时延在下次播放生效",
-                       "Volume is instant; latency applies on next playback"));
-    mvprintw(start_y + 2, content_start_x, "%s",
-             menu_text("按 'S' 保存设置", "Press 'S' to save settings"));
+static void move_settings_content_selection(int delta) {
+    SettingsSectionSpec spec = get_active_settings_section_spec();
+    if (spec.count <= 0) {
+        return;
+    }
+
+    int position = get_settings_section_position(spec, g_settings_current_option);
+    if (position < 0) {
+        position = 0;
+    } else {
+        position += delta;
+        if (position < 0) {
+            position = spec.count - 1;
+        } else if (position >= spec.count) {
+            position = 0;
+        }
+    }
+
+    g_settings_current_option = spec.indices[position];
+}
+
+static void adjust_settings_theme_option(int option_index, int delta) {
+    int *color_values[] = {
+        &g_app_config.theme.playlist_fg,
+        &g_app_config.theme.playlist_bg,
+        &g_app_config.theme.controls_fg,
+        &g_app_config.theme.controls_bg,
+        &g_app_config.theme.lyrics_fg,
+        &g_app_config.theme.lyrics_bg,
+        &g_app_config.theme.sidebar_fg,
+        &g_app_config.theme.sidebar_bg,
+        &g_app_config.theme.highlight_fg,
+        &g_app_config.theme.highlight_bg,
+        &g_app_config.theme.border_fg,
+        &g_app_config.theme.border_bg
+    };
+
+    if (option_index < 0 || option_index >= 12) {
+        return;
+    }
+
+    if (delta == 0) {
+        delta = 1;
+    }
+
+    int paired_idx = (option_index % 2 == 0) ? option_index + 1 : option_index - 1;
+    int paired_color = *color_values[paired_idx];
+    int next = *color_values[option_index];
+
+    do {
+        next += delta;
+        if (next < 0) {
+            next = 7;
+        } else if (next > 7) {
+            next = 0;
+        }
+    } while (next == paired_color);
+
+    *color_values[option_index] = next;
+    apply_color_theme();
+    save_config();
+}
+
+static void edit_default_startup_path(void) {
+    echo();
+    curs_set(1);
+
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    int menu_width = max_x / 4;
+
+    const char *path_prompt = menu_text("输入路径：", "Enter path: ");
+    mvprintw(max_y - 2, menu_width + 2, "%s", path_prompt);
+    clrtoeol();
+    refresh();
+
+    move(max_y - 2, menu_width + 2 + utf8_str_width(path_prompt));
+    refresh();
+
+    flushinp();
+
+    char input_path[MAX_PATH_LEN];
+    memset(input_path, 0, sizeof(input_path));
+    int pos = 0;
+    int ch;
+
+    while ((ch = getch()) != '\n' && ch != KEY_ENTER && pos < MAX_PATH_LEN - 1) {
+        if (ch == ERR) {
+            continue;
+        }
+        if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
+            if (pos > 0) {
+                int cx = getcurx(stdscr);
+                int cy = getcury(stdscr);
+                unsigned char last_c = (unsigned char)input_path[pos - 1];
+                if (last_c >= 0x80) {
+                    int bytes_to_remove = 1;
+                    if ((last_c & 0xE0) == 0xC0) bytes_to_remove = 2;
+                    else if ((last_c & 0xF0) == 0xE0) bytes_to_remove = 3;
+                    else if ((last_c & 0xF8) == 0xF0) bytes_to_remove = 4;
+                    else if ((last_c & 0xC0) == 0x80) {
+                        bytes_to_remove = 2;
+                        while (pos - bytes_to_remove >= 0 &&
+                               (unsigned char)input_path[pos - bytes_to_remove] >= 0x80 &&
+                               (unsigned char)input_path[pos - bytes_to_remove] < 0xC0) {
+                            bytes_to_remove++;
+                        }
+                    }
+                    if (bytes_to_remove > pos) bytes_to_remove = pos;
+                    pos -= bytes_to_remove;
+
+                    if ((last_c & 0xF0) == 0xE0 || (last_c & 0xE0) == 0xC0) {
+                        move(cy, cx - 2);
+                    } else {
+                        move(cy, cx - 1);
+                    }
+                } else {
+                    pos--;
+                    move(cy, cx - 1);
+                }
+                clrtoeol();
+                refresh();
+            }
+        } else if (ch >= 0x20 && ch <= 0x7E) {
+            input_path[pos++] = (char)ch;
+            addch(ch);
+            refresh();
+        } else if ((ch & 0xC0) == 0x80 || ch >= 0x80) {
+            if (pos < MAX_PATH_LEN - 1) {
+                input_path[pos++] = (char)ch;
+                if ((ch & 0xE0) == 0xC0 || (ch & 0xF0) == 0xE0) {
+                    addch(ch);
+                    refresh();
+                }
+            }
+        } else {
+            input_path[pos++] = (char)ch;
+            addch(ch);
+            refresh();
+        }
+    }
+    input_path[pos] = '\0';
+
+    noecho();
+    curs_set(0);
+
+    if (strlen(input_path) > 0) {
+        if (input_path[0] == '~') {
+            const char *home = getenv("HOME");
+            if (home) {
+                snprintf(g_app_config.default_startup_path, MAX_PATH_LEN, "%s%s", home, input_path + 1);
+            }
+        } else {
+            strncpy(g_app_config.default_startup_path, input_path, MAX_PATH_LEN - 1);
+        }
+        save_config();
+        show_status_message(menu_text("默认启动路径已保存", "Default startup path saved"));
+    }
+}
+
+static void adjust_or_toggle_settings_option(int option_index, int delta) {
+    if (option_index < 0) {
+        return;
+    }
+
+    if (option_index < 12) {
+        adjust_settings_theme_option(option_index, delta);
+        return;
+    }
+
+    switch (option_index) {
+        case SETTINGS_IDX_AUTO_PLAY:
+            g_app_config.auto_play_on_start = !g_app_config.auto_play_on_start;
+            save_config();
+            break;
+        case SETTINGS_IDX_REMEMBER_PATH:
+            g_app_config.remember_last_path = !g_app_config.remember_last_path;
+            save_config();
+            break;
+        case SETTINGS_IDX_CLEAR_HISTORY:
+            g_app_config.clear_history_on_startup = !g_app_config.clear_history_on_startup;
+            save_config();
+            break;
+        case SETTINGS_IDX_LANGUAGE:
+            if (delta < 0) {
+                g_app_config.ui_language = UI_LANG_ZH;
+            } else if (delta > 0) {
+                g_app_config.ui_language = UI_LANG_EN;
+            } else {
+                g_app_config.ui_language = (g_app_config.ui_language == UI_LANG_EN) ? UI_LANG_ZH : UI_LANG_EN;
+            }
+            save_config();
+            break;
+        case SETTINGS_IDX_VOLUME:
+            if (delta == 0) {
+                delta = 1;
+            }
+            set_volume_percent(g_app_config.volume_percent + delta * 5);
+            g_app_config.volume_percent = get_volume_percent();
+            break;
+        case SETTINGS_IDX_LATENCY:
+            if (delta == 0) {
+                delta = 1;
+            }
+            g_app_config.audio_latency_ms = clamp_latency_ms(g_app_config.audio_latency_ms + delta * 10);
+            save_config();
+            show_status_message(menu_text("输出时延将在下次播放生效",
+                                          "Output latency applies on next playback"));
+            break;
+        case SETTINGS_IDX_SHOW_LYRICS:
+            g_app_config.show_lyrics_panel = !g_app_config.show_lyrics_panel;
+            save_config();
+            break;
+        default:
+            break;
+    }
+}
+
+static void activate_settings_current_option(void) {
+    if (g_settings_current_option == SETTINGS_IDX_DEFAULT_PATH) {
+        edit_default_startup_path();
+        return;
+    }
+
+    if (g_settings_current_option == SETTINGS_IDX_AUTO_PLAY ||
+        g_settings_current_option == SETTINGS_IDX_REMEMBER_PATH ||
+        g_settings_current_option == SETTINGS_IDX_CLEAR_HISTORY ||
+        g_settings_current_option == SETTINGS_IDX_LANGUAGE ||
+        g_settings_current_option == SETTINGS_IDX_SHOW_LYRICS) {
+        adjust_or_toggle_settings_option(g_settings_current_option, 0);
+        return;
+    }
+
+    if (g_settings_current_option >= 0) {
+        adjust_or_toggle_settings_option(g_settings_current_option, 1);
+    }
+}
+
+void render_settings_content(void) {
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+
+    int menu_width = max_x / 4;
+    int content_start_x = menu_width + 2;
+    int start_y = 2;
+    SettingsSectionSpec spec = get_active_settings_section_spec();
+
+    attron(COLOR_PAIR(COLOR_PAIR_PLAYLIST));
+
+    for (int y = 2; y < max_y - 2; y++) {
+        move(y, content_start_x);
+        clrtoeol();
+    }
+
+    if (g_menu_selected_idx == 0) {
+        mvprintw(start_y, content_start_x, "%s",
+                 menu_text("颜色主题：↑/↓ 选择，+/ - 或 → 调整，←/TAB 返回菜单",
+                           "Theme: Up/Down select, +/- or Right adjust, Left/Tab back"));
+        start_y += 2;
+        render_settings_option_group(start_y, content_start_x, max_y, spec);
+        start_y += spec.count + 1;
+        mvprintw(start_y, content_start_x, "%s",
+                 menu_text("前景色和背景色会自动避免使用相同颜色",
+                           "Foreground/background pairs avoid identical colors"));
+    } else if (g_menu_selected_idx == 1) {
+        mvprintw(start_y, content_start_x, "%s",
+                 menu_text("默认路径：ENTER 编辑，←/TAB 返回菜单",
+                           "Default path: Enter edits, Left/Tab back"));
+        start_y += 2;
+        render_settings_option_group(start_y, content_start_x, max_y, spec);
+        start_y += spec.count + 1;
+        mvprintw(start_y, content_start_x, "%s",
+                 menu_text("支持使用 ~ 开头的用户目录路径",
+                           "Paths starting with ~ are expanded to your home directory"));
+    } else if (g_menu_selected_idx == 2) {
+        mvprintw(start_y, content_start_x, "%s",
+                 menu_text("播放设置：↑/↓ 选择，ENTER 切换，+/ - 调整数值，←/TAB 返回菜单",
+                           "Playback: Up/Down select, Enter toggles, +/- adjusts, Left/Tab back"));
+        start_y += 2;
+        render_settings_option_group(start_y, content_start_x, max_y, spec);
+        start_y += spec.count + 1;
+        mvprintw(start_y, content_start_x, "%s",
+                 menu_text("语言可用 ENTER 切换，时延会在下次播放时生效",
+                           "Press Enter to toggle language; latency applies on next playback"));
+    } else if (g_menu_selected_idx == 3) {
+        mvprintw(start_y, content_start_x, "%s",
+                 menu_text("快捷键说明：←/TAB 返回菜单",
+                           "Hotkeys: Left/Tab back"));
+        start_y += 2;
+        mvprintw(start_y++, content_start_x, "%s", menu_text("F1-F8：切换页面 / 语言 / 退出", "F1-F8: Views / language / quit"));
+        mvprintw(start_y++, content_start_x, "%s", menu_text("O / I：打开目录 / 追加目录", "O / I: Open folder / append folder"));
+        mvprintw(start_y++, content_start_x, "%s", menu_text("C / L：切换控件焦点与列表焦点", "C / L: Controls focus / list focus"));
+        mvprintw(start_y++, content_start_x, "%s", menu_text("D：进入或退出歌词定位模式", "D: Toggle lyric seek mode"));
+        mvprintw(start_y++, content_start_x, "%s", menu_text("空格 / Enter：执行当前动作", "Space / Enter: Activate current action"));
+        mvprintw(start_y++, content_start_x, "%s", menu_text("+ / -：调整音量", "+ / -: Adjust volume"));
+        mvprintw(start_y++, content_start_x, "%s", menu_text(", / .：快退 / 快进", ", / .: Seek backward / forward"));
+    } else {
+        mvprintw(start_y, content_start_x, "%s",
+                 menu_text("按 ENTER 返回主界面", "Press Enter to return to the main view"));
+    }
     
     attroff(COLOR_PAIR(COLOR_PAIR_PLAYLIST));
     
@@ -2342,30 +2709,15 @@ void handle_function_keys(int fkey) {
 }
 
 static void handle_settings_input(int ch) {
-    int *color_values[] = {
-        &g_app_config.theme.playlist_fg,
-        &g_app_config.theme.playlist_bg,
-        &g_app_config.theme.controls_fg,
-        &g_app_config.theme.controls_bg,
-        &g_app_config.theme.lyrics_fg,
-        &g_app_config.theme.lyrics_bg,
-        &g_app_config.theme.sidebar_fg,
-        &g_app_config.theme.sidebar_bg,
-        &g_app_config.theme.highlight_fg,
-        &g_app_config.theme.highlight_bg,
-        &g_app_config.theme.border_fg,
-        &g_app_config.theme.border_bg
-    };
-    
     switch (ch) {
         case KEY_UP:
             if (g_focus_area == FOCUS_SIDEBAR) {
                 g_menu_selected_idx--;
                 if (g_menu_selected_idx < 0) g_menu_selected_idx = SETTINGS_ITEM_COUNT - 1;
                 render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
+                render_settings_content();
             } else {
-                g_settings_current_option--;
-                if (g_settings_current_option < 0) g_settings_current_option = SETTINGS_OPTION_COUNT - 1;
+                move_settings_content_selection(-1);
                 render_settings_content();
             }
             break;
@@ -2375,63 +2727,15 @@ static void handle_settings_input(int ch) {
                 g_menu_selected_idx++;
                 if (g_menu_selected_idx >= SETTINGS_ITEM_COUNT) g_menu_selected_idx = 0;
                 render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
+                render_settings_content();
             } else {
-                g_settings_current_option++;
-                if (g_settings_current_option >= SETTINGS_OPTION_COUNT) g_settings_current_option = 0;
+                move_settings_content_selection(1);
                 render_settings_content();
             }
             break;
             
         case KEY_LEFT:
-            if (g_focus_area == FOCUS_CONTENT && g_settings_current_option < 12) {
-                int paired_idx;
-                if (g_settings_current_option % 2 == 0) {
-                    paired_idx = g_settings_current_option + 1;
-                } else {
-                    paired_idx = g_settings_current_option - 1;
-                }
-                int paired_color = *color_values[paired_idx];
-                do {
-                    (*color_values[g_settings_current_option])--;
-                    if (*color_values[g_settings_current_option] < 0) {
-                        *color_values[g_settings_current_option] = 7;
-                    }
-                } while (*color_values[g_settings_current_option] == paired_color);
-                apply_color_theme();
-                save_config();
-                render_settings_content();
-            } else if (g_focus_area == FOCUS_CONTENT &&
-                       g_settings_current_option >= SETTINGS_IDX_AUTO_PLAY &&
-                       g_settings_current_option <= SETTINGS_IDX_CLEAR_HISTORY) {
-                if (g_settings_current_option == SETTINGS_IDX_AUTO_PLAY) {
-                    g_app_config.auto_play_on_start = !g_app_config.auto_play_on_start;
-                } else if (g_settings_current_option == SETTINGS_IDX_REMEMBER_PATH) {
-                    g_app_config.remember_last_path = !g_app_config.remember_last_path;
-                } else if (g_settings_current_option == SETTINGS_IDX_CLEAR_HISTORY) {
-                    g_app_config.clear_history_on_startup = !g_app_config.clear_history_on_startup;
-                }
-                save_config();
-                render_settings_content();
-            } else if (g_focus_area == FOCUS_CONTENT && g_settings_current_option == SETTINGS_IDX_LANGUAGE) {
-                g_app_config.ui_language = UI_LANG_ZH;
-                save_config();
-                render_menu_frame("设置 [F2]");
-                render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
-                render_settings_content();
-                render_menu_hint_bar();
-            } else if (g_focus_area == FOCUS_CONTENT && g_settings_current_option == SETTINGS_IDX_VOLUME) {
-                set_volume_percent(g_app_config.volume_percent - 5);
-                g_app_config.volume_percent = get_volume_percent();
-                render_settings_content();
-            } else if (g_focus_area == FOCUS_CONTENT && g_settings_current_option == SETTINGS_IDX_LATENCY) {
-                g_app_config.audio_latency_ms = clamp_latency_ms(g_app_config.audio_latency_ms - 10);
-                save_config();
-                render_settings_content();
-            } else if (g_focus_area == FOCUS_CONTENT && g_settings_current_option == SETTINGS_IDX_SHOW_LYRICS) {
-                g_app_config.show_lyrics_panel = !g_app_config.show_lyrics_panel;
-                save_config();
-                render_settings_content();
-            } else if (g_focus_area == FOCUS_CONTENT) {
+            if (g_focus_area == FOCUS_CONTENT) {
                 g_focus_area = FOCUS_SIDEBAR;
                 render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
                 render_settings_content();
@@ -2439,57 +2743,33 @@ static void handle_settings_input(int ch) {
             break;
             
         case KEY_RIGHT:
-        case 9:
-            if (g_focus_area == FOCUS_CONTENT && g_settings_current_option < 12) {
-                int paired_idx;
-                if (g_settings_current_option % 2 == 0) {
-                    paired_idx = g_settings_current_option + 1;
+            if (g_focus_area == FOCUS_SIDEBAR) {
+                if (g_menu_selected_idx == SETTINGS_ITEM_COUNT - 1) {
+                    exit_current_view();
                 } else {
-                    paired_idx = g_settings_current_option - 1;
+                    g_focus_area = FOCUS_CONTENT;
+                    sync_settings_selection_to_sidebar();
+                    render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
+                    render_settings_content();
                 }
-                int paired_color = *color_values[paired_idx];
-                do {
-                    (*color_values[g_settings_current_option])++;
-                    if (*color_values[g_settings_current_option] > 7) {
-                        *color_values[g_settings_current_option] = 0;
-                    }
-                } while (*color_values[g_settings_current_option] == paired_color);
-                apply_color_theme();
-                save_config();
-                render_settings_content();
-            } else if (g_focus_area == FOCUS_CONTENT &&
-                       g_settings_current_option >= SETTINGS_IDX_AUTO_PLAY &&
-                       g_settings_current_option <= SETTINGS_IDX_CLEAR_HISTORY) {
-                if (g_settings_current_option == SETTINGS_IDX_AUTO_PLAY) {
-                    g_app_config.auto_play_on_start = !g_app_config.auto_play_on_start;
-                } else if (g_settings_current_option == SETTINGS_IDX_REMEMBER_PATH) {
-                    g_app_config.remember_last_path = !g_app_config.remember_last_path;
-                } else if (g_settings_current_option == SETTINGS_IDX_CLEAR_HISTORY) {
-                    g_app_config.clear_history_on_startup = !g_app_config.clear_history_on_startup;
+            } else {
+                adjust_or_toggle_settings_option(g_settings_current_option, 1);
+                rerender_settings_view();
+            }
+            break;
+
+        case 9:
+            if (g_focus_area == FOCUS_SIDEBAR) {
+                if (g_menu_selected_idx == SETTINGS_ITEM_COUNT - 1) {
+                    exit_current_view();
+                } else {
+                    g_focus_area = FOCUS_CONTENT;
+                    sync_settings_selection_to_sidebar();
+                    render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
+                    render_settings_content();
                 }
-                save_config();
-                render_settings_content();
-            } else if (g_focus_area == FOCUS_CONTENT && g_settings_current_option == SETTINGS_IDX_LANGUAGE) {
-                g_app_config.ui_language = UI_LANG_EN;
-                save_config();
-                render_menu_frame("设置 [F2]");
-                render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
-                render_settings_content();
-                render_menu_hint_bar();
-            } else if (g_focus_area == FOCUS_CONTENT && g_settings_current_option == SETTINGS_IDX_VOLUME) {
-                set_volume_percent(g_app_config.volume_percent + 5);
-                g_app_config.volume_percent = get_volume_percent();
-                render_settings_content();
-            } else if (g_focus_area == FOCUS_CONTENT && g_settings_current_option == SETTINGS_IDX_LATENCY) {
-                g_app_config.audio_latency_ms = clamp_latency_ms(g_app_config.audio_latency_ms + 10);
-                save_config();
-                render_settings_content();
-            } else if (g_focus_area == FOCUS_CONTENT && g_settings_current_option == SETTINGS_IDX_SHOW_LYRICS) {
-                g_app_config.show_lyrics_panel = !g_app_config.show_lyrics_panel;
-                save_config();
-                render_settings_content();
-            } else if (g_focus_area == FOCUS_SIDEBAR) {
-                g_focus_area = FOCUS_CONTENT;
+            } else {
+                g_focus_area = FOCUS_SIDEBAR;
                 render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
                 render_settings_content();
             }
@@ -2502,158 +2782,29 @@ static void handle_settings_input(int ch) {
                     exit_current_view();
                 } else {
                     g_focus_area = FOCUS_CONTENT;
+                    sync_settings_selection_to_sidebar();
                     render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
                     render_settings_content();
                 }
             } else {
-                if (g_settings_current_option == SETTINGS_IDX_DEFAULT_PATH) {
-                    echo();
-                    curs_set(1);
-                    
-                    int max_y, max_x;
-                    getmaxyx(stdscr, max_y, max_x);
-                    int menu_width = max_x / 4;
-                    
-                    const char *path_prompt = menu_text("输入路径：", "Enter path: ");
-                    mvprintw(max_y - 2, menu_width + 2, "%s", path_prompt);
-                    clrtoeol();
-                    refresh();
+                activate_settings_current_option();
+                rerender_settings_view();
+            }
+            break;
 
-                    move(max_y - 2, menu_width + 2 + utf8_str_width(path_prompt));
-                    refresh();
-                    
-                    flushinp();
-                    
-                    char input_path[MAX_PATH_LEN];
-                    memset(input_path, 0, sizeof(input_path));
-                    int pos = 0;
-                    int ch;
-                    
-                    // BUGFIX 2026.03.26: 改进 UTF-8 中文输入处理，每次按键后刷新
-                    // BUGFIX 2026.03.29: 忽略 ERR，防止超时自动插入space字符
-                    while ((ch = getch()) != '\n' && ch != KEY_ENTER && pos < MAX_PATH_LEN - 1) {
-                        if (ch == ERR) {
-                            continue;
-                        }
-                        if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
-                            // 处理 Backspace 删除
-                            if (pos > 0) {
-                                int cx = getcurx(stdscr);
-                                int cy = getcury(stdscr);
-                                unsigned char last_c = (unsigned char)input_path[pos - 1];
-                                if (last_c >= 0x80) {
-                                    // 多字节 UTF-8 字符，需要回退到序列开头
-                                    int bytes_to_remove = 1;
-                                    if ((last_c & 0xE0) == 0xC0) bytes_to_remove = 2;
-                                    else if ((last_c & 0xF0) == 0xE0) bytes_to_remove = 3;
-                                    else if ((last_c & 0xF8) == 0xF0) bytes_to_remove = 4;
-                                    else if ((last_c & 0xC0) == 0x80) {
-                                        // continuation byte，继续向前找开头
-                                        bytes_to_remove = 2;
-                                        while (pos - bytes_to_remove >= 0 && 
-                                               (unsigned char)input_path[pos - bytes_to_remove] >= 0x80 && 
-                                               (unsigned char)input_path[pos - bytes_to_remove] < 0xC0) {
-                                            bytes_to_remove++;
-                                        }
-                                    }
-                                    if (bytes_to_remove > pos) bytes_to_remove = pos;
-                                    pos -= bytes_to_remove;
-                                    
-                                    // 根据字符宽度调整光标位置
-                                    if ((last_c & 0xF0) == 0xE0 || (last_c & 0xE0) == 0xC0) {
-                                        // 中文占两列，光标左移两格
-                                        move(cy, cx - 2);
-                                    } else {
-                                        move(cy, cx - 1);
-                                    }
-                                } else {
-                                    // ASCII 字符
-                                    pos--;
-                                    move(cy, cx - 1);
-                                }
-                                clrtoeol();
-                                // BUGFIX 2026.03.26: 每次删除后刷新，确保光标正确更新
-                                refresh();
-                            }
-                        } else if (ch >= 0x20 && ch <= 0x7E) {
-                            // ASCII 字符
-                            input_path[pos++] = (char)ch;
-                            addch(ch);
-                            // BUGFIX 2026.03.26: 每次按键后刷新，确保显示及时
-                            refresh();
-                        } else if ((ch & 0xC0) == 0x80 || ch >= 0x80) {
-                            // UTF-8 多字节字符
-                            if (pos < MAX_PATH_LEN - 1) {
-                                input_path[pos++] = (char)ch;
-                                // 只有字节序列开头才需要在屏幕显示
-                                if ((ch & 0xE0) == 0xC0 || (ch & 0xF0) == 0xE0) {
-                                    addch(ch);
-                                    refresh();
-                                }
-                            }
-                        } else {
-                            // 其他可打印字符
-                            input_path[pos++] = (char)ch;
-                            addch(ch);
-                            refresh();
-                        }
-                    }
-                    input_path[pos] = '\0';
-                    
-                    noecho();
-                    curs_set(0);
-                    
-                    if (strlen(input_path) > 0) {
-                        if (input_path[0] == '~') {
-                            const char *home = getenv("HOME");
-                            if (home) {
-                                snprintf(g_app_config.default_startup_path, MAX_PATH_LEN, "%s%s", home, input_path + 1);
-                            }
-                        } else {
-                            strncpy(g_app_config.default_startup_path, input_path, MAX_PATH_LEN - 1);
-                        }
-                        save_config();
-                        show_status_message(menu_text("默认启动路径已保存", "Default startup path saved"));
-                    }
-                    
-                    render_menu_frame("设置 [F2]");
-                    render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
-                    render_settings_content();
-                } else if (g_settings_current_option >= SETTINGS_IDX_AUTO_PLAY &&
-                           g_settings_current_option <= SETTINGS_IDX_CLEAR_HISTORY) {
-                    if (g_settings_current_option == SETTINGS_IDX_AUTO_PLAY) {
-                        g_app_config.auto_play_on_start = !g_app_config.auto_play_on_start;
-                    } else if (g_settings_current_option == SETTINGS_IDX_REMEMBER_PATH) {
-                        g_app_config.remember_last_path = !g_app_config.remember_last_path;
-                    } else if (g_settings_current_option == SETTINGS_IDX_CLEAR_HISTORY) {
-                        g_app_config.clear_history_on_startup = !g_app_config.clear_history_on_startup;
-                    }
-                    save_config();
-                    render_settings_content();
-                } else if (g_settings_current_option == SETTINGS_IDX_LANGUAGE) {
-                    g_app_config.ui_language = (g_app_config.ui_language == UI_LANG_EN) ? UI_LANG_ZH : UI_LANG_EN;
-                    save_config();
-                    render_menu_frame("设置 [F2]");
-                    render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
-                    render_settings_content();
-                    render_menu_hint_bar();
-                } else if (g_settings_current_option == SETTINGS_IDX_VOLUME) {
-                    set_volume_percent(g_app_config.volume_percent + 5);
-                    g_app_config.volume_percent = get_volume_percent();
-                    render_settings_content();
-                } else if (g_settings_current_option == SETTINGS_IDX_LATENCY) {
-                    g_app_config.audio_latency_ms = clamp_latency_ms(g_app_config.audio_latency_ms + 10);
-                    save_config();
-                    show_status_message(menu_text("输出时延将在下次播放生效",
-                                                  "Output latency applies on next playback"));
-                    render_menu_frame("设置 [F2]");
-                    render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
-                    render_settings_content();
-                } else if (g_settings_current_option == SETTINGS_IDX_SHOW_LYRICS) {
-                    g_app_config.show_lyrics_panel = !g_app_config.show_lyrics_panel;
-                    save_config();
-                    render_settings_content();
-                }
+        case '+':
+        case '=':
+            if (g_focus_area == FOCUS_CONTENT) {
+                adjust_or_toggle_settings_option(g_settings_current_option, 1);
+                rerender_settings_view();
+            }
+            break;
+
+        case '-':
+        case '_':
+            if (g_focus_area == FOCUS_CONTENT) {
+                adjust_or_toggle_settings_option(g_settings_current_option, -1);
+                rerender_settings_view();
             }
             break;
             
@@ -2661,9 +2812,7 @@ static void handle_settings_input(int ch) {
         case 'S':
             save_config();
             show_status_message(menu_text("设置已保存", "Settings saved"));
-            render_menu_frame("设置 [F2]");
-            render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
-            render_settings_content();
+            rerender_settings_view();
             break;
     }
 }
