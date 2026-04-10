@@ -42,7 +42,7 @@ oadoc/
 
 .lingma/*
 .trae
-
+.tmp/*
 .rpmbuild_temp/*
 .appimagetool/*
 squashfs-root/*
