@@ -22,12 +22,6 @@ extern WINDOW *win_lyrics;
 
 extern const char *control_labels[];
 
-void render_playlist_content(void);
-void render_controls(void);
-static void activate_current_control(void);
-static uint64_t get_current_track_duration_ms(void);
-static void seek_to_position_ms(uint64_t pos_ms);
-
 // 全局窗口变量
 WINDOW *win_playlist;
 WINDOW *win_controls;
@@ -53,6 +47,15 @@ static int g_ascii_fallback_ui = 0;
 #define UI_INPUT_TIMEOUT_MS 40
 #define UI_PROGRESS_REFRESH_MS 80
 
+/**
+ * 按钮点击区域描述
+ */
+typedef struct {
+    int start_x;      // 起始 x 坐标（相对于 win_controls）
+    int end_x;        // 结束 x 坐标
+    int control_idx;  // 对应的控件索引
+} ControlButtonRegion;
+
 enum {
     CONTROL_IDX_PREV = 0,
     CONTROL_IDX_PLAY_PAUSE = 1,
@@ -62,6 +65,16 @@ enum {
     CONTROL_IDX_VOLUME = 5,
     CONTROL_IDX_PROGRESS = 6
 };
+
+void render_playlist_content(void);
+void render_controls(void);
+static int get_corner_spectrum_height(int h);
+static int calculate_lyrics_content_top(int h, int w);
+static void activate_current_control(void);
+static uint64_t get_current_track_duration_ms(void);
+static void seek_to_position_ms(uint64_t pos_ms);
+static int get_playlist_scroll_offset(void);
+static int calculate_control_button_regions(ControlButtonRegion *regions);
 
 static uint64_t get_ui_time_ms(void) {
     struct timespec ts;
@@ -1690,7 +1703,8 @@ void run_event_loop() {
         if (ch == KEY_MOUSE && g_current_view == VIEW_MAIN) {
             MEVENT event;
             if (getmouse(&event) == OK) {
-                if (event.bstate & (BUTTON1_CLICKED | BUTTON1_PRESSED | BUTTON1_RELEASED)) {
+                // 只处理 BUTTON1_PRESSED 事件，避免重复触发（PRESSED/RELEASED/CLICKED 会分别触发）
+                if (event.bstate & BUTTON1_PRESSED) {
                     int my = event.y;
                     int mx = event.x;
 
@@ -1704,15 +1718,66 @@ void run_event_loop() {
                     int max_y, max_x;
                     getmaxyx(stdscr, max_y, max_x);
                     if (my == max_y - 1) {
-                        // 底部菜单栏每个菜单项大约占16-20个字符宽度
-                        // 文本从 x=2 开始渲染，每个菜单项中文约占14-18个显示宽度
-                        // 根据x坐标判断点击了哪个菜单项 (F1-F8)
-                        // KEY_F(0) = F1, KEY_F(1) = F2, ..., KEY_F(7) = F8
-                        int adjusted_x = mx - 2;
-                        if (adjusted_x < 0) adjusted_x = 0;
-                        int menu_item = adjusted_x / 18;
+                        // 计算每个菜单项的实际起始位置和宽度，准确判断点击位置
+                        const char *menu_text;
+                        if (use_english_ui()) {
+                            menu_text = "F1:Home  F2:Settings  F3:History  F4:Playlists  F5:Favorites  F6:Info  F7:Lang  F8:Quit";
+                        } else {
+                            menu_text = "F1:主页  F2:设置  F3:历史  F4:歌单  F5:收藏  F6:信息  F7:中/EN  F8:退出";
+                        }
+                        
+                        // 预计算每个菜单项的起始x位置（与渲染逻辑一致，从 x=2 开始）
+                        int menu_starts[8];
+                        int menu_ends[8];  // 记录每个菜单项的结束位置
+                        int current_x = 2;  // 从x=2开始（与 render_menu_hint_bar 一致）
+                        int item_idx = 0;
+                        const char *p = menu_text;
+                        
+                        // 扫描菜单文本，计算每个菜单项的位置范围
+                        while (*p && item_idx < 8) {
+                            // 记录当前菜单项的起始位置
+                            menu_starts[item_idx] = current_x;
+                            
+                            // 找到当前菜单项的结束位置（两个空格或字符串结尾）
+                            const char *item_start = p;
+                            while (*p && !(p[0] == ' ' && p[1] == ' ')) {
+                                p++;
+                            }
+                            
+                            // 计算当前菜单项的显示宽度
+                            int item_len = (int)(p - item_start);
+                            char item_buf[256];
+                            if (item_len > 0 && item_len < (int)sizeof(item_buf)) {
+                                strncpy(item_buf, item_start, item_len);
+                                item_buf[item_len] = '\0';
+                                current_x += utf8_str_width(item_buf);
+                            }
+                            
+                            // 记录当前菜单项的结束位置
+                            menu_ends[item_idx] = current_x;
+                            item_idx++;
+                            
+                            // 跳过分隔符（两个空格）
+                            if (*p == ' ' && *(p+1) == ' ') {
+                                while (*p == ' ') {
+                                    current_x++;
+                                    p++;
+                                }
+                            }
+                        }
+                        
+                        // 根据 mx 找到对应的菜单项
+                        int menu_item = -1;
+                        for (int i = 0; i < item_idx; i++) {
+                            if (mx >= menu_starts[i] && mx < menu_ends[i]) {
+                                menu_item = i;
+                                break;
+                            }
+                        }
+                        
                         if (menu_item >= 0 && menu_item < 8) {
-                            handle_function_keys(KEY_F(menu_item));
+                            // 修正：menu_item 是 0-based 索引，需要转换为 F1-F8（KEY_F(1) - KEY_F(8)）
+                            handle_function_keys(KEY_F(menu_item + 1));
                             continue;
                         }
                         continue;
@@ -1720,40 +1785,55 @@ void run_event_loop() {
 
                     // 检查是否点击了播放列表区域（相对于屏幕坐标：win_playlist 在 (1,1)）
                     if (win_playlist && my >= 1 && my < 1 + play_h && mx >= 1) {
-                        int list_idx = my - 2;
+                        int list_idx = my - 2;  // 转换为列表索引（减去边框和标题行）
                         int total = g_search_state.active ? g_search_state.result_count : playlist_count();
-                        int h, w;
-                        getmaxyx(win_playlist, h, w);
-                        int content_height = h - 2;
-                        int visible_lines = content_height - 5;
-                        int offset = 0;
-                        if (g_search_state.active) {
-                            if (g_search_state.selected_index >= visible_lines) {
-                                offset = g_search_state.selected_index - visible_lines + 1;
-                            }
-                            g_search_state.result_offset = offset;
-                        } else {
-                            if (g_selected_index >= visible_lines) {
-                                offset = g_selected_index - visible_lines + 1;
-                            }
-                        }
-                        if (list_idx >= 0 && list_idx < total) {
-                            g_selected_index = list_idx + (g_search_state.active ? g_search_state.result_offset : offset);
-                            if (g_selected_index >= total) {
-                                g_selected_index = total - 1;
-                            }
-                            if (g_search_state.active) {
-                                g_search_state.selected_index = g_selected_index;
-                                int original_index = g_search_state.result_indices[g_selected_index];
-                                play_audio(original_index);
-                            } else {
-                                play_audio(g_selected_index);
-                            }
-                            g_control_focus = 0;
-                            render_playlist_content();
-                            render_controls();
+                        
+                        // 边界检查：确保有歌曲且点击位置有效
+                        if (total <= 0 || list_idx < 0) {
                             continue;
                         }
+                        
+                        // 获取当前滚动偏移
+                        int offset = get_playlist_scroll_offset();
+                        
+                        // 计算可见行数
+                        int h, w;
+                        getmaxyx(win_playlist, h, w);
+                        (void)w;
+                        int content_height = h - 2;
+                        int visible_lines = content_height - 5;
+                        
+                        // 钳位 list_idx 到有效范围 [0, visible_lines-1]
+                        if (visible_lines > 0 && list_idx >= visible_lines) {
+                            list_idx = visible_lines - 1;
+                        }
+                        
+                        // 计算全局索引
+                        int global_idx = list_idx + offset;
+                        
+                        // 再次检查全局索引有效性
+                        if (global_idx < 0 || global_idx >= total) {
+                            continue;
+                        }
+                        
+                        // 更新选中索引并播放
+                        g_selected_index = global_idx;
+                        
+                        if (g_search_state.active) {
+                            g_search_state.selected_index = g_selected_index;
+                            g_search_state.result_offset = offset;
+                            int original_index = g_search_state.result_indices[g_selected_index];
+                            if (original_index >= 0 && original_index < playlist_count()) {
+                                play_audio(original_index);
+                            }
+                        } else {
+                            play_audio(g_selected_index);
+                        }
+                        
+                        g_control_focus = 0;
+                        render_playlist_content();
+                        render_controls();
+                        continue;
                     }
 
                     // 检查是否点击了控制栏区域（相对于屏幕坐标：win_controls 在 (1+playlist_height, 1)）
@@ -1761,64 +1841,101 @@ void run_event_loop() {
                         int rel_y = my - (1 + playlist_height);
                         int rel_x = mx - 1;
                         int h = getmaxy(win_controls);
-                        int w = getmaxx(win_controls);
                         int button_row = get_controls_button_row(h);
-                        int progress_row = get_controls_progress_row(h);
-                        // 按钮区域
+                        
+                        // 按钮区域点击
                         if (rel_y == button_row && g_control_count > 0) {
-                            // 按钮居中放置，需要计算起始偏移
-                            int total_len = 0;
-                            for(int i=0; i<CONTROL_COUNT-1; i++) {
-                                char display_label[32];
-                                build_control_label(i, display_label, sizeof(display_label));
-                                total_len += utf8_str_width(display_label) + 4;
-                            }
-                            int start_col = (w - total_len) / 2;
-                            if (start_col < 1) start_col = 1;
+                            ControlButtonRegion buttons[CONTROL_COUNT - 1];
+                            int btn_count = calculate_control_button_regions(buttons);
                             
-                            // 调整x坐标减去起始偏移
-                            int adjusted_x = rel_x - start_col;
-                            if (adjusted_x < 0) {
-                                continue;
-                            }
-                            // 每个按钮大约占14个字符宽度（标签+空格）
-                            int btn_idx = adjusted_x / 14;
-                            if (btn_idx >= 0 && btn_idx < (CONTROL_COUNT - 1)) { // 不包括进度条
-                                g_current_control_idx = btn_idx;
-                                activate_current_control();
-                                render_controls();
-                                render_playlist_content();
-                                continue;
-                            }
-                        }
-                        // 进度条区域
-                        if (rel_y == progress_row && mx >= 2) {
-                            int progress_width = getmaxx(win_controls) - 25;
-                            if (progress_width > 0 && g_total_duration > 0) {
-                                double ratio = (double)(mx - 2) / (double)progress_width;
-                                if (ratio < 0) ratio = 0;
-                                if (ratio > 1) ratio = 1;
-                                uint64_t total_duration = get_current_track_duration_ms();
-                                if (total_duration > 0) {
-                                    uint64_t new_pos = (uint64_t)((double)total_duration * ratio);
-                                    seek_to_position_ms(new_pos);
+                            int clicked = 0;
+                            for (int i = 0; i < btn_count; i++) {
+                                if (rel_x >= buttons[i].start_x && rel_x < buttons[i].end_x) {
+                                    g_current_control_idx = buttons[i].control_idx;
+                                    g_control_focus = 1;
+                                    activate_current_control();
+                                    
+                                    // 立即重绘以显示选中状态（按钮高亮反馈）
+                                    render_controls();
+                                    render_playlist_content();
+                                    clicked = 1;
+                                    break;
                                 }
+                            }
+                            
+                            if (clicked) {
                                 continue;
                             }
                         }
+                        
+                        // 进度条区域 - 不处理鼠标点击，保留键盘调整功能
+                        // （按用户要求：进度条控件仅通过键盘方向键调整）
+                        
                         continue;
                     }
 
-                    // 检查是否点击了歌词区域（任何时候都允许点击跳转）
+                    // 检查是否点击了歌词区域（实现"所见即所得"的点击跳转）
                     if (win_lyrics && g_lyrics.has_lyrics && g_lyrics.count > 0) {
                         int ly_y_start = getbegy(win_lyrics);
                         int ly_h = getmaxy(win_lyrics);
-                        int lyric_line = my - ly_y_start - 2;
-                        if (lyric_line >= 0 && lyric_line < g_lyrics.count && lyric_line < ly_h - 4) {
-                            uint64_t target_ms = (uint64_t)(g_lyrics.lines[lyric_line].timestamp * 1000.0);
-                            seek_to_position_ms(target_ms);
-                            render_lyrics();
-                            continue;
+                        int ly_w = getmaxx(win_lyrics);
+                        
+                        // 计算歌词内容实际起始位置（与渲染逻辑一致）
+                        int content_top = calculate_lyrics_content_top(ly_h, ly_w);
+                        
+                        // 计算可视区域大小（与渲染逻辑一致）
+                        int visible_lines = ly_h - content_top - 1;
+                        
+                        if (visible_lines > 0) {
+                            pthread_mutex_lock(&g_lyrics.lock);
+                            
+                            // 计算当前显示的起始索引（优先使用光标位置，否则使用播放位置）
+                            int current_center_idx;
+                            if (g_lyrics.cursor_index >= 0 && g_lyric_cursor_mode) {
+                                current_center_idx = g_lyrics.cursor_index;
+                            } else if (g_lyrics.current_index >= 0) {
+                                current_center_idx = g_lyrics.current_index;
+                            } else {
+                                current_center_idx = 0;
+                            }
+                            
+                            int start_idx = current_center_idx - (visible_lines / 2);
+                            if (start_idx < 0) start_idx = 0;
+                            if (start_idx + visible_lines > g_lyrics.count) {
+                                start_idx = g_lyrics.count - visible_lines;
+                            }
+                            if (start_idx < 0) start_idx = 0;
+                            
+                            // 计算点击的歌词行索引
+                            int visible_line_index = (my - ly_y_start) - content_top;
+                            if (visible_line_index >= 0 && visible_line_index < visible_lines) {
+                                int actual_lyric_index = start_idx + visible_line_index;
+                                if (actual_lyric_index >= 0 && actual_lyric_index < g_lyrics.count) {
+                                    double timestamp_sec = g_lyrics.lines[actual_lyric_index].timestamp;
+                                    
+                                    // 检查时间戳有效性（只要时间戳有效就立即跳转）
+                                    if (timestamp_sec >= 0) {
+                                        // 同步更新光标位置（无论是否在定位模式）
+                                        g_lyrics.cursor_index = actual_lyric_index;
+                                        if (g_lyric_cursor_mode) {
+                                            g_lyric_cursor_index = actual_lyric_index;
+                                        }
+                                        
+                                        pthread_mutex_unlock(&g_lyrics.lock);
+                                        
+                                        // 执行跳转（"所见即所得"：点击即跳转）
+                                        uint64_t target_ms = (uint64_t)(timestamp_sec * 1000.0);
+                                        seek_to_position_ms(target_ms);
+                                        
+                                        // 刷新界面以显示新的播放位置和光标
+                                        render_lyrics();
+                                        render_controls();
+                                        continue;
+                                    }
+                                }
+                            }
+                            
+                            pthread_mutex_unlock(&g_lyrics.lock);
                         }
                     }
                 }
@@ -2317,4 +2434,107 @@ static uint64_t get_current_track_duration_ms(void) {
 static void seek_to_position_ms(uint64_t pos_ms) {
     double pos_seconds = (double)pos_ms / 1000.0;
     seek_audio(pos_seconds);
+}
+
+static int get_corner_spectrum_height(int h) {
+    if (h >= 28) {
+        return 5;
+    }
+    if (h >= 22) {
+        return 4;
+    }
+    if (h >= 17) {
+        return 3;
+    }
+    if (h >= 13) {
+        return 2;
+    }
+    return 1;
+}
+
+static int calculate_lyrics_content_top(int h, int w) {
+    int spectrum_height = get_corner_spectrum_height(h);
+    int graph_top = 1;
+    int graph_bottom = graph_top + spectrum_height - 1;
+    if (graph_bottom >= h - 2 || w < 16) {
+        return 1;
+    }
+    return graph_bottom + 1;
+}
+
+/**
+ * 获取播放列表当前的滚动偏移量
+ * @return 滚动偏移（第一行可见歌曲的索引）
+ */
+static int get_playlist_scroll_offset(void) {
+    if (!win_playlist) {
+        return 0;
+    }
+    
+    int h, w;
+    getmaxyx(win_playlist, h, w);
+    (void)w;
+    
+    int content_height = h - 2;  // 减去边框
+    int visible_lines = content_height - 5;  // 预留 5 行给底部状态栏
+    
+    if (visible_lines <= 0) {
+        return 0;
+    }
+    
+    if (g_search_state.active) {
+        int offset = 0;
+        if (g_search_state.selected_index >= visible_lines) {
+            offset = g_search_state.selected_index - visible_lines + 1;
+        }
+        return offset;
+    } else {
+        int offset = 0;
+        if (g_selected_index >= visible_lines) {
+            offset = g_selected_index - visible_lines + 1;
+        }
+        return offset;
+    }
+}
+
+/**
+ * 计算控制栏按钮的点击区域
+ * @param regions 输出数组，大小为 CONTROL_COUNT - 1
+ * @return 实际按钮数量
+ */
+static int calculate_control_button_regions(ControlButtonRegion *regions) {
+    if (!win_controls || !regions) {
+        return 0;
+    }
+    
+    int h = getmaxy(win_controls);
+    int w = getmaxx(win_controls);
+    
+    // 计算总宽度以确定起始位置
+    int total_len = 0;
+    char labels[CONTROL_COUNT - 1][32];
+    int widths[CONTROL_COUNT - 1];
+    
+    for (int i = 0; i < CONTROL_COUNT - 1; i++) {
+        build_control_label(i, labels[i], sizeof(labels[i]));
+        widths[i] = utf8_str_width(labels[i]) + 4;  // 标签宽度 + 4（间距）
+        total_len += widths[i];
+    }
+    
+    int start_col = (w - total_len) / 2;
+    if (start_col < 1) start_col = 1;
+    
+    // 计算每个按钮的区域
+    int current_x = start_col;
+    int btn_count = 0;
+    
+    for (int i = 0; i < CONTROL_COUNT - 1; i++) {
+        regions[btn_count].start_x = current_x;
+        regions[btn_count].end_x = current_x + widths[i];
+        regions[btn_count].control_idx = i;
+        btn_count++;
+        current_x += widths[i];
+    }
+    
+    return btn_count;
 }
