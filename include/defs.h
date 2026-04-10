@@ -265,6 +265,15 @@ void get_visualizer_snapshot(int *levels, int *peaks, int max_levels, uint64_t *
 
 void apply_color_theme(void);
 
+extern int g_rainbow_mode_enabled;
+extern ColorTheme g_saved_theme;
+extern int g_konami_input_pos;
+extern uint64_t g_konami_last_time;
+extern int g_rainbow_color_offset;
+void check_konami_input(int ch);
+void toggle_rainbow_mode(void);
+void update_rainbow_colors(void);
+
 int get_track_metadata(int index, Track *out);
 void preload_visible_tracks(int start, int end);
 void clear_metadata_cache(void);

@@ -42,6 +42,21 @@ static char g_controls_status_message[256] = "";
 static time_t g_controls_status_time = 0;
 static int g_ascii_fallback_ui = 0;
 
+int g_rainbow_mode_enabled = 0;
+ColorTheme g_saved_theme;
+int g_konami_input_pos = 0;
+uint64_t g_konami_last_time = 0;
+int g_rainbow_color_offset = 0;
+
+#define KONAMI_SEQ_LENGTH 12
+static const int konami_expected[KONAMI_SEQ_LENGTH] = {
+    KEY_UP, KEY_UP,
+    KEY_DOWN, KEY_DOWN,
+    KEY_LEFT, KEY_RIGHT,
+    KEY_LEFT, KEY_RIGHT,
+    'B', 'A', 'B', 'A'
+};
+
 #define SEEK_STEP_SECONDS 5
 #define VOLUME_STEP_PERCENT 5
 #define UI_INPUT_TIMEOUT_MS 40
@@ -1944,6 +1959,9 @@ void run_event_loop() {
     int esc_pending = 0;
     uint64_t esc_pending_time = 0;
     #define ESC_TIMEOUT_MS 3000
+    #define RAINBOW_UPDATE_MS 100
+    
+    static uint64_t last_rainbow_update_ms = 0;
     
     while (1) {
         reap_finished_playback_thread();
@@ -1955,6 +1973,14 @@ void run_event_loop() {
         // 每帧都更新进度条（当播放状态为播放或暂停时）
         if (g_play_state == PLAY_STATE_PLAYING || g_play_state == PLAY_STATE_PAUSED) {
             update_progress_bar();
+        }
+
+        if (g_rainbow_mode_enabled) {
+            uint64_t now = get_ui_time_ms();
+            if (now - last_rainbow_update_ms >= RAINBOW_UPDATE_MS) {
+                update_rainbow_colors();
+                last_rainbow_update_ms = now;
+            }
         }
 
         process_pending_ui_refresh();
@@ -2498,5 +2524,103 @@ static int get_playlist_scroll_offset(void) {
             offset = g_selected_index - visible_lines + 1;
         }
         return offset;
+    }
+}
+
+void update_rainbow_colors(void) {
+    if (!g_rainbow_mode_enabled || !has_colors()) {
+        return;
+    }
+
+    static int rainbow_colors[7] = {
+        COLOR_RED, COLOR_GREEN, COLOR_YELLOW,
+        COLOR_BLUE, COLOR_MAGENTA, COLOR_CYAN, COLOR_WHITE
+    };
+
+    g_rainbow_color_offset = (g_rainbow_color_offset + 1) % 7;
+
+    g_app_config.theme.border_fg = rainbow_colors[(0 + g_rainbow_color_offset) % 7];
+    g_app_config.theme.playlist_fg = rainbow_colors[(1 + g_rainbow_color_offset) % 7];
+    g_app_config.theme.controls_fg = rainbow_colors[(2 + g_rainbow_color_offset) % 7];
+    g_app_config.theme.lyrics_fg = rainbow_colors[(3 + g_rainbow_color_offset) % 7];
+    g_app_config.theme.sidebar_fg = rainbow_colors[(4 + g_rainbow_color_offset) % 7];
+    g_app_config.theme.highlight_fg = rainbow_colors[(5 + g_rainbow_color_offset) % 7];
+    g_app_config.theme.highlight_bg = rainbow_colors[(6 + g_rainbow_color_offset) % 7];
+
+    apply_color_theme();
+
+    if (g_current_view == VIEW_MAIN) {
+        render_playlist_content();
+        render_controls();
+        render_lyrics();
+    }
+}
+
+void check_konami_input(int ch) {
+    uint64_t now = get_ui_time_ms();
+    
+    if (g_konami_input_pos > 0 && (now - g_konami_last_time) > 3000) {
+        g_konami_input_pos = 0;
+    }
+    
+    int expected = konami_expected[g_konami_input_pos];
+    int matched = 0;
+    
+    if (ch == expected) {
+        matched = 1;
+    } else if ((expected == 'B' && (ch == 'b' || ch == 'B')) ||
+               (expected == 'A' && (ch == 'a' || ch == 'A'))) {
+        matched = 1;
+    }
+    
+    if (matched) {
+        g_konami_input_pos++;
+        g_konami_last_time = now;
+        if (g_konami_input_pos == KONAMI_SEQ_LENGTH) {
+            toggle_rainbow_mode();
+            g_konami_input_pos = 0;
+        }
+    } else {
+        g_konami_input_pos = 0;
+        if (ch == konami_expected[0]) {
+            g_konami_input_pos = 1;
+            g_konami_last_time = now;
+        }
+    }
+}
+
+void toggle_rainbow_mode(void) {
+    if (!has_colors()) {
+        return;
+    }
+    
+    if (g_rainbow_mode_enabled) {
+        memcpy(&g_app_config.theme, &g_saved_theme, sizeof(ColorTheme));
+        apply_color_theme();
+        g_rainbow_mode_enabled = 0;
+        g_rainbow_color_offset = 0;
+        update_controls_status(use_english_ui() ? "Rainbow mode disabled" : "彩虹模式已关闭");
+    } else {
+        memcpy(&g_saved_theme, &g_app_config.theme, sizeof(ColorTheme));
+        
+        g_app_config.theme.border_bg = COLOR_BLACK;
+        g_app_config.theme.playlist_bg = COLOR_BLACK;
+        g_app_config.theme.controls_bg = COLOR_BLACK;
+        g_app_config.theme.lyrics_bg = COLOR_BLACK;
+        g_app_config.theme.sidebar_bg = COLOR_BLACK;
+        g_app_config.theme.highlight_bg = COLOR_BLACK;
+        
+        g_rainbow_color_offset = 0;
+        update_rainbow_colors();
+        
+        g_rainbow_mode_enabled = 1;
+        update_controls_status(use_english_ui() ? "Konami code! Rainbow mode enabled" : "康娜米！彩虹模式已启用");
+    }
+    
+    if (g_current_view == VIEW_MAIN) {
+        create_layout();
+        render_playlist_content();
+        render_controls();
+        render_lyrics();
     }
 }

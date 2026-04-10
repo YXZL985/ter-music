@@ -3268,6 +3268,10 @@ static void handle_info_input(int ch) {
 }
 
 void handle_menu_input(int ch) {
+    if (g_current_view == VIEW_INFO) {
+        check_konami_input(ch);
+    }
+
     if (ch == 27) {
         if (g_current_view == VIEW_PLAYLIST && g_playlist_view_mode == 1) {
             g_playlist_view_mode = 0;
