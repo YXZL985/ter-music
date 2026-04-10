@@ -65,6 +65,7 @@ static void activate_current_control(void);
 static uint64_t get_current_track_duration_ms(void);
 static void seek_to_position_ms(uint64_t pos_ms);
 static int get_playlist_scroll_offset(void);
+static int handle_main_view_mouse_event(const MEVENT *event);
 
 static uint64_t get_ui_time_ms(void) {
     struct timespec ts;
@@ -294,6 +295,282 @@ static void build_control_label(int index, char *dest, size_t dest_size) {
     }
 
     utf8_str_truncate(dest, get_control_label(index), (int)dest_size - 1);
+}
+
+static int is_primary_mouse_click(const MEVENT *event) {
+    if (!event) {
+        return 0;
+    }
+
+    if (event->bstate & (BUTTON1_CLICKED | BUTTON1_DOUBLE_CLICKED | BUTTON1_TRIPLE_CLICKED)) {
+        return 1;
+    }
+
+    return (event->bstate & BUTTON1_RELEASED) != 0 &&
+           (event->bstate & BUTTON1_PRESSED) == 0;
+}
+
+static int translate_screen_to_window(WINDOW *win, int screen_y, int screen_x, int *window_y, int *window_x) {
+    if (!win) {
+        return 0;
+    }
+
+    int beg_y, beg_x;
+    int height, width;
+    getbegyx(win, beg_y, beg_x);
+    getmaxyx(win, height, width);
+
+    if (screen_y < beg_y || screen_y >= beg_y + height ||
+        screen_x < beg_x || screen_x >= beg_x + width) {
+        return 0;
+    }
+
+    if (window_y) {
+        *window_y = screen_y - beg_y;
+    }
+    if (window_x) {
+        *window_x = screen_x - beg_x;
+    }
+    return 1;
+}
+
+static int get_playlist_index_from_window_row(int window_y, int *display_index, int *actual_index) {
+    if (!win_playlist) {
+        return 0;
+    }
+
+    int h, w;
+    getmaxyx(win_playlist, h, w);
+    (void)w;
+
+    int content_height = h - 2;
+    int visible_lines = content_height - 5;
+    if (visible_lines <= 0 || window_y < 1 || window_y >= 1 + visible_lines) {
+        return 0;
+    }
+
+    int clicked_display_index = get_playlist_scroll_offset() + (window_y - 1);
+
+    if (g_search_state.active) {
+        if (clicked_display_index < 0 || clicked_display_index >= g_search_state.result_count) {
+            return 0;
+        }
+        if (display_index) {
+            *display_index = clicked_display_index;
+        }
+        if (actual_index) {
+            *actual_index = g_search_state.result_indices[clicked_display_index];
+        }
+        return 1;
+    }
+
+    if (clicked_display_index < 0 || clicked_display_index >= playlist_count()) {
+        return 0;
+    }
+
+    if (display_index) {
+        *display_index = clicked_display_index;
+    }
+    if (actual_index) {
+        *actual_index = clicked_display_index;
+    }
+    return 1;
+}
+
+static int get_control_index_from_window_point(int window_y, int window_x) {
+    if (!win_controls) {
+        return -1;
+    }
+
+    int h, w;
+    getmaxyx(win_controls, h, w);
+    int row = get_controls_button_row(h);
+    if (window_y != row) {
+        return -1;
+    }
+
+    int total_len = 0;
+    for (int i = 0; i < CONTROL_COUNT - 1; i++) {
+        char display_label[32];
+        build_control_label(i, display_label, sizeof(display_label));
+        total_len += utf8_str_width(display_label) + 4;
+    }
+
+    int current_col = (w - total_len) / 2;
+    if (current_col < 1) {
+        current_col = 1;
+    }
+
+    for (int i = 0; i < CONTROL_COUNT - 1; i++) {
+        char display_label[32];
+        build_control_label(i, display_label, sizeof(display_label));
+        int button_width = utf8_str_width(display_label) + 4;
+        if (window_x >= current_col && window_x < current_col + button_width) {
+            return i;
+        }
+        current_col += button_width;
+    }
+
+    return -1;
+}
+
+static int get_lyric_index_from_window_row(int window_y, int *lyric_index, double *timestamp) {
+    if (!win_lyrics || !g_app_config.show_lyrics_panel) {
+        return 0;
+    }
+
+    int h, w;
+    getmaxyx(win_lyrics, h, w);
+
+    pthread_mutex_lock(&g_lyrics.lock);
+
+    if (!g_lyrics.has_lyrics || g_lyrics.count == 0 || g_lyrics.current_index < 0) {
+        pthread_mutex_unlock(&g_lyrics.lock);
+        return 0;
+    }
+
+    int content_top = calculate_lyrics_content_top(h, w);
+    int visible_lines = h - content_top - 1;
+    if (visible_lines <= 0 || window_y < content_top || window_y >= content_top + visible_lines) {
+        pthread_mutex_unlock(&g_lyrics.lock);
+        return 0;
+    }
+
+    int current_center_idx = (g_lyric_cursor_mode && g_lyrics.cursor_index >= 0)
+        ? g_lyrics.cursor_index
+        : g_lyrics.current_index;
+
+    int start_idx = current_center_idx - (visible_lines / 2);
+    if (start_idx < 0) {
+        start_idx = 0;
+    }
+    if (start_idx + visible_lines > g_lyrics.count) {
+        start_idx = g_lyrics.count - visible_lines;
+    }
+    if (start_idx < 0) {
+        start_idx = 0;
+    }
+
+    int clicked_lyric_index = start_idx + (window_y - content_top);
+    if (clicked_lyric_index < 0 || clicked_lyric_index >= g_lyrics.count) {
+        pthread_mutex_unlock(&g_lyrics.lock);
+        return 0;
+    }
+
+    if (lyric_index) {
+        *lyric_index = clicked_lyric_index;
+    }
+    if (timestamp) {
+        *timestamp = g_lyrics.lines[clicked_lyric_index].timestamp;
+    }
+
+    pthread_mutex_unlock(&g_lyrics.lock);
+    return 1;
+}
+
+static int get_menu_hint_fkey_from_column(int screen_x) {
+    static const char *menu_labels_zh[] = {
+        "F1:主页", "F2:设置", "F3:历史", "F4:歌单",
+        "F5:收藏", "F6:信息", "F7:中/EN", "F8:退出"
+    };
+    static const char *menu_labels_en[] = {
+        "F1:Home", "F2:Settings", "F3:History", "F4:Playlists",
+        "F5:Favorites", "F6:Info", "F7:Lang", "F8:Quit"
+    };
+
+    const char **labels = use_english_ui() ? menu_labels_en : menu_labels_zh;
+    int col = 2;
+
+    for (int i = 0; i < 8; i++) {
+        int width = utf8_str_width(labels[i]);
+        if (screen_x >= col && screen_x < col + width) {
+            return KEY_F(i + 1);
+        }
+        col += width + 2;
+    }
+
+    return 0;
+}
+
+static int handle_main_view_mouse_event(const MEVENT *event) {
+    if (!event || !is_primary_mouse_click(event)) {
+        return 0;
+    }
+
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    (void)max_x;
+
+    if (event->y == max_y - 1) {
+        int fkey = get_menu_hint_fkey_from_column(event->x);
+        if (fkey != 0) {
+            handle_function_keys(fkey);
+            return 1;
+        }
+    }
+
+    int window_y, window_x;
+    if (translate_screen_to_window(win_playlist, event->y, event->x, &window_y, &window_x)) {
+        int display_index = -1;
+        int actual_index = -1;
+        (void)window_x;
+
+        if (!get_playlist_index_from_window_row(window_y, &display_index, &actual_index)) {
+            return 0;
+        }
+
+        g_control_focus = 0;
+        if (g_search_state.active) {
+            g_search_state.selected_index = display_index;
+            g_selected_index = actual_index;
+            play_audio(actual_index);
+            g_search_state.active = 0;
+            render_playlist_content();
+        } else {
+            g_selected_index = actual_index;
+            play_audio(actual_index);
+        }
+        render_controls();
+        return 1;
+    }
+
+    if (translate_screen_to_window(win_controls, event->y, event->x, &window_y, &window_x)) {
+        int control_index = get_control_index_from_window_point(window_y, window_x);
+        if (control_index < 0) {
+            return 0;
+        }
+
+        g_control_focus = 1;
+        g_current_control_idx = control_index;
+
+        if (control_index != CONTROL_IDX_VOLUME && control_index != CONTROL_IDX_PROGRESS) {
+            activate_current_control();
+            render_playlist_content();
+        }
+        render_controls();
+        return 1;
+    }
+
+    if (translate_screen_to_window(win_lyrics, event->y, event->x, &window_y, &window_x)) {
+        int lyric_index = -1;
+        double target_timestamp = 0.0;
+        (void)window_x;
+
+        if (!get_lyric_index_from_window_row(window_y, &lyric_index, &target_timestamp)) {
+            return 0;
+        }
+
+        pthread_mutex_lock(&g_lyrics.lock);
+        g_lyrics.cursor_index = lyric_index;
+        g_lyric_cursor_index = lyric_index;
+        pthread_mutex_unlock(&g_lyrics.lock);
+
+        seek_audio(target_timestamp);
+        render_lyrics();
+        return 1;
+    }
+
+    return 0;
 }
 
 static int locale_uses_utf8(void) {
@@ -550,6 +827,7 @@ void init_ncurses() {
     cbreak();
     noecho();
     keypad(stdscr, TRUE);
+    mousemask(BUTTON1_CLICKED | BUTTON1_DOUBLE_CLICKED | BUTTON1_TRIPLE_CLICKED | BUTTON1_RELEASED, NULL);
     curs_set(0);
     clear();
 
@@ -1711,6 +1989,14 @@ void run_event_loop() {
             esc_pending_time = get_ui_time_ms();
             continue;
         }
+
+        if (ch == KEY_MOUSE) {
+            MEVENT event;
+            if (getmouse(&event) == OK && g_current_view == VIEW_MAIN) {
+                handle_main_view_mouse_event(&event);
+            }
+            continue;
+        }
         
         // 处理功能键（F1-F8）
         if (ch >= KEY_F(1) && ch <= KEY_F(8)) {
@@ -1840,50 +2126,7 @@ void run_event_loop() {
                     seek_relative_seconds(SEEK_STEP_SECONDS);
                     break;
                 case ' ':
-                    // 执行当前选中的控件功能
-                    // 使用局部变量保存当前状态，避免在函数调用期间状态被其他线程改变
-                    switch(g_current_control_idx) {
-                        case CONTROL_IDX_PREV: // 上一曲
-                            prev_track();
-                            break;
-                        case CONTROL_IDX_PLAY_PAUSE: // 播放/暂停
-                            {
-                                // 捕获当前状态快照，确保一致性检查
-                                PlayState current_state = g_play_state;
-                                int is_thread_running = g_play_thread_running;
-                                
-                                if (current_state == PLAY_STATE_PLAYING && is_thread_running) {
-                                    pause_audio();
-                                } else if (current_state == PLAY_STATE_PAUSED && is_thread_running) {
-                                    resume_audio();
-                                } else if (current_state == PLAY_STATE_STOPPED) {
-                                    int playlist_total = playlist_count();
-                                    if (playlist_is_loaded() && playlist_total > 0) {
-                                        int target_index = (g_current_play_index >= 0) ? 
-                                                           g_current_play_index : g_selected_index;
-                                        if (target_index >= 0 && target_index < playlist_total) {
-                                            play_audio(target_index);
-                                        }
-                                    }
-                                }
-                            }
-                            break;
-                        case CONTROL_IDX_NEXT: // 下一曲
-                            next_track();
-                            break;
-                        case CONTROL_IDX_STOP: // 停止
-                            stop_audio();
-                            break;
-                        case CONTROL_IDX_LOOP: // 循环模式
-                            toggle_loop_mode();
-                            break;
-                        case CONTROL_IDX_VOLUME: // 音量
-                            adjust_volume(10);
-                            break;
-                        case CONTROL_IDX_PROGRESS: // 进度条（占位，无操作）
-                            break;
-                    }
-                    // 刷新 UI 以反映状态变化
+                    activate_current_control();
                     render_playlist_content();
                     render_controls();
                     break;
@@ -2137,15 +2380,24 @@ static void activate_current_control(void) {
             prev_track();
             break;
         case CONTROL_IDX_PLAY_PAUSE:
-            if (g_play_state == PLAY_STATE_PLAYING) {
-                pause_audio();
-            } else if (g_play_state == PLAY_STATE_PAUSED) {
-                resume_audio();
-            } else if (g_play_state == PLAY_STATE_STOPPED) {
-                if (g_current_play_index >= 0) {
-                    play_audio(g_current_play_index);
-                } else {
-                    play_audio(g_selected_index);
+            {
+                PlayState current_state = g_play_state;
+                int is_thread_running = g_play_thread_running;
+
+                if (current_state == PLAY_STATE_PLAYING && is_thread_running) {
+                    pause_audio();
+                } else if (current_state == PLAY_STATE_PAUSED && is_thread_running) {
+                    resume_audio();
+                } else if (current_state == PLAY_STATE_STOPPED) {
+                    int playlist_total = playlist_count();
+                    if (playlist_is_loaded() && playlist_total > 0) {
+                        int target_index = (g_current_play_index >= 0)
+                            ? g_current_play_index
+                            : g_selected_index;
+                        if (target_index >= 0 && target_index < playlist_total) {
+                            play_audio(target_index);
+                        }
+                    }
                 }
             }
             break;
@@ -2159,6 +2411,7 @@ static void activate_current_control(void) {
             toggle_loop_mode();
             break;
         case CONTROL_IDX_VOLUME:
+            adjust_volume(10);
             break;
         case CONTROL_IDX_PROGRESS:
             break;
@@ -2234,4 +2487,3 @@ static int get_playlist_scroll_offset(void) {
         return offset;
     }
 }
-
