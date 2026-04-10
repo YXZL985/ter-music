@@ -11,6 +11,7 @@
 #include <ctype.h>
 #include <limits.h>
 #include <wchar.h>
+#include <wctype.h>
 #include <locale.h>
 #include <langinfo.h>
 #include <math.h>
@@ -81,6 +82,17 @@ static uint64_t get_current_track_duration_ms(void);
 static void seek_to_position_ms(uint64_t pos_ms);
 static int get_playlist_scroll_offset(void);
 static int handle_main_view_mouse_event(const MEVENT *event);
+int prompt_text_input(WINDOW *win, int row, int col, const char *prompt,
+                      char *buffer, size_t buffer_size, int trim_whitespace);
+
+enum {
+    INPUT_ESCAPE_NONE = 0,
+    INPUT_ESCAPE_ESC,
+    INPUT_ESCAPE_CSI,
+    INPUT_ESCAPE_SS3,
+    INPUT_ESCAPE_OSC,
+    INPUT_ESCAPE_OSC_ESC
+};
 
 static uint64_t get_ui_time_ms(void) {
     struct timespec ts;
@@ -101,6 +113,207 @@ static const char *ui_text(const char *utf8, const char *ascii) {
 }
 
 static void format_display_text(char *dest, size_t dest_size, const char *src, int width, int pad);
+
+static void trim_input_whitespace(char *buffer) {
+    if (!buffer) {
+        return;
+    }
+
+    char *start = buffer;
+    while (*start && isspace((unsigned char)*start)) {
+        start++;
+    }
+
+    if (start != buffer) {
+        memmove(buffer, start, strlen(start) + 1);
+    }
+
+    size_t len = strlen(buffer);
+    while (len > 0 && isspace((unsigned char)buffer[len - 1])) {
+        buffer[--len] = '\0';
+    }
+}
+
+static void pop_last_utf8_char(char *buffer) {
+    if (!buffer) {
+        return;
+    }
+
+    size_t len = strlen(buffer);
+    if (len == 0) {
+        return;
+    }
+
+    size_t new_len = len - 1;
+    while (new_len > 0 && (((unsigned char)buffer[new_len] & 0xC0) == 0x80)) {
+        new_len--;
+    }
+    buffer[new_len] = '\0';
+}
+
+static void redraw_text_input(WINDOW *win, int row, int col, const char *prompt, const char *buffer) {
+    if (!win || !prompt || !buffer) {
+        return;
+    }
+
+    int h, w;
+    getmaxyx(win, h, w);
+    if (row < 0 || row >= h || col < 0 || col >= w) {
+        return;
+    }
+
+    int prompt_width = utf8_str_width(prompt);
+    int available_width = w - col - 1;
+    if (available_width < 1) {
+        available_width = 1;
+    }
+
+    int input_width = available_width - prompt_width;
+    if (input_width < 1) {
+        input_width = 1;
+    }
+
+    char visible_input[MAX_PATH_LEN * 2];
+    visible_input[0] = '\0';
+
+    int total_width = utf8_str_width(buffer);
+    if (total_width > input_width) {
+        utf8_str_substring(visible_input, buffer, total_width - input_width, input_width);
+    } else {
+        snprintf(visible_input, sizeof(visible_input), "%s", buffer);
+    }
+
+    mvwprintw(win, row, col, "%s%s", prompt, visible_input);
+    wclrtoeol(win);
+    wmove(win, row, col + prompt_width + utf8_str_width(visible_input));
+    wrefresh(win);
+}
+
+static int consume_input_escape_sequence(int *escape_state, wint_t ch) {
+    if (!escape_state) {
+        return 0;
+    }
+
+    switch (*escape_state) {
+        case INPUT_ESCAPE_NONE:
+            if (ch == 27) {
+                *escape_state = INPUT_ESCAPE_ESC;
+                return 1;
+            }
+            return 0;
+        case INPUT_ESCAPE_ESC:
+            if (ch == L'[') {
+                *escape_state = INPUT_ESCAPE_CSI;
+                return 1;
+            }
+            if (ch == L'O') {
+                *escape_state = INPUT_ESCAPE_SS3;
+                return 1;
+            }
+            if (ch == L']') {
+                *escape_state = INPUT_ESCAPE_OSC;
+                return 1;
+            }
+            *escape_state = INPUT_ESCAPE_NONE;
+            return 1;
+        case INPUT_ESCAPE_CSI:
+            if (ch >= 0x40 && ch <= 0x7E) {
+                *escape_state = INPUT_ESCAPE_NONE;
+            }
+            return 1;
+        case INPUT_ESCAPE_SS3:
+            *escape_state = INPUT_ESCAPE_NONE;
+            return 1;
+        case INPUT_ESCAPE_OSC:
+            if (ch == 7) {
+                *escape_state = INPUT_ESCAPE_NONE;
+            } else if (ch == 27) {
+                *escape_state = INPUT_ESCAPE_OSC_ESC;
+            }
+            return 1;
+        case INPUT_ESCAPE_OSC_ESC:
+            *escape_state = (ch == L'\\') ? INPUT_ESCAPE_NONE : INPUT_ESCAPE_OSC;
+            return 1;
+        default:
+            *escape_state = INPUT_ESCAPE_NONE;
+            return 0;
+    }
+}
+
+int prompt_text_input(WINDOW *win, int row, int col, const char *prompt,
+                      char *buffer, size_t buffer_size, int trim_whitespace) {
+    if (!win || !prompt || !buffer || buffer_size == 0) {
+        return -1;
+    }
+
+    buffer[0] = '\0';
+    redraw_text_input(win, row, col, prompt, buffer);
+    flushinp();
+
+    int escape_state = 0;
+
+    while (1) {
+        wint_t wch = 0;
+        int rc = get_wch(&wch);
+        if (rc == ERR) {
+            escape_state = INPUT_ESCAPE_NONE;
+            continue;
+        }
+
+        if (rc == KEY_CODE_YES) {
+            escape_state = INPUT_ESCAPE_NONE;
+            if (wch == KEY_ENTER) {
+                break;
+            }
+            if (wch == KEY_BACKSPACE) {
+                pop_last_utf8_char(buffer);
+                redraw_text_input(win, row, col, prompt, buffer);
+            }
+            continue;
+        }
+
+        if (consume_input_escape_sequence(&escape_state, wch)) {
+            continue;
+        }
+
+        if (wch == L'\n' || wch == L'\r') {
+            break;
+        }
+
+        if (wch == 127 || wch == 8) {
+            pop_last_utf8_char(buffer);
+            redraw_text_input(win, row, col, prompt, buffer);
+            continue;
+        }
+
+        if (!iswprint(wch)) {
+            continue;
+        }
+
+        char encoded[MB_CUR_MAX + 1];
+        mbstate_t state;
+        memset(&state, 0, sizeof(state));
+        size_t written = wcrtomb(encoded, wch, &state);
+        if (written == (size_t)-1 || written == 0) {
+            continue;
+        }
+
+        size_t current_len = strlen(buffer);
+        if (current_len + written >= buffer_size) {
+            continue;
+        }
+
+        memcpy(buffer + current_len, encoded, written);
+        buffer[current_len + written] = '\0';
+        redraw_text_input(win, row, col, prompt, buffer);
+    }
+
+    if (trim_whitespace) {
+        trim_input_whitespace(buffer);
+    }
+
+    return 0;
+}
 
 static const char *get_playlist_source_label(void) {
     static char folder_path[MAX_PATH_LEN];
@@ -1675,59 +1888,15 @@ static void prompt_folder_input(int append_mode) {
     if (!win_controls) {
         return;
     }
-    echo();
+    noecho();
     curs_set(1);
-    
-    int max_y, max_x;
-    getmaxyx(win_controls, max_y, max_x);
-    
-    mvwprintw(win_controls, 4, 2, "%s",
-              append_mode ? ui_text("输入要追加的目录：", "Append folder: ")
-                          : ui_text("输入目录路径：", "Folder path: "));
-    wclrtoeol(win_controls);
-    wrefresh(win_controls);
-    
+
+    const char *folder_prompt = append_mode
+        ? ui_text("输入要追加的目录：", "Append folder: ")
+        : ui_text("输入目录路径：", "Folder path: ");
     char input_path[MAX_PATH_LEN];
-    memset(input_path, 0, sizeof(input_path));
-    int pos = 0;
-    int ch;
-    
-    flushinp();
-    
-    // BUGFIX 2026.03.26: 手动逐字符读取，正确处理 UTF-8 多字节中文输入
-    // 使用 wgetnstr 无法正确处理 UTF-8 中文输入，改为手动读取
-    // BUGFIX 2026.03.29: 忽略 ERR，防止超时自动插入space字符
-    while ((ch = getch()) != '\n' && ch != KEY_ENTER && pos < MAX_PATH_LEN - 1) {
-        if (ch == ERR) {
-            continue;
-        }
-        if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
-            pos = utf8_backspace(input_path, pos, win_controls);
-        } else if (ch >= 0x20 && ch <= 0x7E) {
-            // ASCII 字符
-            input_path[pos++] = (char)ch;
-            waddch(win_controls, ch);
-            wrefresh(win_controls);
-        } else if ((ch & 0xC0) == 0x80 || ch >= 0x80) {
-            // UTF-8 多字节字符的后续字节
-            if (pos < MAX_PATH_LEN - 1) {
-                input_path[pos++] = (char)ch;
-                // 只有字节序列开头才需要移动光标
-                if ((ch & 0xE0) == 0xC0 || (ch & 0xF0) == 0xE0) {
-                    waddch(win_controls, ch);
-                    // 中文字符占两列，但终端会自动处理光标移动
-                    wrefresh(win_controls);
-                }
-            }
-        } else {
-            // 其他可打印字符
-            input_path[pos++] = (char)ch;
-            waddch(win_controls, ch);
-            wrefresh(win_controls);
-        }
-    }
-    
-    input_path[pos] = '\0';
+    prompt_text_input(win_controls, 4, 2, folder_prompt,
+                      input_path, sizeof(input_path), 1);
     flushinp();
     
     noecho();
