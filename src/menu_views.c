@@ -29,6 +29,7 @@ extern WINDOW *win_lyrics;
 extern void render_playlist_content(void);
 extern void render_controls(void);
 extern void create_layout(void);
+extern int utf8_backspace(char *buffer, int pos, WINDOW *win);
 
 ViewMode g_current_view = VIEW_MAIN;
 int g_menu_selected_idx = 0;
@@ -1808,6 +1809,18 @@ static const char *settings_options_ascii[] = {
 #define SETTINGS_OPTION_COUNT 20
 
 enum {
+    SETTINGS_IDX_THEME_COLOR_PAIR_0 = 0,
+    SETTINGS_IDX_THEME_COLOR_PAIR_1 = 1,
+    SETTINGS_IDX_THEME_COLOR_PAIR_2 = 2,
+    SETTINGS_IDX_THEME_COLOR_PAIR_3 = 3,
+    SETTINGS_IDX_THEME_COLOR_PAIR_4 = 4,
+    SETTINGS_IDX_THEME_COLOR_PAIR_5 = 5,
+    SETTINGS_IDX_THEME_COLOR_PAIR_6 = 6,
+    SETTINGS_IDX_THEME_COLOR_PAIR_7 = 7,
+    SETTINGS_IDX_THEME_COLOR_PAIR_8 = 8,
+    SETTINGS_IDX_THEME_COLOR_PAIR_9 = 9,
+    SETTINGS_IDX_THEME_COLOR_PAIR_10 = 10,
+    SETTINGS_IDX_THEME_COLOR_PAIR_11 = 11,
     SETTINGS_IDX_DEFAULT_PATH = 12,
     SETTINGS_IDX_AUTO_PLAY = 13,
     SETTINGS_IDX_REMEMBER_PATH = 14,
@@ -1824,7 +1837,18 @@ typedef struct {
 } SettingsSectionSpec;
 
 static const int settings_theme_option_indices[] = {
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11
+    SETTINGS_IDX_THEME_COLOR_PAIR_0,
+    SETTINGS_IDX_THEME_COLOR_PAIR_1,
+    SETTINGS_IDX_THEME_COLOR_PAIR_2,
+    SETTINGS_IDX_THEME_COLOR_PAIR_3,
+    SETTINGS_IDX_THEME_COLOR_PAIR_4,
+    SETTINGS_IDX_THEME_COLOR_PAIR_5,
+    SETTINGS_IDX_THEME_COLOR_PAIR_6,
+    SETTINGS_IDX_THEME_COLOR_PAIR_7,
+    SETTINGS_IDX_THEME_COLOR_PAIR_8,
+    SETTINGS_IDX_THEME_COLOR_PAIR_9,
+    SETTINGS_IDX_THEME_COLOR_PAIR_10,
+    SETTINGS_IDX_THEME_COLOR_PAIR_11
 };
 
 static const int settings_path_option_indices[] = {
@@ -2034,6 +2058,27 @@ static void adjust_settings_theme_option(int option_index, int delta) {
     save_config();
 }
 
+static int is_valid_path(const char *path) {
+    if (!path || strlen(path) == 0) {
+        return 0;
+    }
+
+    for (size_t i = 0; i < strlen(path); i++) {
+        unsigned char c = (unsigned char)path[i];
+        if (c < 0x20 && c != '\0') {
+            return 0;
+        }
+    }
+
+    if (path[0] == '~') {
+        if (strlen(path) > 1 && path[1] != '/') {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
 static void edit_default_startup_path(void) {
     echo();
     curs_set(1);
@@ -2062,38 +2107,7 @@ static void edit_default_startup_path(void) {
             continue;
         }
         if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
-            if (pos > 0) {
-                int cx = getcurx(stdscr);
-                int cy = getcury(stdscr);
-                unsigned char last_c = (unsigned char)input_path[pos - 1];
-                if (last_c >= 0x80) {
-                    int bytes_to_remove = 1;
-                    if ((last_c & 0xE0) == 0xC0) bytes_to_remove = 2;
-                    else if ((last_c & 0xF0) == 0xE0) bytes_to_remove = 3;
-                    else if ((last_c & 0xF8) == 0xF0) bytes_to_remove = 4;
-                    else if ((last_c & 0xC0) == 0x80) {
-                        bytes_to_remove = 2;
-                        while (pos - bytes_to_remove >= 0 &&
-                               (unsigned char)input_path[pos - bytes_to_remove] >= 0x80 &&
-                               (unsigned char)input_path[pos - bytes_to_remove] < 0xC0) {
-                            bytes_to_remove++;
-                        }
-                    }
-                    if (bytes_to_remove > pos) bytes_to_remove = pos;
-                    pos -= bytes_to_remove;
-
-                    if ((last_c & 0xF0) == 0xE0 || (last_c & 0xE0) == 0xC0) {
-                        move(cy, cx - 2);
-                    } else {
-                        move(cy, cx - 1);
-                    }
-                } else {
-                    pos--;
-                    move(cy, cx - 1);
-                }
-                clrtoeol();
-                refresh();
-            }
+            pos = utf8_backspace(input_path, pos, NULL);
         } else if (ch >= 0x20 && ch <= 0x7E) {
             input_path[pos++] = (char)ch;
             addch(ch);
@@ -2118,6 +2132,11 @@ static void edit_default_startup_path(void) {
     curs_set(0);
 
     if (strlen(input_path) > 0) {
+        if (!is_valid_path(input_path)) {
+            show_status_message(menu_text("路径格式无效", "Invalid path format"));
+            return;
+        }
+
         if (input_path[0] == '~') {
             const char *home = getenv("HOME");
             if (home) {

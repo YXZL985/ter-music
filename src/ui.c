@@ -1003,6 +1003,47 @@ int utf8_str_pad(char *dest, size_t dest_size, const char *src, int width) {
     return current_width;
 }
 
+int utf8_backspace(char *buffer, int pos, WINDOW *win) {
+    if (!buffer || pos <= 0) {
+        return pos;
+    }
+
+    WINDOW *target_win = win ? win : stdscr;
+    int cx = getcurx(target_win);
+    int cy = getcury(target_win);
+    unsigned char last_c = (unsigned char)buffer[pos - 1];
+    int bytes_to_remove = 1;
+
+    if (last_c >= 0x80) {
+        if ((last_c & 0xE0) == 0xC0) bytes_to_remove = 2;
+        else if ((last_c & 0xF0) == 0xE0) bytes_to_remove = 3;
+        else if ((last_c & 0xF8) == 0xF0) bytes_to_remove = 4;
+        else if ((last_c & 0xC0) == 0x80) {
+            bytes_to_remove = 2;
+            while (pos - bytes_to_remove >= 0 &&
+                   (unsigned char)buffer[pos - bytes_to_remove] >= 0x80 &&
+                   (unsigned char)buffer[pos - bytes_to_remove] < 0xC0) {
+                bytes_to_remove++;
+            }
+        }
+        if (bytes_to_remove > pos) bytes_to_remove = pos;
+        pos -= bytes_to_remove;
+
+        if ((last_c & 0xF0) == 0xE0 || (last_c & 0xE0) == 0xC0) {
+            wmove(target_win, cy, cx - 2);
+        } else {
+            wmove(target_win, cy, cx - 1);
+        }
+    } else {
+        pos--;
+        wmove(target_win, cy, cx - 1);
+    }
+
+    wclrtoeol(target_win);
+    wrefresh(target_win);
+    return pos;
+}
+
 /**
  * 创建和调整窗口布局
  * 设置播放列表、控制栏和歌词窗口的大小和位置
@@ -1661,45 +1702,7 @@ static void prompt_folder_input(int append_mode) {
             continue;
         }
         if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
-            // 处理 Backspace 删除
-            if (pos > 0) {
-                int cx = getcurx(win_controls);
-                int cy = getcury(win_controls);
-                
-                // BUGFIX 2026.03.26: 正确处理 UTF-8 多字节字符删除
-                unsigned char last_c = (unsigned char)input_path[pos - 1];
-                int bytes_to_remove = 1;
-                if (last_c >= 0x80) {
-                    // 多字节 UTF-8 字符，需要回退到序列开头
-                    if ((last_c & 0xE0) == 0xC0) bytes_to_remove = 2;
-                    else if ((last_c & 0xF0) == 0xE0) bytes_to_remove = 3;
-                    else if ((last_c & 0xF8) == 0xF0) bytes_to_remove = 4;
-                    else if ((last_c & 0xC0) == 0x80) {
-                        //  continuation byte，继续向前找开头
-                        bytes_to_remove = 2;
-                        while (pos - bytes_to_remove >= 0 && 
-                               (unsigned char)input_path[pos - bytes_to_remove] >= 0x80 && 
-                               (unsigned char)input_path[pos - bytes_to_remove] < 0xC0) {
-                            bytes_to_remove++;
-                        }
-                    }
-                    if (bytes_to_remove > pos) bytes_to_remove = pos;
-                    pos -= bytes_to_remove;
-                    
-                    // 中文字符占两列，光标左移两格
-                    if ((last_c & 0xF0) == 0xE0 || (last_c & 0xE0) == 0xC0) {
-                        move(cy, cx - 2);
-                    } else {
-                        move(cy, cx - 1);
-                    }
-                } else {
-                    // ASCII 字符
-                    pos--;
-                    move(cy, cx - 1);
-                }
-                clrtoeol();
-                wrefresh(win_controls);
-            }
+            pos = utf8_backspace(input_path, pos, win_controls);
         } else if (ch >= 0x20 && ch <= 0x7E) {
             // ASCII 字符
             input_path[pos++] = (char)ch;
