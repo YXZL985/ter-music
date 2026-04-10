@@ -468,7 +468,7 @@ static int get_lyric_index_from_window_row(int window_y, int *lyric_index, doubl
     return 1;
 }
 
-static int get_menu_hint_fkey_from_column(int screen_x) {
+int get_menu_hint_fkey_from_column(int screen_x) {
     static const char *menu_labels_zh[] = {
         "F1:主页", "F2:设置", "F3:历史", "F4:歌单",
         "F5:收藏", "F6:信息", "F7:中/EN", "F8:退出"
@@ -492,7 +492,7 @@ static int get_menu_hint_fkey_from_column(int screen_x) {
     return 0;
 }
 
-static int handle_main_view_mouse_event(const MEVENT *event) {
+int handle_menu_hint_bar_click(const MEVENT *event) {
     if (!event || !is_primary_mouse_click(event)) {
         return 0;
     }
@@ -507,6 +507,14 @@ static int handle_main_view_mouse_event(const MEVENT *event) {
             handle_function_keys(fkey);
             return 1;
         }
+    }
+
+    return 0;
+}
+
+static int handle_main_view_mouse_event(const MEVENT *event) {
+    if (!event || !is_primary_mouse_click(event)) {
+        return 0;
     }
 
     int window_y, window_x;
@@ -1992,8 +2000,13 @@ void run_event_loop() {
 
         if (ch == KEY_MOUSE) {
             MEVENT event;
-            if (getmouse(&event) == OK && g_current_view == VIEW_MAIN) {
-                handle_main_view_mouse_event(&event);
+            if (getmouse(&event) == OK) {
+                if (handle_menu_hint_bar_click(&event)) {
+                    continue;
+                }
+                if (g_current_view == VIEW_MAIN) {
+                    handle_main_view_mouse_event(&event);
+                }
             }
             continue;
         }
