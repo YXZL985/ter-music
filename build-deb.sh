@@ -30,14 +30,15 @@ show_help() {
     -h, --help          显示此帮助信息
     -v, --version VERSION  指定版本号（默认：自动检测）
     -k, --keep-temp     保留临时构建文件（用于调试）
-    --no-source         不生成源码包
-    --no-debuginfo      不生成 debuginfo 包
+    --with-source       生成源码包（默认不生成）
+    --with-debuginfo    生成 debuginfo 包（默认不生成）
 
 示例:
     $0                  使用自动检测的版本号构建 DEB
     $0 -v 1.2.3         使用指定版本号 1.2.3 构建 DEB
     $0 --keep-temp      构建后保留临时文件
-    $0 --no-source      只构建二进制包，不生成源码包
+    $0 --with-source    同时生成源码包
+    $0 --with-debuginfo 同时生成 debuginfo 包
 
 输出:
     DEB 包将输出到: ${OUTPUT_DIR}/
@@ -557,8 +558,8 @@ show_summary() {
 main() {
     local version="$DEFAULT_VERSION"
     local keep_temp="false"
-    local build_source="true"
-    local build_debuginfo="true"
+    local build_source="false"
+    local build_debuginfo="false"
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -578,8 +579,16 @@ main() {
                 build_source="false"
                 shift
                 ;;
+            --with-source)
+                build_source="true"
+                shift
+                ;;
             --no-debuginfo)
                 build_debuginfo="false"
+                shift
+                ;;
+            --with-debuginfo)
+                build_debuginfo="true"
                 shift
                 ;;
             *)

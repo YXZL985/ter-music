@@ -30,13 +30,13 @@ show_help() {
     -h, --help          显示此帮助信息
     -v, --version VERSION  指定版本号（默认：自动检测）
     -k, --keep-temp     保留临时构建文件（用于调试）
-    --no-debuginfo      不生成 debuginfo 包
+    --with-debuginfo    生成 debuginfo 包（默认不生成）
 
 示例:
     $0                  使用自动检测的版本号构建 RPM
     $0 -v 1.2.3         使用指定版本号 1.2.3 构建 RPM
     $0 --keep-temp      构建后保留临时文件
-    $0 --no-debuginfo   跳过 debuginfo 包生成
+    $0 --with-debuginfo 生成 debuginfo 包
 
 输出:
     RPM 包将输出到: ${OUTPUT_DIR}/
@@ -348,7 +348,7 @@ show_summary() {
 main() {
     local version="$DEFAULT_VERSION"
     local keep_temp="false"
-    local no_debuginfo="false"
+    local no_debuginfo="true"
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -366,6 +366,10 @@ main() {
                 ;;
             --no-debuginfo)
                 no_debuginfo="true"
+                shift
+                ;;
+            --with-debuginfo)
+                no_debuginfo="false"
                 shift
                 ;;
             *)
