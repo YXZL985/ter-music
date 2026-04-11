@@ -4,9 +4,44 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_NAME="ter-music"
+PROJECT_HOMEPAGE="https://github.com/YXZL985/ter-music"
 DEFAULT_VERSION="1.0.0"
 OUTPUT_DIR="${SCRIPT_DIR}/build/deb"
 TEMP_DIR="${SCRIPT_DIR}/.debbuild_temp"
+SOURCE_OUTPUT_DIR="${OUTPUT_DIR}/source"
+COLLECTED_RESULT_FILE=""
+
+PROJECT_REQUIRED_PATHS=(
+    "src"
+    "include"
+    "share/applications/${PROJECT_NAME}.desktop"
+    "img/icons/hicolor/32x32/apps/${PROJECT_NAME}.png"
+    "img/icons/hicolor/48x48/apps/${PROJECT_NAME}.png"
+    "img/icons/hicolor/128x128/apps/${PROJECT_NAME}.png"
+    "img/icons/hicolor/scalable/apps/${PROJECT_NAME}.svg"
+    "CMakeLists.txt"
+    "README.md"
+    "README_CN.md"
+    "BUILD_GUIDE.md"
+    "LICENSE"
+)
+
+PROJECT_SOURCE_PATHS=(
+    "src"
+    "include"
+    "share"
+    "img"
+    "CMakeLists.txt"
+    "README.md"
+    "README_CN.md"
+    "BUILD_GUIDE.md"
+    "LICENSE"
+    "build-deb.sh"
+    "build-rpm.sh"
+    "build-appimage.sh"
+    "build-portable.sh"
+    "build-linyaps.sh"
+)
 
 log_info() {
     echo "[INFO] $1"
@@ -191,11 +226,55 @@ validate_architecture() {
     return 1
 }
 
+validate_project_layout() {
+    local missing_paths=()
+
+    for path in "${PROJECT_REQUIRED_PATHS[@]}"; do
+        if [ ! -e "${SCRIPT_DIR}/${path}" ]; then
+            missing_paths+=("$path")
+        fi
+    done
+
+    if [ ${#missing_paths[@]} -gt 0 ]; then
+        log_error "项目结构不完整，缺少以下文件或目录:"
+        for path in "${missing_paths[@]}"; do
+            echo "  - $path"
+        done
+        return 1
+    fi
+
+    return 0
+}
+
+copy_project_sources() {
+    local destination_dir="$1"
+
+    if [ -d "${SCRIPT_DIR}/.git" ] && command -v git >/dev/null 2>&1; then
+        local path=""
+
+        while IFS= read -r -d '' path; do
+            mkdir -p "${destination_dir}/$(dirname "${path}")"
+            cp -a "${SCRIPT_DIR}/${path}" "${destination_dir}/${path}"
+        done < <(git -C "${SCRIPT_DIR}" ls-files -z)
+
+        return 0
+    fi
+
+    local path=""
+    for path in "${PROJECT_SOURCE_PATHS[@]}"; do
+        if [ -e "${SCRIPT_DIR}/${path}" ]; then
+            mkdir -p "${destination_dir}/$(dirname "${path}")"
+            cp -a "${SCRIPT_DIR}/${path}" "${destination_dir}/${path}"
+        fi
+    done
+}
+
 prepare_directories() {
     local target_arch="$1"
     log_info "准备构建目录..."
 
     mkdir -p "${OUTPUT_DIR}/${target_arch}"
+    mkdir -p "${SOURCE_OUTPUT_DIR}"
 
     rm -rf "${TEMP_DIR}"
     mkdir -p "${TEMP_DIR}"
@@ -211,22 +290,11 @@ create_source_tarball() {
     log_info "创建源码压缩包..."
 
     mkdir -p "$package_dir"
-
-    local files=("src" "include" "share" "img" "CMakeLists.txt" "README.md" "LICENSE" "README_CN.md" "BUILD_GUIDE.md")
-    local missing_files=()
-
-    for file in "${files[@]}"; do
-        if [ -e "${SCRIPT_DIR}/${file}" ]; then
-            cp -r "${SCRIPT_DIR}/${file}" "$package_dir/"
-        else
-            missing_files+=("$file")
-        fi
-    done
-
-    if [ ${#missing_files[@]} -gt 0 ]; then
-        log_error "缺少必要的源文件: ${missing_files[*]}"
+    if ! validate_project_layout; then
         return 1
     fi
+
+    copy_project_sources "$package_dir"
 
     # 创建原始源码 tar.gz（放在 source 目录的父目录，供 dpkg-source 使用）
     local tarball_path="${TEMP_DIR}/source/${PROJECT_NAME}_${version}.orig.tar.gz"
@@ -265,10 +333,10 @@ Build-Depends: debhelper (>= 10), cmake, gcc, make, pkg-config,
                libavcodec-dev, libavformat-dev, libavutil-dev, libswresample-dev,
                libpulse-dev, libncursesw5-dev | libncurses-dev
 Standards-Version: 4.5.0
-Homepage: https://gitee.com/yanxi-bamboo-forest/ter-music
+Homepage: ${PROJECT_HOMEPAGE}
 
 Package: ${PROJECT_NAME}
-Architecture: amd64
+Architecture: any
 Depends: \${shlibs:Depends}, \${misc:Depends},
          libavcodec60 | libavcodec59 | libavcodec58 | libavcodec-ffmpeg56 | libavcodec-extra,
          libavformat60 | libavformat59 | libavformat58 | libavformat57,
@@ -291,14 +359,6 @@ Description: A terminal-based music player with ncurses interface
   - Customizable color themes
   - Keyboard shortcuts
   - Real-time progress bar
-
-Package: ${PROJECT_NAME}-dbgsym
-Architecture: amd64
-Section: debug
-Priority: optional
-Depends: ${PROJECT_NAME} (= \${binary:Version})
-Description: Debug symbols for ${PROJECT_NAME}
- This package contains the debug symbols for ${PROJECT_NAME}.
 EOF
 
     # 生成 debian/rules
@@ -314,27 +374,24 @@ export DEB_LDFLAGS_MAINT_APPEND = -Wl,--as-needed
 	dh $@
 
 override_dh_auto_configure:
-	mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+	dh_auto_configure --builddirectory=build -- -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
 
 override_dh_auto_build:
-	cd build && $(MAKE)
+	dh_auto_build --builddirectory=build
 
 override_dh_auto_install:
-	cd build && $(MAKE) DESTDIR=$(CURDIR)/debian/${PROJECT_NAME} install
-	# 手动安装文件
-	install -D -m 755 build/${PROJECT_NAME} debian/${PROJECT_NAME}/usr/bin/${PROJECT_NAME}
-	install -D -m 644 share/applications/${PROJECT_NAME}.desktop debian/${PROJECT_NAME}/usr/share/applications/${PROJECT_NAME}.desktop
-	install -D -m 644 img/icons/hicolor/32x32/apps/${PROJECT_NAME}.png debian/${PROJECT_NAME}/usr/share/icons/hicolor/32x32/apps/${PROJECT_NAME}.png
-	install -D -m 644 img/icons/hicolor/48x48/apps/${PROJECT_NAME}.png debian/${PROJECT_NAME}/usr/share/icons/hicolor/48x48/apps/${PROJECT_NAME}.png
-	install -D -m 644 img/icons/hicolor/128x128/apps/${PROJECT_NAME}.png debian/${PROJECT_NAME}/usr/share/icons/hicolor/128x128/apps/${PROJECT_NAME}.png
-	install -D -m 644 img/icons/hicolor/scalable/apps/${PROJECT_NAME}.svg debian/${PROJECT_NAME}/usr/share/icons/hicolor/scalable/apps/${PROJECT_NAME}.svg
+	dh_auto_install --builddirectory=build --destdir=$(CURDIR)/debian/@PROJECT_NAME@
 
 override_dh_strip:
-	dh_strip --dbgsym-migration='${PROJECT_NAME}-dbg (<< ${version}-1)'
+	dh_strip --dbgsym-migration='@PROJECT_NAME@-dbg (<< @VERSION@-1)'
 
 override_dh_auto_clean:
-	rm -rf build
+	dh_auto_clean --builddirectory=build
 EOF
+    sed -i \
+        -e "s|@PROJECT_NAME@|${PROJECT_NAME}|g" \
+        -e "s|@VERSION@|${version}|g" \
+        "${source_dir}/debian/rules"
     chmod +x "${source_dir}/debian/rules"
 
     # 生成 debian/copyright
@@ -342,7 +399,7 @@ EOF
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: ${PROJECT_NAME}
 Upstream-Contact: Yanxi Bamboo Forest <maintainer@example.com>
-Source: https://gitee.com/yanxi-bamboo-forest/ter-music
+Source: ${PROJECT_HOMEPAGE}
 
 Files: *
 Copyright: $(date +%Y) Yanxi Bamboo Forest
@@ -381,18 +438,18 @@ EOF
     local orig_tarball="${TEMP_DIR}/source/${PROJECT_NAME}_${version}.orig.tar.gz"
 
     if [ -f "$orig_tarball" ]; then
-        cp "$orig_tarball" "${OUTPUT_DIR}/"
-        log_info "源码包 .orig.tar.gz 已复制: ${OUTPUT_DIR}/$(basename "$orig_tarball")"
+        cp "$orig_tarball" "${SOURCE_OUTPUT_DIR}/"
+        log_info "源码包 .orig.tar.gz 已复制: ${SOURCE_OUTPUT_DIR}/$(basename "$orig_tarball")"
     fi
 
     if [ -f "$dsc_file" ]; then
-        cp "$dsc_file" "${OUTPUT_DIR}/"
-        log_info "源码包 .dsc 已创建: ${OUTPUT_DIR}/$(basename "$dsc_file")"
+        cp "$dsc_file" "${SOURCE_OUTPUT_DIR}/"
+        log_info "源码包 .dsc 已创建: ${SOURCE_OUTPUT_DIR}/$(basename "$dsc_file")"
     fi
 
     if [ -f "$diff_file" ]; then
-        cp "$diff_file" "${OUTPUT_DIR}/"
-        log_info "源码包 debian.tar.xz 已创建: ${OUTPUT_DIR}/$(basename "$diff_file")"
+        cp "$diff_file" "${SOURCE_OUTPUT_DIR}/"
+        log_info "源码包 debian.tar.xz 已创建: ${SOURCE_OUTPUT_DIR}/$(basename "$diff_file")"
     fi
 
     log_info "Debian 源码包构建完成"
@@ -404,33 +461,14 @@ build_from_source() {
 
     log_info "从源码构建..."
 
-    mkdir -p "${build_dir}"
-    cd "${build_dir}"
-
     if [ "$with_debug" = "true" ]; then
-        cmake "${SCRIPT_DIR}" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=/usr
+        cmake -S "${SCRIPT_DIR}" -B "${build_dir}" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=/usr
     else
-        cmake "${SCRIPT_DIR}" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+        cmake -S "${SCRIPT_DIR}" -B "${build_dir}" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
     fi
-    make -j$(nproc)
+    cmake --build "${build_dir}" --parallel "$(nproc)"
 
     log_info "源码构建完成"
-}
-
-create_deb_directory_structure() {
-    local deb_root="$1"
-
-    log_info "创建 DEB 目录结构..."
-
-    mkdir -p "${deb_root}"/DEBIAN
-    mkdir -p "${deb_root}"/usr/bin
-    mkdir -p "${deb_root}"/usr/share/applications
-    mkdir -p "${deb_root}"/usr/share/icons/hicolor/32x32/apps
-    mkdir -p "${deb_root}"/usr/share/icons/hicolor/48x48/apps
-    mkdir -p "${deb_root}"/usr/share/icons/hicolor/128x128/apps
-    mkdir -p "${deb_root}"/usr/share/icons/hicolor/scalable/apps
-
-    log_info "DEB 目录结构创建完成"
 }
 
 generate_control_file() {
@@ -464,7 +502,7 @@ Description: A terminal-based music player with ncurses interface
 Depends: libavcodec60 | libavcodec59 | libavcodec58 | libavcodec-ffmpeg56 | libavcodec-extra, libavformat60 | libavformat59 | libavformat58 | libavformat57, libavutil58 | libavutil57 | libavutil56 | libavutil55, libswresample4 | libswresample3 | libswresample2, libpulse0 | libasound2, libncursesw6 | libncursesw5
 Section: sound
 Priority: optional
-Homepage: https://gitee.com/yanxi-bamboo-forest/ter-music
+Homepage: ${PROJECT_HOMEPAGE}
 EOF
 
     log_info "control 文件已生成: $control_file"
@@ -476,12 +514,8 @@ install_files() {
 
     log_info "安装文件到 DEB 目录..."
 
-    install -m 755 "${build_dir}/${PROJECT_NAME}" "${deb_root}/usr/bin/${PROJECT_NAME}"
-    install -m 644 "${SCRIPT_DIR}/share/applications/${PROJECT_NAME}.desktop" "${deb_root}/usr/share/applications/${PROJECT_NAME}.desktop"
-    install -m 644 "${SCRIPT_DIR}/img/icons/hicolor/32x32/apps/${PROJECT_NAME}.png" "${deb_root}/usr/share/icons/hicolor/32x32/apps/${PROJECT_NAME}.png"
-    install -m 644 "${SCRIPT_DIR}/img/icons/hicolor/48x48/apps/${PROJECT_NAME}.png" "${deb_root}/usr/share/icons/hicolor/48x48/apps/${PROJECT_NAME}.png"
-    install -m 644 "${SCRIPT_DIR}/img/icons/hicolor/128x128/apps/${PROJECT_NAME}.png" "${deb_root}/usr/share/icons/hicolor/128x128/apps/${PROJECT_NAME}.png"
-    install -m 644 "${SCRIPT_DIR}/img/icons/hicolor/scalable/apps/${PROJECT_NAME}.svg" "${deb_root}/usr/share/icons/hicolor/scalable/apps/${PROJECT_NAME}.svg"
+    mkdir -p "${deb_root}/DEBIAN"
+    DESTDIR="${deb_root}" cmake --build "${build_dir}" --target install
 
     log_info "文件安装完成"
 }
@@ -567,12 +601,13 @@ collect_results() {
     local target_arch="$4"
 
     log_info "收集构建结果..."
+    COLLECTED_RESULT_FILE=""
 
     if [ -f "$temp_output" ]; then
         cp "$temp_output" "${output_dir}/"
         local filename=$(basename "$temp_output")
         log_info "已复制 ${file_type}: $filename -> ${output_dir}/"
-        echo "${output_dir}/${filename}"
+        COLLECTED_RESULT_FILE="${output_dir}/${filename}"
         return 0
     else
         log_error "未找到构建好的 ${file_type} 包"
@@ -606,6 +641,7 @@ show_summary() {
     local output_dir="${OUTPUT_DIR}/${target_arch}"
     shift
     local output_files=("$@")
+    local has_source_output="false"
 
     echo ""
     echo "=========================================="
@@ -614,6 +650,15 @@ show_summary() {
     echo ""
     echo "目标架构: $target_arch"
     echo "输出目录: ${output_dir}/"
+    for file in "${output_files[@]}"; do
+        if [[ "$file" == "${SOURCE_OUTPUT_DIR}/"* ]]; then
+            has_source_output="true"
+            break
+        fi
+    done
+    if [ "$has_source_output" = "true" ]; then
+        echo "源码包目录: ${SOURCE_OUTPUT_DIR}/"
+    fi
     echo ""
     echo "生成的包:"
     for file in "${output_files[@]}"; do
@@ -689,6 +734,9 @@ main() {
     echo ""
 
     check_dependencies
+    if ! validate_project_layout; then
+        exit 1
+    fi
 
     if [ "$version" = "$DEFAULT_VERSION" ]; then
         version=$(detect_version)
@@ -730,8 +778,12 @@ main() {
         create_debian_source_package "$version"
 
         # 收集源码包
-        for ext in .orig.tar.gz .dsc .debian.tar.xz; do
-            local src_file="${OUTPUT_DIR}/${PROJECT_NAME}_${version}${ext}"
+        local source_outputs=(
+            "${SOURCE_OUTPUT_DIR}/${PROJECT_NAME}_${version}.orig.tar.gz"
+            "${SOURCE_OUTPUT_DIR}/${PROJECT_NAME}_${version}-1.dsc"
+            "${SOURCE_OUTPUT_DIR}/${PROJECT_NAME}_${version}-1.debian.tar.xz"
+        )
+        for src_file in "${source_outputs[@]}"; do
             if [ -f "$src_file" ]; then
                 output_files+=("$src_file")
             fi
@@ -753,15 +805,14 @@ main() {
         build_from_source "$build_dir" "false"
     fi
 
-    create_deb_directory_structure "$deb_root"
-    generate_control_file "$deb_root" "$version" "$target_arch"
     install_files "$deb_root" "$build_dir"
+    generate_control_file "$deb_root" "$version" "$target_arch"
 
     if build_deb "$deb_root" "$version" "$temp_output"; then
-        local bin_output
-        bin_output=$(collect_results "$temp_output" "$output_dir" "二进制" "$target_arch")
-        if [ -n "$bin_output" ]; then
-            output_files+=("$bin_output")
+        if collect_results "$temp_output" "$output_dir" "二进制" "$target_arch"; then
+            if [ -n "$COLLECTED_RESULT_FILE" ]; then
+                output_files+=("$COLLECTED_RESULT_FILE")
+            fi
         fi
     else
         log_error "DEB 构建过程失败"
@@ -778,10 +829,10 @@ main() {
         local debug_output_file="${TEMP_DIR}/${PROJECT_NAME}-dbgsym_${version}_${target_arch}.deb"
 
         if build_debuginfo_deb "$build_dir" "$version" "$target_arch" "$debug_output_file"; then
-            local dbg_output
-            dbg_output=$(collect_results "$debug_output_file" "$output_dir" "debuginfo" "$target_arch")
-            if [ -n "$dbg_output" ]; then
-                output_files+=("$dbg_output")
+            if collect_results "$debug_output_file" "$output_dir" "debuginfo" "$target_arch"; then
+                if [ -n "$COLLECTED_RESULT_FILE" ]; then
+                    output_files+=("$COLLECTED_RESULT_FILE")
+                fi
             fi
         else
             log_error "Debuginfo 包构建失败，继续..."
