@@ -187,7 +187,7 @@ install -m 644 ../img/icons/hicolor/scalable/apps/%{name}.svg %{buildroot}%{_dat
 %{_datadir}/icons/hicolor/*/apps/%{name}.*
 
 %changelog
-* $(LANG=C date +'%a %b %d %Y') Packager <packager@example.com> - ${version}-1
+* $(LC_ALL=C date +'%a %b %d %Y') Packager <packager@example.com> - ${version}-1
 - Initial package
 EOF
     
