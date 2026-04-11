@@ -232,20 +232,24 @@ Solution: Install ffmpeg-devel (Fedora) or libavcodec-dev libavformat-dev... (Ub
 Ter-Music provides five build scripts for creating executable files in different formats:
 
 #### 4.9.1 AppImage Build Script
-
 The `build-appimage.sh` script builds AppImage format directly from source code (can also convert from existing RPM packages), suitable for various Linux distributions:
-
 **Usage:**
 
 ```bash
 # Specify version number and build directly from source code (recommended)
 ./build-appimage.sh -v 1.4.1
 
-# Auto-detect version, build directly from source code
+# Auto-detect version and architecture, build directly from source code
 ./build-appimage.sh
 
+# Specify target architecture
+./build-appimage.sh -a aarch64
+
+# Specify version and architecture
+./build-appimage.sh -v 1.4.1 -a aarch64
+
 # Convert from specified RPM package
-./build-appimage.sh -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm
+./build-appimage.sh -r build/rpm/x86_64/ter-music-1.0.0-1.x86_64.rpm
 
 # Keep temporary files after build (for debugging)
 ./build-appimage.sh --keep-temp
@@ -254,25 +258,37 @@ The `build-appimage.sh` script builds AppImage format directly from source code 
 ./build-appimage.sh --help
 ```
 
+**Supported Architectures:**
+- x86_64: Intel/AMD 64-bit
+- aarch64: ARM 64-bit
+- loong64: LoongArch new world (ABI 2.0)
+- loongarch64: LoongArch old world (ABI 1.0)
+- sw64: Sunway
+- mips64: MIPS 64-bit
+
 **Output:**
 
-- AppImage package will be output to: `build/appimage/`
+- AppImage package will be output to: `build/appimage/<arch>/`
 
 #### 4.9.2 Portable Package Build Script
-
 The `build-portable.sh` script builds a portable compressed package format directly from source code (can also convert from existing RPM packages), containing all necessary dependency libraries:
-
 **Usage:**
 
 ```bash
 # Specify version number and build directly from source code (recommended)
 ./build-portable.sh -v 1.4.1
 
-# Auto-detect version, build directly from source code
+# Auto-detect version and architecture, build directly from source code
 ./build-portable.sh
 
+# Specify target architecture
+./build-portable.sh -a aarch64
+
+# Specify version and architecture
+./build-portable.sh -v 1.4.1 -a aarch64
+
 # Convert from specified RPM package
-./build-portable.sh -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm
+./build-portable.sh -r build/rpm/x86_64/ter-music-1.0.0-1.x86_64.rpm
 
 # Keep temporary files after build (for debugging)
 ./build-portable.sh --keep-temp
@@ -281,24 +297,36 @@ The `build-portable.sh` script builds a portable compressed package format direc
 ./build-portable.sh --help
 ```
 
+**Supported Architectures:**
+- x86_64: Intel/AMD 64-bit
+- aarch64: ARM 64-bit
+- loong64: LoongArch (including new and old world)
+- loongarch64: LoongArch old world
+- sw64: Sunway
+- mips64: MIPS 64-bit
+
 **Output:**
 
-- Portable package will be output to: `build/portable/`
+- Portable package will be output to: `build/portable/<arch>/`
 
 **Note:** This script now supports building directly from source code. You can also run `build-rpm.sh` first to generate an RPM package, then use the `-r` option to specify the path to an existing RPM package for conversion.
 
 #### 4.9.3 RPM Package Build Script
-
 The `build-rpm.sh` script builds standard RPM packages directly from source code, suitable for Fedora/RHEL-based distributions:
-
 **Usage:**
 
 ```bash
-# Build RPM package with automatic version detection
+# Build RPM package with automatic version and architecture detection
 ./build-rpm.sh
 
 # Build with specified version number
 ./build-rpm.sh -v 1.2.3
+
+# Specify target architecture
+./build-rpm.sh -a arm64
+
+# Specify version and architecture
+./build-rpm.sh -v 1.2.3 -a loong64
 
 # Generate debuginfo package
 ./build-rpm.sh --with-debuginfo
@@ -310,28 +338,40 @@ The `build-rpm.sh` script builds standard RPM packages directly from source code
 ./build-rpm.sh --help
 ```
 
+**Supported Architectures:**
+- x86_64: Intel/AMD 64-bit
+- arm64: ARM 64-bit
+- loong64: LoongArch new world
+- loongarch64: LoongArch old world
+- sw64: Sunway
+- mips64: MIPS 64-bit
+
 **Output:**
 
-- RPM package will be output to: `build/rpm/`
+- RPM package will be output to: `build/rpm/<arch>/`
 
 **Install:**
 
 ```bash
-sudo dnf install build/rpm/ter-music-*.x86_64.rpm
+sudo dnf install build/rpm/x86_64/ter-music-*.x86_64.rpm
 ```
 
 #### 4.9.4 Linyaps Build Script
-
 The `build-linyaps.sh` script builds Linyaps (Linglong) format packages directly from source, suitable for systems like deepin/UOS that use Linglong package management:
-
 **Usage:**
 
 ```bash
-# Build Linyaps package with automatic version detection
+# Build Linyaps package with automatic version and architecture detection
 ./build-linyaps.sh
 
 # Build with specified version number
 ./build-linyaps.sh -v 1.2.3
+
+# Specify target architecture
+./build-linyaps.sh -a arm64
+
+# Specify version and architecture
+./build-linyaps.sh -v 1.2.3 -a loong64
 
 # Keep temporary files after build (for debugging)
 ./build-linyaps.sh --keep-temp
@@ -340,15 +380,22 @@ The `build-linyaps.sh` script builds Linyaps (Linglong) format packages directly
 ./build-linyaps.sh --help
 ```
 
+**Supported Architectures:**
+- x86_64: Intel/AMD 64-bit
+- arm64: ARM 64-bit
+- loong64: LoongArch (including new and old world)
+- mips64: MIPS 64-bit
+- sw64: Sunway
+
 **Output:**
 
-- UAB package and layer files will be output to: `build/linyaps/`
+- UAB package and layer files will be output to: `build/linyaps/<arch>/`
 
 **Install and Run:**
 
 ```bash
 # Install using ll-cli
-ll-cli install build/linyaps/org.yxzl.ter-music_1.0.0_x86_64.uab
+ll-cli install build/linyaps/x86_64/org.yxzl.ter-music_1.0.0_x86_64.uab
 
 # Run
 ll-cli run org.yxzl.ter-music
@@ -363,17 +410,21 @@ sudo apt install libavutil-dev libtag1-dev libpulse-dev
 ```
 
 #### 4.9.5 DEB Package Build Script
-
 The `build-deb.sh` script builds standard Debian/Ubuntu DEB packages directly from source code, suitable for Debian-based distributions such as Debian, Ubuntu, Linux Mint, deepin, etc.
-
 **Usage:**
 
 ```bash
 # Specify version number and build directly from source code (recommended)
 ./build-deb.sh -v 1.4.1
 
-# Auto-detect version, build directly from source code
+# Auto-detect version and architecture, build directly from source code
 ./build-deb.sh
+
+# Specify target architecture
+./build-deb.sh -a arm64
+
+# Specify version and architecture
+./build-deb.sh -v 1.4.1 -a arm64
 
 # Keep temporary files after build (for debugging)
 ./build-deb.sh --keep-temp
@@ -382,14 +433,22 @@ The `build-deb.sh` script builds standard Debian/Ubuntu DEB packages directly fr
 ./build-deb.sh --help
 ```
 
+**Supported Architectures:**
+- amd64: Intel/AMD 64-bit
+- arm64: ARM 64-bit
+- loong64: LoongArch new world
+- loongarch64: LoongArch old world
+- sw64: Sunway
+- mips64el: MIPS 64-bit little-endian
+
 **Output:**
 
-- DEB package will be output to: `build/deb/`
+- DEB package will be output to: `build/deb/<arch>/`
 
 **Install:**
 
 ```bash
-sudo dpkg -i build/deb/ter-music_*_amd64.deb
+sudo dpkg -i build/deb/amd64/ter-music_*_amd64.deb
 # If dependencies are missing, run:
 sudo apt install -f
 ```

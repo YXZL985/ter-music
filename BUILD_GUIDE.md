@@ -5,16 +5,20 @@
 ## 可用的构建脚本
 
 ### 1. build-rpm.sh - 构建 RPM 包
-
 将项目构建为标准的 Fedora RPM 包。
-
 **使用方法：**
 ```bash
-# 使用默认版本号构建
+# 使用默认版本号和架构构建
 ./build-rpm.sh
 
 # 指定版本号构建
 ./build-rpm.sh -v 1.2.3
+
+# 指定目标架构
+./build-rpm.sh -a arm64
+
+# 指定版本号和架构
+./build-rpm.sh -v 1.2.3 -a loong64
 
 # 生成 debuginfo 包（默认不生成）
 ./build-rpm.sh --with-debuginfo
@@ -25,30 +29,40 @@
 # 显示帮助信息
 ./build-rpm.sh --help
 ```
+**支持的架构：**
+- x86_64: Intel/AMD 64位
+- arm64: ARM 64位
+- loong64: 龙芯新世界
+- loongarch64: 龙芯旧世界
+- sw64: 申威
+- mips64: MIPS 64位
 
 **输出：**
-- RPM 包将输出到 `build/rpm/` 目录
+- RPM 包将输出到 `build/rpm/<arch>/` 目录
 - 默认只生成主包，使用 `--with-debuginfo` 选项可同时生成 debuginfo 包和 debugsource 包
-
 **安装：**
 ```bash
-sudo dnf install build/rpm/ter-music-*.x86_64.rpm
+sudo dnf install build/rpm/x86_64/ter-music-*.x86_64.rpm
 ```
 
 ### 2. build-appimage.sh - 构建 AppImage 包
-
 直接从源码构建 AppImage 格式（也可从 RPM 转换，需要 FUSE 支持）。
-
 **使用方法：**
 ```bash
-# 自动检测版本，直接从源码构建
+# 自动检测版本和架构，直接从源码构建
 ./build-appimage.sh
 
 # 指定版本号构建
 ./build-appimage.sh -v 1.4.1
 
+# 指定目标架构
+./build-appimage.sh -a aarch64
+
+# 指定版本和架构
+./build-appimage.sh -v 1.4.1 -a aarch64
+
 # 从指定 RPM 包文件转换
-./build-appimage.sh -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm
+./build-appimage.sh -r build/rpm/x86_64/ter-music-1.0.0-1.x86_64.rpm
 
 # 保留临时文件用于调试
 ./build-appimage.sh --keep-temp
@@ -56,9 +70,16 @@ sudo dnf install build/rpm/ter-music-*.x86_64.rpm
 # 显示帮助信息
 ./build-appimage.sh --help
 ```
+**支持的架构：**
+- x86_64: Intel/AMD 64位
+- aarch64: ARM 64位
+- loong64: 龙芯（包括新世界和旧世界）
+- loongarch64: 龙芯旧世界
+- sw64: 申威
+- mips64: MIPS 64位
 
 **输出：**
-- AppImage 包将输出到 `build/appimage/` 目录
+- AppImage 包将输出到: `build/appimage/<arch>/` 目录
 
 **使用：**
 ```bash
@@ -76,19 +97,23 @@ chmod +x build/appimage/ter-music-1.0.0-x86_64.AppImage
 - 建议使用可移植包作为替代方案
 
 ### 3. build-portable.sh - 构建可移植压缩包
-
 直接从源码构建可移植的 tar.gz 压缩包，包含所有必要的依赖库（也可从 RPM 转换）。
-
 **使用方法：**
 ```bash
-# 自动检测版本，直接从源码构建
+# 自动检测版本和架构，直接从源码构建
 ./build-portable.sh
 
 # 指定版本号构建
 ./build-portable.sh -v 1.4.1
 
+# 指定目标架构
+./build-portable.sh -a aarch64
+
+# 指定版本和架构
+./build-portable.sh -v 1.4.1 -a aarch64
+
 # 从指定 RPM 包文件转换
-./build-portable.sh -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm
+./build-portable.sh -r build/rpm/x86_64/ter-music-1.0.0-1.x86_64.rpm
 
 # 保留临时文件用于调试
 ./build-portable.sh --keep-temp
@@ -96,9 +121,16 @@ chmod +x build/appimage/ter-music-1.0.0-x86_64.AppImage
 # 显示帮助信息
 ./build-portable.sh --help
 ```
+**支持的架构：**
+- x86_64: Intel/AMD 64位
+- aarch64: ARM 64位
+- loong64: 龙芯（包括新世界和旧世界）
+- loongarch64: 龙芯旧世界
+- sw64: 申威
+- mips64: MIPS 64位
 
 **输出：**
-- 可移植包将输出到 `build/portable/` 目录
+- 可移植包将输出到: `build/portable/<arch>/` 目录
 
 **使用：**
 ```bash
@@ -119,16 +151,20 @@ cd ter-music-portable
 - 不需要安装任何依赖
 
 ### 4. build-linyaps.sh - 构建 Linyaps（如意玲珑）包
-
 直接从源码构建 Linyaps（如意玲珑）格式包，适合 deepin 等使用玲珑包管理的系统。
-
 **使用方法：**
 ```bash
-# 使用默认版本号构建
+# 使用默认版本号和架构构建
 ./build-linyaps.sh
 
-# 指定版本号构建
+#指定版本号构建
 ./build-linyaps.sh -v 1.2.3
+
+# 指定目标架构
+./build-linyaps.sh -a arm64
+
+# 指定版本和架构
+./build-linyaps.sh -v 1.2.3 -a loong64
 
 # 保留临时文件用于调试
 ./build-linyaps.sh --keep-temp
@@ -136,9 +172,15 @@ cd ter-music-portable
 # 显示帮助信息
 ./build-linyaps.sh --help
 ```
+**支持的架构：**
+- x86_64: Intel/AMD 64位
+- arm64: ARM 64位
+- loong64: 龙芯（包括新世界和旧世界）
+- mips64: MIPS 64位
+- sw64: 申威
 
 **输出：**
-- UAB 包和 layer 文件将输出到 `build/linyaps/` 目录
+- UAB 包和 layer 文件将输出到: `build/linyaps/<arch>/` 目录
 
 **安装：**
 ```bash
@@ -155,16 +197,20 @@ ll-cli run org.yxzl.ter-music
 - 适合 deepin/UOS 系统用户
 
 ### 5. build-deb.sh - 构建 DEB 包
-
 将项目构建为标准的 Debian/Ubuntu DEB 包，适合 Debian、Ubuntu、Linux Mint、deepin 等基于 Debian 的发行版。
-
 **使用方法：**
 ```bash
-# 使用自动检测的版本号构建 DEB
+# 使用自动检测的版本号和架构构建 DEB
 ./build-deb.sh
 
 # 指定版本号构建
-./build-deb.sh -v 1.2.3
+./build-deb.sh -v 1.4.1
+
+# 指定目标架构
+./build-deb.sh -a arm64
+
+# 指定版本号和架构
+./build-deb.sh -v 1.4.1 -a arm64
 
 # 保留临时文件用于调试
 ./build-deb.sh --keep-temp
@@ -172,9 +218,16 @@ ll-cli run org.yxzl.ter-music
 # 显示帮助信息
 ./build-deb.sh --help
 ```
+**支持的架构：**
+- amd64: Intel/AMD 64位
+- arm64: ARM 64位
+- loong64: 龙芯新世界
+- loongarch64: 龙芯旧世界
+- sw64: 申威
+- mips64el: MIPS 64位小端
 
 **输出：**
-- DEB 包将输出到 `build/deb/` 目录
+- DEB 包将输出到: `build/deb/<arch>/` 目录
 
 **安装：**
 ```bash

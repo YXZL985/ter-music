@@ -196,17 +196,22 @@ rm -rf build
 
 #### 1. AppImage营构脚本
 `build-appimage.sh` 脚本，直从源本营构AppImage之式（亦可从已有RPM包转换），通于诸种麟纳克斯发行版。
-
 **用法**：
 ```bash
 # 指定版号直从源本营构（荐举）
 ./build-appimage.sh -v 1.4.1
 
-# 自动检核版号，直从源本营构
+# 自动检核版号与架构，直从源本营构
 ./build-appimage.sh
 
+# 指定目标架构
+./build-appimage.sh -a aarch64
+
+# 指定版号与架构
+./build-appimage.sh -v 1.4.1 -a aarch64
+
 # 从指定RPM包转换
-./build-appimage.sh -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm
+./build-appimage.sh -r build/rpm/x86_64/ter-music-1.0.0-1.x86_64.rpm
 
 # 营构毕留存临时之文（调试用）
 ./build-appimage.sh --keep-temp
@@ -214,22 +219,34 @@ rm -rf build
 # 显助益之文
 ./build-appimage.sh --help
 ```
+**所持之架构**：
+- x86_64：Intel/AMD 64位
+- aarch64：ARM 64位
+- loong64：龙芯新世界（ABI2.0）
+- loongarch64：龙芯旧世界（ABI1.0）
+- sw64：申威
+- mips64：MIPS 64位
 
-**所出**：AppImage包将出于`build/appimage/`
+**所出**：AppImage包将出于`build/appimage/<arch>/`
 
 #### 2. 可携包营构脚本
 `build-portable.sh` 脚本，直从源本营构可携压缩之式（亦可从已有RPM包转换），尽纳必需之凭藉库。
-
 **用法**：
 ```bash
 # 指定版号直从源本营构（荐举）
 ./build-portable.sh -v 1.4.1
 
-# 自动检核版号，直从源本营构
+# 自动检核版号与架构，直从源本营构
 ./build-portable.sh
 
+# 指定目标架构
+./build-portable.sh -a aarch64
+
+# 指定版号与架构
+./build-portable.sh -v 1.4.1 -a aarch64
+
 # 从指定RPM包转换
-./build-portable.sh -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm
+./build-portable.sh -r build/rpm/x86_64/ter-music-1.0.0-1.x86_64.rpm
 
 # 营构毕留存临时之文（调试用）
 ./build-portable.sh --keep-temp
@@ -237,21 +254,32 @@ rm -rf build
 # 显助益之文
 ./build-portable.sh --help
 ```
+**所持之架构**：
+- x86_64：Intel/AMD 64位
+- aarch64：ARM 64位
+- loong64：龙芯（含新世界与旧世界）
+- loongarch64：龙芯旧世界
+- sw64：申威
+- mips64：MIPS 64位
 
-**所出**：可携包将出于`build/portable/`
-
+**所出**：可携包将出于`build/portable/<arch>/`
 **注**：此脚本今已支持直从源本营构。亦可先运行`build-rpm.sh`以生RPM包，然后以`-r`选项指定已有RPM包之路径转换。
 
 #### 3. RPM包营构脚本
 `build-rpm.sh` 脚本，直从源本营构标准 RPM 包，宜于 Fedora/RHEL 等基于 RPM 发行之统。
-
 **用法**：
 ```bash
-# 以自动检核之版营构 RPM 包
+# 以自动检核之版与架构营构 RPM 包
 ./build-rpm.sh
 
 # 指定版号营构
 ./build-rpm.sh -v 1.2.3
+
+# 指定目标架构
+./build-rpm.sh -a arm64
+
+# 指定版号与架构
+./build-rpm.sh -v 1.2.3 -a loong64
 
 # 生debuginfo包（默不生成）
 ./build-rpm.sh --with-debuginfo
@@ -262,24 +290,35 @@ rm -rf build
 # 显助益之文
 ./build-rpm.sh --help
 ```
+**所持之架构**：
+- x86_64：Intel/AMD 64位
+- arm64：ARM 64位
+- loong64：龙芯新世界
+- loongarch64：龙芯旧世界
+- sw64：申威
+- mips64：MIPS 64位
 
-**所出**：RPM包将出于`build/rpm/`
-
+**所出**：RPM包将出于`build/rpm/<arch>/`
 **纳置**：
 ```bash
-sudo dnf install build/rpm/ter-music-*.x86_64.rpm
+sudo dnf install build/rpm/x86_64/ter-music-*.x86_64.rpm
 ```
 
 #### 4. 如意玲珑Linyaps营构脚本
 `build-linyaps.sh` 脚本，直从源本营构如意玲珑之包，宜于deepin/UOS等用玲珑包管之统。
-
 **用法**：
 ```bash
-# 以自动检核之版营构Linyaps包
+# 以自动检核之版与架构营构Linyaps包
 ./build-linyaps.sh
 
 # 指定版号营构
 ./build-linyaps.sh -v 1.2.3
+
+# 指定目标架构
+./build-linyaps.sh -a arm64
+
+# 指定版号与架构
+./build-linyaps.sh -v 1.2.3 -a loong64
 
 # 营构毕留存临时之文（调试用）
 ./build-linyaps.sh --keep-temp
@@ -287,13 +326,18 @@ sudo dnf install build/rpm/ter-music-*.x86_64.rpm
 # 显助益之文
 ./build-linyaps.sh --help
 ```
+**所持之架构**：
+- x86_64：Intel/AMD 64位
+- arm64：ARM 64位
+- loong64：龙芯（含新世界与旧世界）
+- mips64：MIPS 64位
+- sw64：申威
 
-**所出**：UAB包与layer文将出于`build/linyaps/`
-
+**所出**：UAB包与layer文将出于`build/linyaps/<arch>/`
 **纳置运行**：
 ```bash
 # 以ll-cli纳置
-ll-cli install build/linyaps/org.yxzl.ter-music_1.0.0_x86_64.uab
+ll-cli install build/linyaps/x86_64/org.yxzl.ter-music_1.0.0_x86_64.uab
 
 # 运行
 ll-cli run org.yxzl.ter-music
@@ -308,14 +352,19 @@ sudo apt install libavutil-dev libtag1-dev libpulse-dev
 
 #### 5. DEB包营构脚本
 `build-deb.sh` 脚本，直从源本营构标准 Debian/Ubuntu DEB 包，宜于 Debian、Ubuntu、Linux Mint、deepin 等基于 Debian 发行之统。
-
 **用法**：
 ```bash
 # 指定版号直从源本营构（荐举）
 ./build-deb.sh -v 1.4.1
 
-# 自动检核版号，直从源本营构
+# 自动检核版号与架构，直从源本营构
 ./build-deb.sh
+
+# 指定目标架构
+./build-deb.sh -a arm64
+
+# 指定版号与架构
+./build-deb.sh -v 1.4.1 -a arm64
 
 # 营构毕留存临时之文（调试用）
 ./build-deb.sh --keep-temp
@@ -323,12 +372,18 @@ sudo apt install libavutil-dev libtag1-dev libpulse-dev
 # 显助益之文
 ./build-deb.sh --help
 ```
+**所持之架构**：
+- amd64：Intel/AMD 64位
+- arm64：ARM 64位
+- loong64：龙芯新世界
+- loongarch64：龙芯旧世界
+- sw64：申威
+- mips64el：MIPS 64位小端
 
-**所出**：DEB包将出于`build/deb/`
-
+**所出**：DEB包将出于`build/deb/<arch>/`
 **纳置**：
 ```bash
-sudo dpkg -i build/deb/ter-music_*_amd64.deb
+sudo dpkg -i build/deb/amd64/ter-music_*_amd64.deb
 # 若阙乏凭藉，请运行：
 sudo apt install -f
 ```
