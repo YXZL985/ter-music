@@ -16,6 +16,9 @@
 # 指定版本号构建
 ./build-rpm.sh -v 1.2.3
 
+# 生成 debuginfo 包（默认不生成）
+./build-rpm.sh --with-debuginfo
+
 # 保留临时文件用于调试
 ./build-rpm.sh --keep-temp
 
@@ -25,7 +28,7 @@
 
 **输出：**
 - RPM 包将输出到 `build/rpm/` 目录
-- 包括主包、debuginfo 包和 debugsource 包
+- 默认只生成主包，使用 `--with-debuginfo` 选项可同时生成 debuginfo 包和 debugsource 包
 
 **安装：**
 ```bash

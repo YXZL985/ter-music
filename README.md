@@ -300,6 +300,9 @@ The `build-rpm.sh` script builds standard RPM packages directly from source code
 # Build with specified version number
 ./build-rpm.sh -v 1.2.3
 
+# Generate debuginfo package
+./build-rpm.sh --with-debuginfo
+
 # Keep temporary files after build (for debugging)
 ./build-rpm.sh --keep-temp
 

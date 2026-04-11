@@ -253,6 +253,9 @@ rm -rf build
 # 指定版号营构
 ./build-rpm.sh -v 1.2.3
 
+# 生debuginfo包（默不生成）
+./build-rpm.sh --with-debuginfo
+
 # 营构毕留存临时之文（调试用）
 ./build-rpm.sh --keep-temp
 
