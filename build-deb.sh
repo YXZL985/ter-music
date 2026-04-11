@@ -270,12 +270,12 @@ Homepage: https://gitee.com/yanxi-bamboo-forest/ter-music
 Package: ${PROJECT_NAME}
 Architecture: amd64
 Depends: \${shlibs:Depends}, \${misc:Depends},
-         libavcodec58 | libavcodec-ffmpeg56 | libavcodec-extra,
-         libavformat58 | libavformat57,
-         libavutil56 | libavutil55,
-         libswresample3 | libswresample2,
+         libavcodec60 | libavcodec59 | libavcodec58 | libavcodec-ffmpeg56 | libavcodec-extra,
+         libavformat60 | libavformat59 | libavformat58 | libavformat57,
+         libavutil58 | libavutil57 | libavutil56 | libavutil55,
+         libswresample4 | libswresample3 | libswresample2,
          libpulse0 | libasound2,
-         libncursesw5 | libncursesw6
+         libncursesw6 | libncursesw5
 Description: A terminal-based music player with ncurses interface
  Ter-Music is a lightweight terminal-based music player for Linux systems.
  It uses FFmpeg for audio decoding, PulseAudio/ALSA for audio output, and ncursesw
@@ -461,7 +461,7 @@ Description: A terminal-based music player with ncurses interface
   - Customizable color themes
   - Keyboard shortcuts
   - Real-time progress bar
-Depends: libavcodec58 | libavcodec-ffmpeg56 | libavcodec-extra, libavformat58 | libavformat57, libavutil56 | libavutil55, libswresample3 | libswresample2, libpulse0 | libasound2, libncursesw5 | libncursesw6
+Depends: libavcodec60 | libavcodec59 | libavcodec58 | libavcodec-ffmpeg56 | libavcodec-extra, libavformat60 | libavformat59 | libavformat58 | libavformat57, libavutil58 | libavutil57 | libavutil56 | libavutil55, libswresample4 | libswresample3 | libswresample2, libpulse0 | libasound2, libncursesw6 | libncursesw5
 Section: sound
 Priority: optional
 Homepage: https://gitee.com/yanxi-bamboo-forest/ter-music
