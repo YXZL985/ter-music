@@ -81,6 +81,58 @@ check_dependencies() {
     log_info "所有构建依赖已满足"
 }
 
+check_environment() {
+    log_info "检查构建环境..."
+
+    if [ ! -d "${SCRIPT_DIR}/src" ]; then
+        log_error "未找到源代码目录: ${SCRIPT_DIR}/src"
+        log_error "请确保在项目根目录下运行此脚本"
+        exit 1
+    fi
+
+    if [ ! -f "${SCRIPT_DIR}/CMakeLists.txt" ]; then
+        log_error "未找到 CMakeLists.txt 文件"
+        log_error "请确保在项目根目录下运行此脚本"
+        exit 1
+    fi
+
+    if [ ! -f "${SCRIPT_DIR}/include/defs.h" ]; then
+        log_error "未找到 defs.h 文件"
+        log_error "请确保项目结构完整"
+        exit 1
+    fi
+
+    if [ ! -d "${SCRIPT_DIR}/img/icons/hicolor/128x128/apps" ]; then
+        log_error "未找到图标文件目录"
+        log_error "请确保项目结构完整"
+        exit 1
+    fi
+
+    log_info "构建环境检查通过"
+}
+
+check_download_tool() {
+    log_info "检查下载工具..."
+
+    if command -v aria2c &> /dev/null; then
+        log_info "检测到 aria2c，将使用 aria2 进行下载"
+        return 0
+    elif command -v wget &> /dev/null; then
+        log_info "检测到 wget，将使用 wget 进行下载"
+        return 1
+    elif command -v curl &> /dev/null; then
+        log_info "检测到 curl，将使用 curl 进行下载"
+        return 2
+    else
+        log_error "未找到下载工具"
+        log_error "请安装以下任一下载工具:"
+        echo "  - aria2 (推荐): sudo apt install aria2 或 sudo dnf install aria2"
+        echo "  - wget: sudo apt install wget 或 sudo dnf install wget"
+        echo "  - curl: sudo apt install curl 或 sudo dnf install curl"
+        exit 1
+    fi
+}
+
 detect_version() {
     local default_version="1.0.0"
 
@@ -128,12 +180,23 @@ download_appimagetool() {
 
         local appimagetool_url="https://github.com/AppImage/AppImageKit/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-x86_64.AppImage"
 
-        if command -v wget &> /dev/null; then
-            wget "${appimagetool_url}" -O "${appimagetool_dir}/appimagetool"
-        elif command -v curl &> /dev/null; then
-            curl -L "${appimagetool_url}" -o "${appimagetool_dir}/appimagetool"
-        else
-            log_error "需要 wget 或 curl 来下载 appimagetool"
+        local download_tool=$(check_download_tool)
+        local download_result=$?
+
+        case $download_result in
+            0)
+                aria2c -x 16 -s 16 -k 1M --max-tries=5 --retry-wait=2 "${appimagetool_url}" -d "${appimagetool_dir}" -o "appimagetool"
+                ;;
+            1)
+                wget "${appimagetool_url}" -O "${appimagetool_dir}/appimagetool"
+                ;;
+            2)
+                curl -L "${appimagetool_url}" -o "${appimagetool_dir}/appimagetool"
+                ;;
+        esac
+
+        if [ $? -ne 0 ]; then
+            log_error "下载 appimagetool 失败"
             exit 1
         fi
 
@@ -452,6 +515,7 @@ main() {
     echo ""
 
     check_dependencies
+    check_environment
 
     if [ -z "$version" ]; then
         version=$(detect_version)
