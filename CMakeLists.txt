@@ -34,10 +34,10 @@ endif()
 
 message(STATUS "Using audio backend: ${AUDIO_BACKEND_NAME}")
 
-# 查找ncursesw库
-find_library(NCURSESW_LIBRARY NAMES ncursesw)
+# 查找ncurses库（优先ncursesw，回退到ncurses）
+find_library(NCURSESW_LIBRARY NAMES ncursesw ncurses)
 if(NOT NCURSESW_LIBRARY)
-    message(FATAL_ERROR "ncursesw library not found")
+    message(FATAL_ERROR "ncurses library not found")
 endif()
 
 # 查找pthread库
