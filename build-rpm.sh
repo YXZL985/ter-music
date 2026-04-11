@@ -30,11 +30,13 @@ show_help() {
     -h, --help          显示此帮助信息
     -v, --version VERSION  指定版本号（默认：自动检测）
     -k, --keep-temp     保留临时构建文件（用于调试）
+    --no-debuginfo      不生成 debuginfo 包
 
 示例:
     $0                  使用自动检测的版本号构建 RPM
     $0 -v 1.2.3         使用指定版本号 1.2.3 构建 RPM
     $0 --keep-temp      构建后保留临时文件
+    $0 --no-debuginfo   跳过 debuginfo 包生成
 
 输出:
     RPM 包将输出到: ${OUTPUT_DIR}/
@@ -46,6 +48,7 @@ check_dependencies() {
     log_info "检查构建依赖..."
     
     local missing_deps=()
+    local optional_missing=()
     
     if ! command -v rpmbuild &> /dev/null; then
         missing_deps+=("rpm-build")
@@ -67,8 +70,13 @@ check_dependencies() {
         missing_deps+=("tar")
     fi
     
+    # 检查可选依赖（用于生成 debuginfo）
+    if ! command -v eu-strip &> /dev/null; then
+        optional_missing+=("elfutils")
+    fi
+    
     if [ ${#missing_deps[@]} -gt 0 ]; then
-        log_error "缺少以下构建工具:"
+        log_error "缺少以下必需的构建工具:"
         for dep in "${missing_deps[@]}"; do
             echo "  - $dep"
         done
@@ -76,6 +84,22 @@ check_dependencies() {
         log_error "请使用以下命令安装缺失的工具:"
         echo "  sudo dnf install ${missing_deps[*]}"
         exit 1
+    fi
+    
+    if [ ${#optional_missing[@]} -gt 0 ]; then
+        log_error "警告：缺少以下可选工具（debuginfo 包将无法生成）:"
+        for dep in "${optional_missing[@]}"; do
+            echo "  - $dep"
+        done
+        echo ""
+        log_info "如需生成 debuginfo 包，请安装:"
+        echo "  sudo dnf install ${optional_missing[*]}"
+        echo ""
+        read -p "是否继续构建（不生成 debuginfo）？[Y/n] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]] && [ -n "$REPLY" ]; then
+            exit 1
+        fi
     fi
     
     log_info "所有构建依赖已满足"
@@ -122,11 +146,19 @@ prepare_directories() {
 
 generate_spec_file() {
     local version="$1"
+    local no_debuginfo="$2"
     local spec_file="${TEMP_DIR}/SPECS/${PROJECT_NAME}.spec"
-    
+
     log_info "生成 RPM spec file..."
-    
+
+    # 根据是否禁用 debuginfo 设置宏
+    local debuginfo_macro=""
+    if [ "$no_debuginfo" = "true" ]; then
+        debuginfo_macro="%global debug_package %{nil}"
+    fi
+
     cat > "$spec_file" << EOF
+${debuginfo_macro}
 Name:           ${PROJECT_NAME}
 Version:        ${version}
 Release:        1%{?dist}
@@ -190,7 +222,7 @@ install -m 644 ../img/icons/hicolor/scalable/apps/%{name}.svg %{buildroot}%{_dat
 * $(LC_ALL=C date +'%a %b %d %Y') Packager <packager@example.com> - ${version}-1
 - Initial package
 EOF
-    
+
     log_info "Spec 文件已生成: $spec_file"
 }
 
@@ -316,7 +348,8 @@ show_summary() {
 main() {
     local version="$DEFAULT_VERSION"
     local keep_temp="false"
-    
+    local no_debuginfo="false"
+
     while [[ $# -gt 0 ]]; do
         case $1 in
             -h|--help)
@@ -331,6 +364,10 @@ main() {
                 keep_temp="true"
                 shift
                 ;;
+            --no-debuginfo)
+                no_debuginfo="true"
+                shift
+                ;;
             *)
                 log_error "未知选项: $1"
                 show_help
@@ -338,14 +375,14 @@ main() {
                 ;;
         esac
     done
-    
+
     echo "=========================================="
     echo "Ter-Music RPM 构建脚本"
     echo "=========================================="
     echo ""
-    
+
     check_dependencies
-    
+
     if [ "$version" = "$DEFAULT_VERSION" ]; then
         version=$(detect_version)
         if [ "$version" != "$DEFAULT_VERSION" ]; then
@@ -356,15 +393,15 @@ main() {
     else
         log_info "使用指定版本: $version"
     fi
-    
+
     prepare_directories
-    generate_spec_file "$version"
+    generate_spec_file "$version" "$no_debuginfo"
     if ! create_source_tarball "$version"; then
         log_error "创建源码压缩包失败"
         cleanup "$keep_temp"
         exit 1
     fi
-    
+
     if build_rpm; then
         if collect_results; then
             cleanup "$keep_temp"
