@@ -29,17 +29,28 @@ show_help() {
 选项:
     -h, --help          显示此帮助信息
     -v, --version VERSION  指定版本号（默认：自动检测）
+    -a, --arch ARCH     指定目标架构（默认：自动检测）
     -k, --keep-temp     保留临时构建文件（用于调试）
     --with-debuginfo    生成 debuginfo 包（默认不生成）
 
+支持的架构:
+    x86_64              Intel/AMD 64位
+    arm64               ARM 64位 (aarch64)
+    loong64             龙芯新世界
+    loongarch64         龙芯旧世界
+    sw64                申威
+    mips64              MIPS 64位
+
 示例:
-    $0                  使用自动检测的版本号构建 RPM
+    $0                  使用自动检测的版本号和架构构建 RPM
     $0 -v 1.2.3         使用指定版本号 1.2.3 构建 RPM
+    $0 -a arm64         为 ARM 64位架构构建 RPM
+    $0 -v 1.2.3 -a loong64  指定版本和架构构建 RPM
     $0 --keep-temp      构建后保留临时文件
     $0 --with-debuginfo 生成 debuginfo 包
 
 输出:
-    RPM 包将输出到: ${OUTPUT_DIR}/
+    RPM 包将输出到: ${OUTPUT_DIR}/<arch>/
 
 EOF
 }
@@ -133,10 +144,56 @@ detect_version() {
     echo "$version"
 }
 
+detect_architecture() {
+    local arch=$(uname -m)
+    
+    case "$arch" in
+        x86_64)
+            echo "x86_64"
+            ;;
+        aarch64|arm64)
+            echo "arm64"
+            ;;
+        loongarch64)
+            echo "loongarch64"
+            ;;
+        loong64)
+            echo "loong64"
+            ;;
+        mips64)
+            echo "mips64"
+            ;;
+        sw_64|sw64)
+            echo "sw64"
+            ;;
+        *)
+            log_error "未知的架构: $arch"
+            echo "unknown"
+            return 1
+            ;;
+    esac
+}
+
+validate_architecture() {
+    local arch="$1"
+    local valid_archs=("x86_64" "arm64" "loong64" "loongarch64" "sw64" "mips64")
+    
+    for valid_arch in "${valid_archs[@]}"; do
+        if [ "$arch" = "$valid_arch" ]; then
+            return 0
+        fi
+    done
+    
+    log_error "不支持的架构: $arch"
+    log_error "支持的架构列表: ${valid_archs[*]}"
+    return 1
+}
+
 prepare_directories() {
+    local target_arch="$1"
     log_info "准备构建目录..."
     
-    mkdir -p "${OUTPUT_DIR}"
+    mkdir -p "${OUTPUT_DIR}/${target_arch}"
     
     rm -rf "${TEMP_DIR}"
     mkdir -p "${TEMP_DIR}"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
@@ -147,9 +204,10 @@ prepare_directories() {
 generate_spec_file() {
     local version="$1"
     local no_debuginfo="$2"
+    local target_arch="$3"
     local spec_file="${TEMP_DIR}/SPECS/${PROJECT_NAME}.spec"
 
-    log_info "生成 RPM spec file..."
+    log_info "生成 RPM spec file (目标架构: $target_arch)..."
 
     # 根据是否禁用 debuginfo 设置宏
     local debuginfo_macro=""
@@ -166,6 +224,8 @@ Summary:        A terminal-based music player with ncurses interface
 License:        GPL-3.0-or-later
 URL:            https://gitee.com/yanxi-bamboo-forest/ter-music
 Source0:        %{name}-%{version}.tar.gz
+
+# Target Architecture: ${target_arch}
 
 BuildRequires:  gcc, make, cmake, pkg-config
 BuildRequires:  ffmpeg-free-devel, pulseaudio-libs-devel, ncurses-devel
@@ -270,7 +330,8 @@ create_source_tarball() {
 }
 
 build_rpm() {
-    log_info "开始构建 RPM 包..."
+    local target_arch="$1"
+    log_info "开始构建 RPM 包 (目标架构: $target_arch)..."
     
     export RPM_TOPDIR="${TEMP_DIR}"
     
@@ -281,7 +342,8 @@ build_rpm() {
         --define "_specdir ${TEMP_DIR}/SPECS" \
         --define "_builddir ${TEMP_DIR}/BUILD" \
         --define "_rpmdir ${TEMP_DIR}/RPMS" \
-        --define "_srcrpmdir ${TEMP_DIR}/SRPMS"; then
+        --define "_srcrpmdir ${TEMP_DIR}/SRPMS" \
+        --target "$target_arch"; then
         log_info "RPM 包构建完成"
         return 0
     else
@@ -291,10 +353,12 @@ build_rpm() {
 }
 
 collect_results() {
+    local target_arch="$1"
     log_info "收集构建结果..."
     
     local found_rpms=0
     local rpm_files=()
+    local output_dir="${OUTPUT_DIR}/${target_arch}"
     
     # 收集所有 RPM 包
     while IFS= read -r -d '' rpm_file; do
@@ -302,9 +366,9 @@ collect_results() {
     done < <(find "${TEMP_DIR}/RPMS" "${TEMP_DIR}/SRPMS" -name "*.rpm" -type f -print0)
     
     for rpm_file in "${rpm_files[@]}"; do
-        cp "$rpm_file" "${OUTPUT_DIR}/"
+        cp "$rpm_file" "${output_dir}/"
         local filename=$(basename "$rpm_file")
-        log_info "已复制: $filename -> ${OUTPUT_DIR}/"
+        log_info "已复制: $filename -> ${output_dir}/"
         ((found_rpms++))
     done
     
@@ -313,7 +377,7 @@ collect_results() {
         return 1
     fi
     
-    log_info "构建结果已收集到: ${OUTPUT_DIR}/"
+    log_info "构建结果已收集到: ${output_dir}/"
     return 0
 }
 
@@ -330,18 +394,22 @@ cleanup() {
 }
 
 show_summary() {
+    local target_arch="$1"
+    local output_dir="${OUTPUT_DIR}/${target_arch}"
+    
     echo ""
     echo "=========================================="
     echo "RPM 构建完成！"
     echo "=========================================="
     echo ""
-    echo "输出目录: ${OUTPUT_DIR}/"
+    echo "目标架构: $target_arch"
+    echo "输出目录: ${output_dir}/"
     echo ""
     echo "生成的 RPM 包:"
-    ls -lh "${OUTPUT_DIR}"/*.rpm 2>/dev/null || echo "  未找到 RPM 包"
+    ls -lh "${output_dir}"/*.rpm 2>/dev/null || echo "  未找到 RPM 包"
     echo ""
     echo "安装命令:"
-    echo "  sudo dnf install ${OUTPUT_DIR}/${PROJECT_NAME}-*.rpm"
+    echo "  sudo dnf install ${output_dir}/${PROJECT_NAME}-*.rpm"
     echo ""
 }
 
@@ -349,6 +417,7 @@ main() {
     local version="$DEFAULT_VERSION"
     local keep_temp="false"
     local no_debuginfo="true"
+    local target_arch=""
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -363,6 +432,10 @@ main() {
             -k|--keep-temp)
                 keep_temp="true"
                 shift
+                ;;
+            -a|--arch)
+                target_arch="$2"
+                shift 2
                 ;;
             --no-debuginfo)
                 no_debuginfo="true"
@@ -385,6 +458,12 @@ main() {
     echo "=========================================="
     echo ""
 
+    log_info "构建环境信息:"
+    log_info "  操作系统: $(uname -s)"
+    log_info "  内核版本: $(uname -r)"
+    log_info "  主机架构: $(uname -m)"
+    echo ""
+
     check_dependencies
 
     if [ "$version" = "$DEFAULT_VERSION" ]; then
@@ -398,18 +477,33 @@ main() {
         log_info "使用指定版本: $version"
     fi
 
-    prepare_directories
-    generate_spec_file "$version" "$no_debuginfo"
+    if [ -z "$target_arch" ]; then
+        target_arch=$(detect_architecture)
+        if [ $? -eq 0 ]; then
+            log_info "自动检测到架构: $target_arch"
+        else
+            log_error "无法检测系统架构"
+            exit 1
+        fi
+    else
+        if ! validate_architecture "$target_arch"; then
+            exit 1
+        fi
+        log_info "使用指定架构: $target_arch"
+    fi
+
+    prepare_directories "$target_arch"
+    generate_spec_file "$version" "$no_debuginfo" "$target_arch"
     if ! create_source_tarball "$version"; then
         log_error "创建源码压缩包失败"
         cleanup "$keep_temp"
         exit 1
     fi
 
-    if build_rpm; then
-        if collect_results; then
+    if build_rpm "$target_arch"; then
+        if collect_results "$target_arch"; then
             cleanup "$keep_temp"
-            show_summary
+            show_summary "$target_arch"
         else
             log_error "收集构建结果失败"
             cleanup "$keep_temp"

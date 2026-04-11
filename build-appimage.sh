@@ -30,17 +30,28 @@ show_help() {
 选项:
     -h, --help          显示此帮助信息
     -v, --version VERSION  指定版本号（默认：自动检测）
+    -a, --arch ARCH     指定目标架构（默认：自动检测）
     -r, --rpm FILE      从指定的RPM包文件转换（可选）
     -k, --keep-temp     保留临时构建文件（用于调试）
 
+支持的架构:
+    x86_64              Intel/AMD 64位
+    aarch64             ARM 64位
+    loong64             龙芯新世界
+    loongarch64         龙芯旧世界
+    sw64                申威
+    mips64              MIPS 64位
+
 示例:
-    $0                                          自动检测版本，直接从源码构建
+    $0                                          自动检测版本和架构，直接从源码构建
     $0 -v 1.4.1                                 使用指定版本号直接从源码构建
-    $0 -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm  从指定RPM包转换
+    $0 -a aarch64                              为 ARM 64位架构构建
+    $0 -v 1.4.1 -a aarch64                    指定版本和架构构建
+    $0 -r build/rpm/x86_64/ter-music-1.0.0-1.x86_64.rpm  从指定RPM包转换
     $0 --keep-temp                              构建后保留临时文件
 
 输出:
-    AppImage 包将输出到: ${OUTPUT_DIR}/
+    AppImage 包将输出到: ${OUTPUT_DIR}/<<arch>/
 
 EOF
 }
@@ -169,6 +180,51 @@ detect_version() {
     fi
 
     echo "$default_version"
+}
+
+detect_architecture() {
+    local arch=$(uname -m)
+    
+    case "$arch" in
+        x86_64)
+            echo "x86_64"
+            ;;
+        aarch64|arm64)
+            echo "aarch64"
+            ;;
+        loongarch64)
+            echo "loongarch64"
+            ;;
+        loong64)
+            echo "loong64"
+            ;;
+        mips64)
+            echo "mips64"
+            ;;
+        sw_64|sw64)
+            echo "sw64"
+            ;;
+        *)
+            log_error "未知的架构: $arch"
+            echo "unknown"
+            return 1
+            ;;
+    esac
+}
+
+validate_architecture() {
+    local arch="$1"
+    local valid_archs=("x86_64" "aarch64" "loong64" "loongarch64" "sw64" "mips64")
+    
+    for valid_arch in "${valid_archs[@]}"; do
+        if [ "$arch" = "$valid_arch" ]; then
+            return 0
+        fi
+    done
+    
+    log_error "不支持的架构: $arch"
+    log_error "支持的架构列表: ${valid_archs[*]}"
+    return 1
 }
 
 download_appimagetool() {
@@ -407,6 +463,7 @@ build_appimage() {
     local appdir="$1"
     local version="$2"
     local output_file="$3"
+    local target_arch="$4"
 
     log_info "构建 AppImage..."
 
@@ -421,7 +478,7 @@ build_appimage() {
         cd - > /dev/null
     fi
 
-    export ARCH=x86_64
+    export ARCH="$target_arch"
 
     if "$appimagetool_binary" --no-appstream "${appdir}" "${output_file}"; then
         chmod +x "${output_file}"
@@ -446,14 +503,16 @@ cleanup() {
 }
 
 show_summary() {
-    local output_file="$1"
+    local target_arch="$1"
+    local output_file="$2"
 
     echo ""
     echo "=========================================="
     echo "AppImage 构建完成！"
     echo "=========================================="
     echo ""
-    echo "输出目录: ${OUTPUT_DIR}/"
+    echo "目标架构: $target_arch"
+    echo "输出目录: $(dirname "$output_file")/"
     echo ""
     echo "生成的 AppImage 包:"
     ls -lh "$output_file" 2>/dev/null || echo "  未找到 AppImage 包"
@@ -468,9 +527,10 @@ show_summary() {
 }
 
 prepare_directories() {
+    local target_arch="$1"
     log_info "准备构建目录..."
 
-    mkdir -p "${OUTPUT_DIR}"
+    mkdir -p "${OUTPUT_DIR}/${target_arch}"
 
     rm -rf "${TEMP_DIR}"
     mkdir -p "${TEMP_DIR}"
@@ -482,6 +542,7 @@ main() {
     local version=""
     local rpm_file=""
     local keep_temp="false"
+    local target_arch=""
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -491,6 +552,10 @@ main() {
                 ;;
             -v|--version)
                 version="$2"
+                shift 2
+                ;;
+            -a|--arch)
+                target_arch="$2"
                 shift 2
                 ;;
             -r|--rpm)
@@ -514,6 +579,12 @@ main() {
     echo "=========================================="
     echo ""
 
+    log_info "构建环境信息:"
+    log_info "  操作系统: $(uname -s)"
+    log_info "  内核版本: $(uname -r)"
+    log_info "  主机架构: $(uname -m)"
+    echo ""
+
     check_dependencies
     check_environment
 
@@ -528,10 +599,25 @@ main() {
         log_info "使用指定版本: $version"
     fi
 
-    prepare_directories
+    if [ -z "$target_arch" ]; then
+        target_arch=$(detect_architecture)
+        if [ $? -eq 0 ]; then
+            log_info "自动检测到架构: $target_arch"
+        else
+            log_error "无法检测系统架构"
+            exit 1
+        fi
+    else
+        if ! validate_architecture "$target_arch"; then
+            exit 1
+        fi
+        log_info "使用指定架构: $target_arch"
+    fi
+
+    prepare_directories "$target_arch"
 
     local appdir="${TEMP_DIR}/AppDir"
-    local output_file="${OUTPUT_DIR}/${PROJECT_NAME}-${version}-x86_64.AppImage"
+    local output_file="${OUTPUT_DIR}/${target_arch}/${PROJECT_NAME}-${version}-${target_arch}.AppImage"
 
     if [ -n "$rpm_file" ]; then
         rpm_file=$(find_rpm_package "$rpm_file")
@@ -557,9 +643,9 @@ main() {
         create_icon "$appdir"
     fi
 
-    if build_appimage "$appdir" "$version" "$output_file"; then
+    if build_appimage "$appdir" "$version" "$output_file" "$target_arch"; then
         cleanup "$keep_temp"
-        show_summary "$output_file"
+        show_summary "$target_arch" "$output_file"
     else
         log_error "AppImage 构建失败，跳过清理和总结步骤"
         cleanup "$keep_temp"

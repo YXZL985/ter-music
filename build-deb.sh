@@ -29,19 +29,30 @@ show_help() {
 选项:
     -h, --help          显示此帮助信息
     -v, --version VERSION  指定版本号（默认：自动检测）
+    -a, --arch ARCH     指定目标架构（默认：自动检测）
     -k, --keep-temp     保留临时构建文件（用于调试）
     --with-source       生成源码包（默认不生成）
     --with-debuginfo    生成 debuginfo 包（默认不生成）
 
+支持的架构:
+    amd64               Intel/AMD 64位
+    arm64               ARM 64位 (aarch64)
+    loong64             龙芯新世界
+    loongarch64         龙芯旧世界
+    sw64                申威
+    mips64el            MIPS 64位小端
+
 示例:
-    $0                  使用自动检测的版本号构建 DEB
+    $0                  使用自动检测的版本号和架构构建 DEB
     $0 -v 1.2.3         使用指定版本号 1.2.3 构建 DEB
+    $0 -a arm64         为 ARM 64位架构构建 DEB
+    $0 -v 1.2.3 -a loong64  指定版本和架构构建 DEB
     $0 --keep-temp      构建后保留临时文件
     $0 --with-source    同时生成源码包
     $0 --with-debuginfo 同时生成 debuginfo 包
 
 输出:
-    DEB 包将输出到: ${OUTPUT_DIR}/
+    DEB 包将输出到: ${OUTPUT_DIR}/<arch>/
 
 EOF
 }
@@ -135,10 +146,56 @@ detect_version() {
     echo "$version"
 }
 
+detect_architecture() {
+    local arch=$(uname -m)
+    
+    case "$arch" in
+        x86_64)
+            echo "amd64"
+            ;;
+        aarch64|arm64)
+            echo "arm64"
+            ;;
+        loongarch64)
+            echo "loongarch64"
+            ;;
+        loong64)
+            echo "loong64"
+            ;;
+        mips64)
+            echo "mips64el"
+            ;;
+        sw_64|sw64)
+            echo "sw64"
+            ;;
+        *)
+            log_error "未知的架构: $arch"
+            echo "unknown"
+            return 1
+            ;;
+    esac
+}
+
+validate_architecture() {
+    local arch="$1"
+    local valid_archs=("amd64" "arm64" "loong64" "loongarch64" "sw64" "mips64el")
+    
+    for valid_arch in "${valid_archs[@]}"; do
+        if [ "$arch" = "$valid_arch" ]; then
+            return 0
+        fi
+    done
+    
+    log_error "不支持的架构: $arch"
+    log_error "支持的架构列表: ${valid_archs[*]}"
+    return 1
+}
+
 prepare_directories() {
+    local target_arch="$1"
     log_info "准备构建目录..."
 
-    mkdir -p "${OUTPUT_DIR}"
+    mkdir -p "${OUTPUT_DIR}/${target_arch}"
 
     rm -rf "${TEMP_DIR}"
     mkdir -p "${TEMP_DIR}"
@@ -379,6 +436,7 @@ create_deb_directory_structure() {
 generate_control_file() {
     local deb_root="$1"
     local version="$2"
+    local target_arch="$3"
     local control_file="${deb_root}/DEBIAN/control"
 
     log_info "生成 DEBIAN/control 文件..."
@@ -386,7 +444,7 @@ generate_control_file() {
     cat > "$control_file" << EOF
 Package: ${PROJECT_NAME}
 Version: ${version}
-Architecture: amd64
+Architecture: ${target_arch}
 Maintainer: Yanxi Bamboo Forest <maintainer@example.com>
 Description: A terminal-based music player with ncurses interface
  Ter-Music is a lightweight terminal-based music player for Linux systems.
@@ -447,7 +505,8 @@ build_deb() {
 build_debuginfo_deb() {
     local build_dir="$1"
     local version="$2"
-    local output_file="$3"
+    local target_arch="$3"
+    local output_file="$4"
 
     log_info "开始构建 debuginfo DEB 包..."
 
@@ -464,7 +523,7 @@ Package: ${PROJECT_NAME}-dbgsym
 Source: ${PROJECT_NAME}
 Version: ${version}
 Auto-Built-Package: debug-symbols
-Architecture: amd64
+Architecture: ${target_arch}
 Section: debug
 Priority: optional
 Depends: ${PROJECT_NAME} (= ${version})
@@ -505,6 +564,7 @@ collect_results() {
     local temp_output="$1"
     local output_dir="$2"
     local file_type="$3"
+    local target_arch="$4"
 
     log_info "收集构建结果..."
 
@@ -516,6 +576,15 @@ collect_results() {
         return 0
     else
         log_error "未找到构建好的 ${file_type} 包"
+       
+        
+        # 如果是源码包，输出目录是基础目录
+        if [ "$file_type" = "源码" ]; then
+            return 1
+        fi
+        
+        # 对于二进制包，检查是否是架构问题
+        log_error "请确保目标架构 $target_arch 受支持且交叉编译环境已配置"
         return 1
     fi
 }
@@ -533,6 +602,9 @@ cleanup() {
 }
 
 show_summary() {
+    local target_arch="$1"
+    local output_dir="${OUTPUT_DIR}/${target_arch}"
+    shift
     local output_files=("$@")
 
     echo ""
@@ -540,7 +612,8 @@ show_summary() {
     echo "DEB 构建完成！"
     echo "=========================================="
     echo ""
-    echo "输出目录: ${OUTPUT_DIR}/"
+    echo "目标架构: $target_arch"
+    echo "输出目录: ${output_dir}/"
     echo ""
     echo "生成的包:"
     for file in "${output_files[@]}"; do
@@ -550,7 +623,7 @@ show_summary() {
     done
     echo ""
     echo "安装命令:"
-    echo "  sudo dpkg -i ${OUTPUT_DIR}/${PROJECT_NAME}_*_amd64.deb"
+    echo "  sudo dpkg -i ${output_dir}/${PROJECT_NAME}_*_${target_arch}.deb"
     echo "  如果缺少依赖，请运行: sudo apt install -f"
     echo ""
 }
@@ -560,6 +633,7 @@ main() {
     local keep_temp="false"
     local build_source="false"
     local build_debuginfo="false"
+    local target_arch=""
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -569,6 +643,10 @@ main() {
                 ;;
             -v|--version)
                 version="$2"
+                shift 2
+                ;;
+            -a|--arch)
+                target_arch="$2"
                 shift 2
                 ;;
             -k|--keep-temp)
@@ -604,6 +682,12 @@ main() {
     echo "=========================================="
     echo ""
 
+    log_info "构建环境信息:"
+    log_info "  操作系统: $(uname -s)"
+    log_info "  内核版本: $(uname -r)"
+    log_info "  主机架构: $(uname -m)"
+    echo ""
+
     check_dependencies
 
     if [ "$version" = "$DEFAULT_VERSION" ]; then
@@ -617,9 +701,25 @@ main() {
         log_info "使用指定版本: $version"
     fi
 
-    prepare_directories
+    if [ -z "$target_arch" ]; then
+        target_arch=$(detect_architecture)
+        if [ $? -eq 0 ]; then
+            log_info "自动检测到架构: $target_arch"
+        else
+            log_error "无法检测系统架构"
+            exit 1
+        fi
+    else
+        if ! validate_architecture "$target_arch"; then
+            exit 1
+        fi
+        log_info "使用指定架构: $target_arch"
+    fi
+
+    prepare_directories "$target_arch"
 
     local output_files=()
+    local output_dir="${OUTPUT_DIR}/${target_arch}"
 
     # 构建源码包
     if [ "$build_source" = "true" ]; then
@@ -645,7 +745,7 @@ main() {
 
     local build_dir="${TEMP_DIR}/build"
     local deb_root="${TEMP_DIR}/${PROJECT_NAME}"
-    local temp_output="${TEMP_DIR}/${PROJECT_NAME}_${version}_amd64.deb"
+    local temp_output="${TEMP_DIR}/${PROJECT_NAME}_${version}_${target_arch}.deb"
 
     if [ "$build_debuginfo" = "true" ]; then
         build_from_source "$build_dir" "true"
@@ -654,12 +754,12 @@ main() {
     fi
 
     create_deb_directory_structure "$deb_root"
-    generate_control_file "$deb_root" "$version"
+    generate_control_file "$deb_root" "$version" "$target_arch"
     install_files "$deb_root" "$build_dir"
 
     if build_deb "$deb_root" "$version" "$temp_output"; then
         local bin_output
-        bin_output=$(collect_results "$temp_output" "$OUTPUT_DIR" "二进制")
+        bin_output=$(collect_results "$temp_output" "$output_dir" "二进制" "$target_arch")
         if [ -n "$bin_output" ]; then
             output_files+=("$bin_output")
         fi
@@ -675,11 +775,11 @@ main() {
         log_info "开始构建 debuginfo 包"
         log_info "=========================================="
 
-        local debug_output_file="${TEMP_DIR}/${PROJECT_NAME}-dbgsym_${version}_amd64.deb"
+        local debug_output_file="${TEMP_DIR}/${PROJECT_NAME}-dbgsym_${version}_${target_arch}.deb"
 
-        if build_debuginfo_deb "$build_dir" "$version" "$debug_output_file"; then
+        if build_debuginfo_deb "$build_dir" "$version" "$target_arch" "$debug_output_file"; then
             local dbg_output
-            dbg_output=$(collect_results "$debug_output_file" "$OUTPUT_DIR" "debuginfo")
+            dbg_output=$(collect_results "$debug_output_file" "$output_dir" "debuginfo" "$target_arch")
             if [ -n "$dbg_output" ]; then
                 output_files+=("$dbg_output")
             fi
@@ -689,7 +789,7 @@ main() {
     fi
 
     cleanup "$keep_temp"
-    show_summary "${output_files[@]}"
+    show_summary "$target_arch" "${output_files[@]}"
 }
 
 main "$@"

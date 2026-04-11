@@ -8,23 +8,6 @@ APP_ID="org.yxzl.ter-music"
 OUTPUT_DIR="${SCRIPT_DIR}/build/linyaps"
 TEMP_DIR="${SCRIPT_DIR}/.linyaps_temp"
 
-# Detect host architecture
-ARCH=$(uname -m)
-case "$ARCH" in
-    x86_64)
-        ARCH="x86_64"
-        ;;
-    aarch64|arm64)
-        ARCH="arm64"
-        ;;
-    loongarch64|loong64)
-        ARCH="loong64"
-        ;;
-    *)
-        # Keep as-is for other architectures
-        ;;
-esac
-
 # 确保路径是绝对路径的函数
 ensure_absolute_path() {
     local path="$1"
@@ -55,15 +38,25 @@ show_help() {
 选项:
     -h, --help          显示此帮助信息
     -v, --version VERSION  指定版本号（默认：自动检测）
+    -a, --arch ARCH     指定目标架构（默认：自动检测）
     -k, --keep-temp     保留临时构建文件（用于调试）
 
+支持的架构:
+    x86_64              Intel/AMD 64位
+    arm64               ARM 64位 (aarch64)
+    loong64             龙芯（包括新世界和旧世界）
+    mips64              MIPS 64位
+    sw64                申申威
+
 示例:
-    $0                  使用自动检测版本构建 Linyaps 包
+    $0                  使用自动检测版本和架构构建 Linyaps 包
     $0 -v 1.1.2         使用指定版本号构建 Linyaps 包
+    $0 -a arm64         为 ARM 64位架构构建
+    $0 -v 1.1.2 -a loong64  指定版本和架构构建
     $0 --keep-temp      构建后保留临时文件
 
 输出:
-    Linyaps 包将输出到: ${OUTPUT_DIR}/
+    Linyaps 包将输出到: ${OUTPUT_DIR}/<arch>/
 
 EOF
 }
@@ -129,6 +122,48 @@ detect_version() {
     echo "$default_version"
 }
 
+detect_architecture() {
+    local arch=$(uname -m)
+    
+    case "$arch" in
+        x86_64)
+            echo "x86_64"
+            ;;
+        aarch64|arm64)
+            echo "arm64"
+            ;;
+        loongarch64|loong64)
+            echo "loong64"
+            ;;
+        mips64)
+            echo "mips64"
+            ;;
+        sw_64|sw64)
+            echo "sw64"
+            ;;
+        *)
+            log_error "未知的架构: $arch"
+            echo "unknown"
+            return 1
+            ;;
+    esac
+}
+
+validate_architecture() {
+    local arch="$1"
+    local valid_archs=("x86_64" "arm64" "loong64" "mips64" "sw64")
+    
+    for valid_arch in "${valid_archs[@]}"; do
+        if [ "$arch" = "$valid_arch" ]; then
+            return 0
+        fi
+    done
+    
+    log_error "不支持的架构: $arch"
+    log_error "支持的架构列表: ${valid_archs[*]}"
+    return 1
+}
+
 prepare_linyaps_structure() {
     local temp_dir="$1"
     local app_id="$2"
@@ -150,6 +185,7 @@ generate_linglong_yaml() {
     local project_root="$1"
     local app_id="$2"
     local version="$3"
+    local target_arch="$4"
 
     log_info "生成 linglong.yaml 配置文件..."
 
@@ -170,7 +206,7 @@ package:
   kind: app
   description: |
     ter-music 是一个基于 ncurses 的轻量级终端音乐播放器
-  architecture: ${ARCH}
+  architecture: ${target_arch}
 
 command:
   - /opt/apps/${app_id}/files/bin/${PROJECT_NAME}
@@ -238,6 +274,7 @@ export_uab() {
     local output_dir="$2"
     local app_id="$3"
     local version="$4"
+    local target_arch="$5"
 
     log_info "导出 UAB 格式包..."
 
@@ -252,12 +289,12 @@ export_uab() {
     # 导出 UAB 需要 --ref 参数
     # 必须使用绝对路径，ll-builder 不支持相对路径
     local temp_uab="${project_root}/output.uab"
-    local final_uab="${output_dir}/${app_id}_${version}_${ARCH}.uab"
-    local ref="main:${app_id}/${linyaps_version}/${ARCH}"
+    local final_uab="${output_dir}/${app_id}_${version}_${target_arch}.uab"
+    local ref="main:${app_id}/${linyaps_version}/${target_arch}"
 
     # 确保使用绝对路径（ll-builder 要求）
     temp_uab=$(cd "$project_root" && pwd)/output.uab
-    final_uab=$(cd "$output_dir" && pwd)/${app_id}_${version}_${ARCH}.uab
+    final_uab=$(cd "$output_dir" && pwd)/${app_id}_${version}_${target_arch}.uab
     output_dir=$(cd "$output_dir" && pwd)
 
     if ll-builder export --ref "$ref" -o "$temp_uab"; then
@@ -293,14 +330,16 @@ cleanup() {
 }
 
 show_summary() {
-    local output_file="$1"
+    local target_arch="$1"
+    local output_file="$2"
 
     echo ""
     echo "=========================================="
     echo "Linyaps 构建完成！"
     echo "=========================================="
     echo ""
-    echo "输出目录: ${OUTPUT_DIR}/"
+    echo "目标架构: $target_arch"
+    echo "输出目录: $(dirname "$output_file")/"
     echo ""
     echo "生成的 Linyaps 包:"
     ls -lh "$output_file" 2>/dev/null || echo "  未找到 Linyaps 包"
@@ -316,6 +355,7 @@ show_summary() {
 main() {
     local version=""
     local keep_temp="false"
+    local target_arch=""
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -325,6 +365,10 @@ main() {
                 ;;
             -v|--version)
                 version="$2"
+                shift 2
+                ;;
+            -a|--arch)
+                target_arch="$2"
                 shift 2
                 ;;
             -k|--keep-temp)
@@ -344,6 +388,12 @@ main() {
     echo "=========================================="
     echo ""
 
+    log_info "构建环境信息:"
+    log_info "  操作系统: $(uname -s)"
+    log_info "  内核版本: $(uname -r)"
+    log_info "  主机架构: $(uname -m)"
+    echo ""
+
     check_dependencies
 
     if [ -z "$version" ]; then
@@ -357,22 +407,36 @@ main() {
         log_info "使用指定版本: $version"
     fi
 
-    mkdir -p "${OUTPUT_DIR}"
+    if [ -z "$target_arch" ]; then
+        target_arch=$(detect_architecture)
+        if [ $? -eq 0 ]; then
+            log_info "自动检测到架构: $target_arch"
+        else
+            log_error "无法检测系统架构"
+            exit 1
+        fi
+    else
+        if ! validate_architecture "$target_arch"; then
+            exit 1
+        fi
+        log_info "使用指定架构: $target_arch"
+    fi
+
+    mkdir -p "${OUTPUT_DIR}/${target_arch}"
 
     rm -rf "${TEMP_DIR}"
     mkdir -p "${TEMP_DIR}"
-
     # 调用函数，通过全局变量返回结果
     prepare_linyaps_structure "$TEMP_DIR" "$APP_ID"
     local project_root="$PROJECT_ROOT_OUTPUT"
 
-    generate_linglong_yaml "$project_root" "$APP_ID" "$version"
+    generate_linglong_yaml "$project_root" "$APP_ID" "$version" "$target_arch"
 
     if build_linyaps "$project_root"; then
-        export_uab "$project_root" "$OUTPUT_DIR" "$APP_ID" "$version"
+        export_uab "$project_root" "${OUTPUT_DIR}/${target_arch}" "$APP_ID" "$version" "$target_arch"
         if [ -n "$EXPORTED_UAB_FILE" ] && [ -f "$EXPORTED_UAB_FILE" ]; then
             cleanup "$keep_temp"
-            show_summary "$EXPORTED_UAB_FILE"
+            show_summary "$target_arch" "$EXPORTED_UAB_FILE"
         else
             log_error "导出 UAB 失败，跳过清理和总结步骤"
             cleanup "$keep_temp"

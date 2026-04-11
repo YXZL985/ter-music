@@ -28,17 +28,28 @@ show_help() {
 选项:
     -h, --help          显示此帮助信息
     -v, --version VERSION  指定版本号（默认：自动检测）
+    -a, --arch ARCH     指定目标架构（默认：自动检测）
     -r, --rpm FILE      从指定的RPM包文件转换（可选）
     -k, --keep-temp     保留临时构建文件（用于调试）
 
+支持的架构:
+    x86_64              Intel/AMD 64位
+    aarch64             ARM 64位
+    loong64             龙芯新世界
+    loongarch64         龙芯旧世界
+    sw64                申威
+    mips64              MIPS 64位
+
 示例:
-    $0                                          自动检测版本，直接从源码构建
+    $0                                          自动检测版本和架构，直接从源码构建
     $0 -v 1.4.1                                 使用指定版本号直接从源码构建
-    $0 -r build/rpm/ter-music-1.0.0-1.fc43.x86_64.rpm  从指定RPM包转换
+    $0 -a aarch64                              为 ARM 64位架构构建
+    $0 -v 1.4.1 -a aarch64                    指定版本和架构构建
+    $0 -r build/rpm/x86_64/ter-music-1.0.0-1.x86_64.rpm  从指定RPM包转换
     $0 --keep-temp                              构建后保留临时文件
 
 输出:
-    可移植包将输出到: ${OUTPUT_DIR}/
+    可移植包将输出到: ${OUTPUT_DIR}/<arch>/
 
 EOF
 }
@@ -115,6 +126,51 @@ detect_version() {
     fi
 
     echo "$default_version"
+}
+
+detect_architecture() {
+    local arch=$(uname -m)
+    
+    case "$arch" in
+        x86_64)
+            echo "x86_64"
+            ;;
+        aarch64|arm64)
+            echo "aarch64"
+            ;;
+        loongarch64)
+            echo "loongarch64"
+            ;;
+        loong64)
+            echo "loong64"
+            ;;
+        mips64)
+            echo "mips64"
+            ;;
+        sw_64|sw64)
+            echo "sw64"
+            ;;
+        *)
+            log_error "未知的架构: $arch"
+            echo "unknown"
+            return 1
+            ;;
+    esac
+}
+
+validate_architecture() {
+    local arch="$1"
+    local valid_archs=("x86_64" "aarch64" "loong64" "loongarch64" "sw64" "mips64")
+    
+    for valid_arch in "${valid_archs[@]}"; do
+        if [ "$arch" = "$valid_arch" ]; then
+            return 0
+        fi
+    done
+    
+    log_error "不支持的架构: $arch"
+    log_error "支持的架构列表: ${valid_archs[*]}"
+    return 1
 }
 
 find_rpm_package() {
@@ -306,12 +362,13 @@ EOF
 create_tarball() {
     local portable_dir="$1"
     local version="$2"
+    local target_arch="$3"
 
-    local package_name="${PROJECT_NAME}-${version}-portable-x86_64"
+    local package_name="${PROJECT_NAME}-${version}-portable-${target_arch}"
     local tarball_name="${package_name}.tar.gz"
-    local tarball_path="${OUTPUT_DIR}/${tarball_name}"
+    local tarball_path="${OUTPUT_DIR}/${target_arch}/${tarball_name}"
 
-    mkdir -p "${OUTPUT_DIR}"
+    mkdir -p "${OUTPUT_DIR}/${target_arch}"
 
     local original_dir=$(pwd)
     cd "$(dirname "${portable_dir}")"
@@ -344,29 +401,32 @@ cleanup() {
 }
 
 show_summary() {
-    local tarball_path="$1"
+    local target_arch="$1"
+    local tarball_path="$2"
 
     echo ""
     echo "=========================================="
     echo "可移植包构建完成！"
     echo "=========================================="
     echo ""
-    echo "输出目录: ${OUTPUT_DIR}/"
+    echo "目标架构: $target_arch"
+    echo "输出目录: $(dirname "$tarball_path")/"
     echo ""
     echo "生成的可移植包:"
     ls -lh "$tarball_path" 2>/dev/null || echo "  未找到可移植包"
     echo ""
     echo "使用方法:"
     echo "  1. 解压: tar -xzf ${tarball_path}"
-    echo "  2. 进入目录: cd ${PROJECT_NAME}-*-portable-x86_64"
+    echo "  2. 进入目录: cd ${PROJECT_NAME}-*-portable-${target_arch}"
     echo "  3. 运行: ./run.sh"
     echo ""
 }
 
 prepare_directories() {
+    local target_arch="$1"
     log_info "准备构建目录..."
 
-    mkdir -p "${OUTPUT_DIR}"
+    mkdir -p "${OUTPUT_DIR}/${target_arch}"
 
     rm -rf "${TEMP_DIR}"
     mkdir -p "${TEMP_DIR}"
@@ -378,6 +438,7 @@ main() {
     local version=""
     local rpm_file=""
     local keep_temp="false"
+    local target_arch=""
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -387,6 +448,10 @@ main() {
                 ;;
             -v|--version)
                 version="$2"
+                shift 2
+                ;;
+            -a|--arch)
+                target_arch="$2"
                 shift 2
                 ;;
             -r|--rpm)
@@ -410,6 +475,12 @@ main() {
     echo "=========================================="
     echo ""
 
+    log_info "构建环境信息:"
+    log_info "  操作系统: $(uname -s)"
+    log_info "  内核版本: $(uname -r)"
+    log_info "  主机架构: $(uname -m)"
+    echo ""
+
     check_dependencies
 
     if [ -z "$version" ]; then
@@ -423,7 +494,22 @@ main() {
         log_info "使用指定版本: $version"
     fi
 
-    prepare_directories
+    if [ -z "$target_arch" ]; then
+        target_arch=$(detect_architecture)
+        if [ $? -eq 0 ]; then
+            log_info "自动检测到架构: $target_arch"
+        else
+            log_error "无法检测系统架构"
+            exit 1
+        fi
+    else
+        if ! validate_architecture "$target_arch"; then
+            exit 1
+        fi
+        log_info "使用指定架构: $target_arch"
+    fi
+
+    prepare_directories "$target_arch"
 
     local portable_dir="${TEMP_DIR}/${PROJECT_NAME}-portable"
     mkdir -p "${portable_dir}"
@@ -451,12 +537,12 @@ main() {
     fi
 
     log_info "创建压缩包..."
-    local tarball_path=$(create_tarball "$portable_dir" "$version")
+    local tarball_path=$(create_tarball "$portable_dir" "$version" "$target_arch")
 
     if [ -n "$tarball_path" ] && [ -f "$tarball_path" ]; then
         log_info "压缩包已创建: ${tarball_path}"
         cleanup "$keep_temp"
-        show_summary "$tarball_path"
+        show_summary "$target_arch" "$tarball_path"
     else
         log_error "可移植包构建失败，跳过清理和总结步骤"
         cleanup "$keep_temp"
