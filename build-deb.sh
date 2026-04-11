@@ -170,8 +170,8 @@ create_source_tarball() {
         return 1
     fi
 
-    # 创建原始源码 tar.gz
-    local tarball_path="${OUTPUT_DIR}/${PROJECT_NAME}_${version}.orig.tar.gz"
+    # 创建原始源码 tar.gz（放在 source 目录的父目录，供 dpkg-source 使用）
+    local tarball_path="${TEMP_DIR}/source/${PROJECT_NAME}_${version}.orig.tar.gz"
     tar -czf "$tarball_path" -C "$source_dir" "${PROJECT_NAME}-${version}"
 
     log_info "源码压缩包已创建: $tarball_path"
@@ -313,12 +313,19 @@ EOF
     echo "12" > "${source_dir}/debian/compat"
 
     # 使用 dpkg-source 构建源码包
+    # 注意：dpkg-source 期望 .orig.tar.gz 在父目录中
     cd "${TEMP_DIR}/source"
     dpkg-source -b "${PROJECT_NAME}-${version}"
 
     # 移动生成的文件到输出目录
     local dsc_file="${TEMP_DIR}/source/${PROJECT_NAME}_${version}-1.dsc"
     local diff_file="${TEMP_DIR}/source/${PROJECT_NAME}_${version}-1.debian.tar.xz"
+    local orig_tarball="${TEMP_DIR}/source/${PROJECT_NAME}_${version}.orig.tar.gz"
+
+    if [ -f "$orig_tarball" ]; then
+        cp "$orig_tarball" "${OUTPUT_DIR}/"
+        log_info "源码包 .orig.tar.gz 已复制: ${OUTPUT_DIR}/$(basename "$orig_tarball")"
+    fi
 
     if [ -f "$dsc_file" ]; then
         cp "$dsc_file" "${OUTPUT_DIR}/"
