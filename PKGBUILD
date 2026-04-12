@@ -2,7 +2,10 @@
 # Contributor: yxzl
 
 pkgname=ter-music-cn
-pkgver=v1.6.0.r3.g984376c
+pkgver() {
+  cd "$srcdir/ter-music"
+  git describe --long --tags | sed 's/\([^-]*-g\)/r\1/;s/-/./g' || echo "1.0.0"
+}
 pkgrel=1
 pkgdesc="Terminal based music player"
 arch=('x86_64' 'i686')
@@ -12,11 +15,7 @@ depends=('ffmpeg' 'ncurses' 'libao' 'libmad' 'libid3tag')
 makedepends=('cmake' 'make' 'gcc' 'git')
 source=("ter-music::git+https://github.com/YXZL985/ter-music.git#branch=master")
 sha256sums=('SKIP')
-
-pkgver() {
-  cd "$srcdir/ter-music"
-  git describe --long --tags | sed 's/\([^-]*-g\)/r\1/;s/-/./g' || echo "1.0.0"
-}
+# Note: Using SKIP for git source is acceptable as git provides its own integrity verification
 
 prepare() {
   cd "$srcdir/ter-music"
@@ -37,11 +36,4 @@ build() {
 package() {
   cd "$srcdir/ter-music/build"
   install -Dm755 ter-music "$pkgdir/usr/bin/ter-music"
-  
-  # 安装文档（如果存在）
-#  cd "$srcdir/ter-music"
-#  [ -f README.md ] && install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
-#  [ -f README ] && install -Dm644 README "$pkgdir/usr/share/doc/$pkgname/README"
-#  [ -f LICENSE ] && install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-#  [ -f COPYING ] && install -Dm644 COPYING "$pkgdir/usr/share/licenses/$pkgname/COPYING"
 }
