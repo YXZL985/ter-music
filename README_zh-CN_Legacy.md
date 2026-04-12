@@ -121,8 +121,21 @@ yay -S ter-music-cn
 
 # 用 paru（AUR 助手）
 paru -S ter-music-cn
+```
 
-# 自 AUR 手工纳置
+**用 ZPM（MengXi OS 包管器）纳置：**
+```bash
+# 先纳置 ZPM（若未纳置）
+git clone https://aur.archlinux.org/zetapm.git
+cd zetapm
+makepkg -si
+
+# 继用 ZPM 纳置 ter-music-cn
+zpm -S ter-music-cn
+```
+
+**自 AUR 手工纳置：**
+```bash
 git clone https://aur.archlinux.org/ter-music-cn.git
 cd ter-music-cn
 makepkg -si

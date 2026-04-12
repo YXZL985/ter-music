@@ -143,8 +143,23 @@ yay -S ter-music-cn
 
 # Using paru (AUR helper)
 paru -S ter-music-cn
+```
 
-# Manual installation from AUR
+**Install using ZPM (MengXi OS Package Manager):**
+
+```bash
+# First, install ZPM if not already installed
+git clone https://aur.archlinux.org/zetapm.git
+cd zetapm
+makepkg -si
+
+# Then install ter-music-cn using ZPM
+zpm -S ter-music-cn
+```
+
+**Manual Installation from AUR:**
+
+```bash
 git clone https://aur.archlinux.org/ter-music-cn.git
 cd ter-music-cn
 makepkg -si
