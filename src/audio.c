@@ -1,4 +1,5 @@
 #include "../include/defs.h"
+#include "../include/media_session.h"
 #include "../include/menu_views.h"
 #include "../include/progress.h"  // 新增：进度跟踪模块
 #include "../include/lyrics.h"    // 新增：歌词模块
@@ -1769,6 +1770,7 @@ void seek_audio(double position) {
     render_controls();
     render_playlist_content();
     update_lyrics_display();
+    media_session_notify_seek((uint64_t)g_current_position * 1000ULL);
 }
 
 /**

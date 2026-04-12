@@ -16,6 +16,7 @@ pkg_check_modules(AVFORMAT REQUIRED libavformat)
 pkg_check_modules(SWRESAMPLE REQUIRED libswresample)
 pkg_check_modules(AVUTIL REQUIRED libavutil)
 pkg_check_modules(PULSE libpulse)
+pkg_check_modules(DBUS dbus-1)
 
 if(PULSE_FOUND)
     set(AUDIO_BACKEND_NAME "PulseAudio")
@@ -33,6 +34,11 @@ else()
 endif()
 
 message(STATUS "Using audio backend: ${AUDIO_BACKEND_NAME}")
+if(DBUS_FOUND)
+    message(STATUS "Using system media session backend: MPRIS (D-Bus)")
+else()
+    message(STATUS "System media session backend: disabled (dbus-1 not found)")
+endif()
 
 # 查找ncurses库（优先ncursesw，回退到ncurses）
 find_library(NCURSESW_LIBRARY NAMES ncursesw ncurses)
@@ -54,6 +60,7 @@ add_executable(${PROJECT_NAME}
     src/audio.c
     src/progress.c
     src/lyrics.c
+    src/media_session.c
     src/menu_views.c    # 新增：菜单视图模块
 )
 
@@ -67,6 +74,10 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${AUDIO_BACKEND_INCLUDE_DIRS}
 )
 
+if(DBUS_FOUND)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${DBUS_INCLUDE_DIRS})
+endif()
+
 # 链接库
 target_link_libraries(${PROJECT_NAME}
     ${AVCODEC_LIBRARIES}
@@ -79,6 +90,10 @@ target_link_libraries(${PROJECT_NAME}
     ${PTHREAD_LIBRARY}
 )
 
+if(DBUS_FOUND)
+    target_link_libraries(${PROJECT_NAME} ${DBUS_LIBRARIES})
+endif()
+
 # 添加编译选项
 target_compile_options(${PROJECT_NAME} PRIVATE
     ${AVCODEC_CFLAGS_OTHER}
@@ -88,11 +103,19 @@ target_compile_options(${PROJECT_NAME} PRIVATE
     ${AUDIO_BACKEND_CFLAGS}
 )
 
+if(DBUS_FOUND)
+    target_compile_options(${PROJECT_NAME} PRIVATE ${DBUS_CFLAGS_OTHER})
+endif()
+
 # 添加预处理器定义
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     _GNU_SOURCE
     ${AUDIO_BACKEND_DEFINES}
 )
+
+if(DBUS_FOUND)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_DBUS=1)
+endif()
 
 # 安装规则
 install(TARGETS ${PROJECT_NAME}

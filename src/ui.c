@@ -1,4 +1,5 @@
 #include "../include/defs.h"
+#include "../include/media_session.h"
 #include "../include/lyrics.h"    // 新增：歌词模块
 #include "../include/menu_views.h" // 新增：菜单视图模块
 #include <stdio.h>
@@ -257,6 +258,7 @@ int prompt_text_input(WINDOW *win, int row, int col, const char *prompt,
         int rc = get_wch(&wch);
         if (rc == ERR) {
             escape_state = INPUT_ESCAPE_NONE;
+            media_session_tick();
             continue;
         }
 
@@ -2006,6 +2008,7 @@ static void search_prompt() {
 
     while ((ch = getch()) != '\n' && ch != KEY_ENTER && ch != 27 && pos < MAX_META_LEN - 1) {
         if (ch == ERR) {
+            media_session_tick();
             continue;
         }
         if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
@@ -2139,6 +2142,7 @@ void run_event_loop() {
         reap_finished_playback_thread();
         process_pending_playback_action();
         process_pending_ui_refresh();
+        media_session_tick();
 
         ch = getch();
 
@@ -2501,8 +2505,12 @@ void run_event_loop() {
                                                   "Up/Down: Select | Enter: OK | Esc: Cancel"));
                                 wrefresh(win_win);
 
+                                wtimeout(win_win, UI_INPUT_TIMEOUT_MS);
                                 int c = wgetch(win_win);
-                                if (c == 27) {
+                                if (c == ERR) {
+                                    media_session_tick();
+                                    continue;
+                                } else if (c == 27) {
                                     break;
                                 } else if (c == KEY_UP) {
                                     if (selected > 0) {
@@ -2569,6 +2577,7 @@ void cleanup() {
     persist_playback_session_state();
     stop_audio();
     wait_for_playback_thread_shutdown();
+    media_session_shutdown();
 
     if (win_playlist) {
         delwin(win_playlist);

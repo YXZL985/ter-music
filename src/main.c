@@ -1,4 +1,5 @@
 #include "../include/defs.h"
+#include "../include/media_session.h"
 #include "../include/menu_views.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -225,6 +226,7 @@ int main(int argc, char *argv[]) {
     init_ffmpeg();
     
     init_audio_device();
+    media_session_init();
     
     create_layout();
     
