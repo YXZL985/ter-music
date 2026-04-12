@@ -133,6 +133,23 @@ sudo apt update
 
 ### 3.4 Arch Linux
 
+**Install from AUR (Recommended):**
+
+```bash
+# Using yay (AUR helper)
+yay -S ter-music-cn
+
+# Using paru (AUR helper)
+paru -S ter-music-cn
+
+# Manual installation from AUR
+git clone https://aur.archlinux.org/ter-music-cn.git
+cd ter-music-cn
+makepkg -si
+```
+
+**Manual Build from Source:**
+
 ```bash
 sudo pacman -S cmake gcc make pkg-config
 sudo pacman -S ffmpeg pulseaudio ncurses
@@ -457,6 +474,46 @@ sudo apt install -f
 
 ```bash
 sudo apt install dpkg-dev fakeroot cmake make gcc
+```
+
+#### 4.9.6 Arch Linux PKGBUILD
+The `PKGBUILD` script builds standard Arch Linux packages directly from source, suitable for Arch Linux and Arch-based distributions:
+**Usage:**
+
+```bash
+# Clone PKGBUILD from AUR
+git clone https://aur.archlinux.org/ter-music-cn.git
+cd ter-music-cn
+
+# Build and install
+makepkg -si
+
+# Or build without installing
+makepkg
+
+# Install built package
+sudo pacman -U ter-music-cn-*.pkg.tar.zst
+```
+
+**Supported Architectures:**
+- x86_64: Intel/AMD 64-bit
+- i686: Intel/AMD 32-bit
+
+**Output:**
+
+- Arch Linux package will be output to the current directory
+
+**Install:**
+
+```bash
+sudo pacman -U ter-music-git-*.pkg.tar.zst
+```
+
+**Build Dependencies (Arch Linux):**
+
+```bash
+sudo pacman -S base-devel cmake gcc make git
+sudo pacman -S ffmpeg pulseaudio ncurses libao libmad libid3tag
 ```
 
 ## 5. Usage

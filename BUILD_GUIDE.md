@@ -241,6 +241,41 @@ sudo apt install -f
 - 自动处理依赖关系
 - 可通过 `apt` 工具管理安装和卸载
 
+### 6. PKGBUILD - 构建 Arch Linux 包
+将项目构建为标准的 Arch Linux 包，适合 Arch Linux 和 Arch-based 发行版。
+**使用方法：**
+```bash
+# 从 AUR 克隆 PKGBUILD
+git clone https://aur.archlinux.org/ter-music-cn.git
+cd ter-music-cn
+
+# 构建并安装
+makepkg -si
+
+# 或者只构建不安装
+makepkg
+
+# 安装已构建的包
+sudo pacman -U ter-music-cn-*.pkg.tar.zst
+```
+**支持的架构：**
+- x86_64: Intel/AMD 64位
+- i686: Intel/AMD 32位
+
+**输出：**
+- Arch Linux 包将输出到当前目录
+
+**安装：**
+```bash
+sudo pacman -U ter-music-cn-*.pkg.tar.zst
+```
+
+**优点：**
+- 标准 Arch Linux 包格式
+- 自动处理依赖关系
+- 可通过 `pacman` 工具管理安装和卸载
+- 适合 Arch Linux 用户
+
 ## 构建依赖
 
 ### build-rpm.sh 依赖：
@@ -290,6 +325,19 @@ sudo apt install -f
 - `gcc`
 - `tar`
 
+### PKGBUILD 依赖：
+- `base-devel`
+- `cmake`
+- `gcc`
+- `make`
+- `git`
+- `ffmpeg`
+- `pulseaudio`
+- `ncurses`
+- `libao`
+- `libmad`
+- `libid3tag`
+
 在 Debian/Ubuntu 上安装构建依赖：
 ```bash
 sudo apt install dpkg-dev fakeroot cmake make gcc
@@ -327,6 +375,7 @@ sudo apt install dpkg-dev fakeroot cmake make gcc
 - **DEB 包**：适合 Debian/Ubuntu 系发行版（Ubuntu、Linux Mint、deepin 等），可以通过 dpkg/apt 安装
 - **AppImage**：适合支持 FUSE 的 Linux 系统，单文件分发
 - **可移植包**：适合所有 Linux 系统，兼容性最好
+- **Arch Linux 包**：适合 Arch Linux 和 Arch-based 发行版，可以通过 pacman 或 AUR 安装
 
 ## 故障排除
 

@@ -110,6 +110,21 @@ sudo apt update
 ```
 
 ### 四 Arch Linux 纳置之令
+**自 AUR 纳置（荐举）：**
+```bash
+# 用 yay（AUR 助手）
+yay -S ter-music-cn
+
+# 用 paru（AUR 助手）
+paru -S ter-music-cn
+
+# 自 AUR 手工纳置
+git clone https://aur.archlinux.org/ter-music-cn.git
+cd ter-music-cn
+makepkg -si
+```
+
+**自源本手工营构：**
 ```bash
 sudo pacman -S cmake gcc make pkg-config
 sudo pacman -S ffmpeg pulseaudio ncurses
@@ -391,6 +406,40 @@ sudo apt install -f
 **营构凭藉（Debian/Ubuntu/deepin）**：
 ```bash
 sudo apt install dpkg-dev fakeroot cmake make gcc
+```
+
+#### 6. Arch Linux PKGBUILD营构脚本
+`PKGBUILD` 脚本，直从源本营构标准 Arch Linux 包，宜于 Arch Linux 及其衍生之统。
+**用法**：
+```bash
+# 自 AUR 克隆 PKGBUILD
+git clone https://aur.archlinux.org/ter-music-cn.git
+cd ter-music-cn
+
+# 营构并纳置
+makepkg -si
+
+# 或仅营构不纳置
+makepkg
+
+# 纳置已营构之包
+sudo pacman -U ter-music-cn-*.pkg.tar.zst
+```
+**所持之架构**：
+- x86_64：Intel/AMD 64位
+- i686：Intel/AMD 32位
+
+**所出**：Arch Linux 包将出于当前目录
+
+**纳置**：
+```bash
+sudo pacman -U ter-music-git-*.pkg.tar.zst
+```
+
+**营构凭藉（Arch Linux）**：
+```bash
+sudo pacman -S base-devel cmake gcc make git
+sudo pacman -S ffmpeg pulseaudio ncurses libao libmad libid3tag
 ```
 
 ## 卷五 施用之法
