@@ -690,12 +690,18 @@ Menu: 选项菜单
 ## 卷八 撰者
 - **撰者**：燕戏竹林
 - **邮驿**：<yxzl666xx@outlook.com>
-- **本籍所藏**：<https://gitee.com/yanxi-bamboo-forest/ter-music.git>
+- **本籍所藏**：<https://github.com/YXZL985/ter-music.git>
 
-## 卷九 襄助之请
+## 卷九 鸣谢
+谨申丹悃，以谢诸彦之劻勷：
+
+- **@guanzi008** - 覃思邃密，多所厘革：DEB之封缄臻于至善，UTF-8之键入靡有疪颣，节度之导引咸就条畅，鼠迹之交互悉得其宜，曲帙之纪纲秩然不紊，目录之次列如贯珠，播弄之断而复续，效能之浚而益弘，声华之绘饰焕若披锦，中夏文界之观瞻雅饬可观
+- **@Zeta** - 拓土开疆，爰启Arch Linux之域
+
+## 卷十 襄助之请
 君若有疑议、有补益，咸得献Issue与Pull Request，无任忻幸。
 
-## 卷十 祛疑解惑
+## 卷十一 祛疑解惑
 **患：音声不发**
 - 察波氏之役是否运行：`systemctl status pulseaudio`符令验之
 - 察扬声器音量是否开启
