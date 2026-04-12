@@ -4,7 +4,9 @@
 ![Language: C](https://img.shields.io/badge/Language-C-blue.svg)
 ![Platform: Linux](https://img.shields.io/badge/Platform-Linux-green.svg)
 
-[中文 README](README_CN.md)
+**其他语言版本 / Other Languages:**
+- [中文（现代版）](README_zh-CN_Modern.md)
+- [中文（文言版）](README_zh-CN_Legacy.md)
 
 ## 1. Project Introduction
 

@@ -4,6 +4,10 @@
 ![Language: C](https://img.shields.io/badge/Language-C-blue.svg)
 ![Platform: Linux](https://img.shields.io/badge/Platform-Linux-green.svg)
 
+**他语之版 / Other Languages:**
+- [English](README.md)
+- [中文（现代版）](README_zh-CN_Modern.md)
+
 ## 卷一 本志叙略
 ### 一 枢要功用
 Ter-Music者，清简端闱之符令乐部也，专为麟纳克斯御统而造。凭斐氏FFmpeg以解绎音声，波氏PulseAudio以传布乐响，纽氏ncursesw以营文墨之界。其用赅备，列于左：
