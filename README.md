@@ -823,5 +823,5 @@ This project is licensed under the [GNU General Public License v3.0](LICENSE) op
 
 Special thanks to the following contributors for their valuable contributions:
 
-- **@guanzi008** - For extensive improvements including DEB packaging optimization, UTF-8 input fixes, settings navigation fixes, mouse interactions, playlist state management, directory queue support, playback resume, performance optimizations, audio visualizer enhancements, and Chinese UI improvements
+- **@guanzi008** - For extensive improvements including Debian packaging metadata, optional MPRIS media session integration, DEB packaging optimization, UTF-8 input fixes, settings navigation fixes, mouse interactions, playlist state management, directory queue support, playback resume, performance optimizations, audio visualizer enhancements, and Chinese UI improvements
 - **@Zeta** - For adding Arch Linux support
