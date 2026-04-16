@@ -218,6 +218,7 @@ void init_ffmpeg();
 void init_audio_device();
 int load_playlist(const char *folder_path);
 int append_playlist(const char *folder_path);
+int load_single_file(const char *file_path);
 void reset_playlist_state(void);
 void playlist_lock(void);
 void playlist_unlock(void);

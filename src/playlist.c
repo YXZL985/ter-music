@@ -570,7 +570,72 @@ void get_audio_metadata(const char *path, char *title, char *artist, char *album
  * 加载指定路径下的音频文件到播放列表
  * 扫描目录，过滤支持的音频文件，并提取元数据
  */
+int load_single_file(const char *file_path) {
+    if (!file_path || file_path[0] == '\0') {
+        return -1;
+    }
+    
+    struct stat s;
+    if (stat(file_path, &s) != 0 || !S_ISREG(s.st_mode)) {
+        return -1;
+    }
+    
+    if (!is_audio_file(file_path)) {
+        return -1;
+    }
+    
+    Playlist *next = calloc(1, sizeof(*next));
+    if (!next) {
+        return -1;
+    }
+    
+    const char *slash = strrchr(file_path, '/');
+    if (slash) {
+        size_t length = (size_t)(slash - file_path);
+        if (length > 0) {
+            memcpy(next->folder_path, file_path, length);
+            next->folder_path[length] = '\0';
+        } else {
+            next->folder_path[0] = '.';
+            next->folder_path[1] = '\0';
+        }
+    } else {
+        next->folder_path[0] = '.';
+        next->folder_path[1] = '\0';
+    }
+    
+    strncpy(next->tracks[0], file_path, MAX_PATH_LEN - 1);
+    next->tracks[0][MAX_PATH_LEN - 1] = '\0';
+    next->count = 1;
+    next->is_loaded = 1;
+    
+    playlist_lock();
+    g_playlist = *next;
+    playlist_unlock();
+    memset(&g_search_state, 0, sizeof(g_search_state));
+    
+    free(next);
+    return 1;
+}
+
 int load_playlist(const char *path) {
+    if (!path || path[0] == '\0') {
+        return -1;
+    }
+    
+    struct stat s;
+    if (stat(path, &s) != 0) {
+        return -1;
+    }
+    
+    if (S_ISREG(s.st_mode)) {
+        return load_single_file(path);
+    }
+    
+    if (!S_ISDIR(s.st_mode)) {
+        return -1;
+    }
+    
     Playlist *next = calloc(1, sizeof(*next));
     if (!next) {
         return -1;

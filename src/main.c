@@ -85,7 +85,34 @@ static int load_startup_playlist(const char *path, char *final_path, size_t fina
         return 0;
     }
 
-    if (stat(path, &s) != 0 || !S_ISDIR(s.st_mode)) {
+    if (stat(path, &s) != 0) {
+        return 0;
+    }
+
+    if (S_ISREG(s.st_mode)) {
+        if (load_playlist(path) <= 0) {
+            return 0;
+        }
+        g_selected_index = 0;
+        
+        const char *slash = strrchr(path, '/');
+        if (slash) {
+            size_t length = (size_t)(slash - path);
+            if (length > 0) {
+                memcpy(final_path, path, length);
+                final_path[length] = '\0';
+            } else {
+                final_path[0] = '.';
+                final_path[1] = '\0';
+            }
+        } else {
+            final_path[0] = '.';
+            final_path[1] = '\0';
+        }
+        return 1;
+    }
+
+    if (!S_ISDIR(s.st_mode)) {
         return 0;
     }
 
@@ -174,12 +201,14 @@ static int find_audio_directory_recursive(const char *path, char *found_path, si
 static void print_usage(const char *prog_name) {
     printf("用法：%s [选项]\n\n", prog_name);
     printf("选项：\n");
-    printf("  -o, --open <path>    启动时打开指定音乐目录\n");
+    printf("  -o, --open <path>    启动时打开指定音乐目录或音频文件\n");
     printf("  -h, --help           显示帮助信息\n");
     printf("\n");
     printf("示例：\n");
     printf("  %s -o ~/Music\n", prog_name);
     printf("  %s --open /path/to/music\n", prog_name);
+    printf("  %s -o /path/to/song.mp3\n", prog_name);
+    printf("  %s --open /path/to/song.flac\n", prog_name);
 }
 
 int main(int argc, char *argv[]) {
@@ -249,14 +278,25 @@ int main(int argc, char *argv[]) {
         expand_user_path(open_path, expanded_path, sizeof(expanded_path));
 
         struct stat s;
-        if (stat(expanded_path, &s) == 0 && S_ISDIR(s.st_mode)) {
-            if (load_startup_playlist(expanded_path, final_path, sizeof(final_path))) {
-                loaded = 1;
+        if (stat(expanded_path, &s) == 0) {
+            if (S_ISREG(s.st_mode) || S_ISDIR(s.st_mode)) {
+                if (load_startup_playlist(expanded_path, final_path, sizeof(final_path))) {
+                    loaded = 1;
+                } else {
+                    const char *error_msg = S_ISREG(s.st_mode) 
+                        ? (use_english_ui() ? "Warning: cannot open audio file" : "警告：无法打开音频文件")
+                        : (use_english_ui() ? "Warning: the selected folder has no playable audio files" : "警告：指定目录中没有可播放的音频文件");
+                    
+                    mvprintw(2, 2, "%s", error_msg);
+                    mvprintw(3, 2, "%s",
+                             use_english_ui()
+                                 ? "Continuing with current directory and default paths..."
+                                 : "将继续尝试当前目录和默认启动路径...");
+                    refresh();
+                    used_fallback = 1;
+                }
             } else {
-                mvprintw(2, 2, "%s",
-                         use_english_ui()
-                             ? "Warning: the selected folder has no playable audio files"
-                             : "警告：指定目录中没有可播放的音频文件");
+                mvprintw(2, 2, use_english_ui() ? "Warning: invalid path: %s" : "警告：指定路径无效：%s", open_path);
                 mvprintw(3, 2, "%s",
                          use_english_ui()
                              ? "Continuing with current directory and default paths..."
