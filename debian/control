@@ -1,0 +1,29 @@
+Source: ter-music
+Section: sound
+Priority: optional
+Maintainer: Yanxi Bamboo Forest <yxzl666xx@outlook.com>
+Build-Depends:
+ cmake,
+ debhelper-compat (= 13),
+ libavcodec-dev,
+ libavformat-dev,
+ libavutil-dev,
+ libdbus-1-dev,
+ libncursesw5-dev | libncurses-dev,
+ libpulse-dev,
+ libswresample-dev,
+ pkg-config
+Standards-Version: 4.7.0
+Homepage: https://github.com/YXZL985/ter-music
+Rules-Requires-Root: no
+
+Package: ter-music
+Architecture: any
+Depends:
+ ${misc:Depends},
+ ${shlibs:Depends}
+Description: terminal-based music player
+ Ter-Music is a lightweight terminal-based music player for Linux systems.
+ It uses FFmpeg for audio decoding, PulseAudio or ALSA for audio output,
+ ncursesw for the text interface, and MPRIS when D-Bus is available for
+ desktop media key integration.
