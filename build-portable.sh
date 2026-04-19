@@ -353,7 +353,7 @@ Ter-Music 可移植包
 - 键盘快捷键
 - 实时进度条
 
-项目主页: https://gitee.com/yanxi-bamboo-forest/ter-music
+项目主页: https://github.com/YXZL985/ter-music
 EOF
 
     log_info "可移植包结构创建完成"

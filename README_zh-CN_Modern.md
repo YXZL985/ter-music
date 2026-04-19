@@ -150,7 +150,7 @@ sudo pacman -S ffmpeg pulseaudio ncurses
 ## 第四章 编译步骤
 ### 一 克隆源码
 ```bash
-git clone https://gitee.com/yanxi-bamboo-forest/ter-music.git
+git clone https://github.com/YXZL985/ter-music.git
 cd ter-music
 ```
 

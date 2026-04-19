@@ -368,11 +368,11 @@ EOF
     <keyword>Terminal</keyword>
     <keyword>Console</keyword>
   </keywords>
-  <url type="homepage">https://gitee.com/yanxi-bamboo-forest/ter-music</url>
-  <url type="bugtracker">https://gitee.com/yanxi-bamboo-forest/ter-music/issues</url>
-  <url type="help">https://gitee.com/yanxi-bamboo-forest/ter-music</url>
+  <url type="homepage">https://github.com/YXZL985/ter-music</url>
+  <url type="bugtracker">https://github.com/YXZL985/ter-music/issues</url>
+  <url type="help">https://github.com/YXZL985/ter-music</url>
   <project_license>GPL-3.0-or-later</project_license>
-  <developer_name>Yanxi Bamboo Forest</developer_name>
+  <developer_name>YXZL985</developer_name>
 </AppImage>
 EOF
 
