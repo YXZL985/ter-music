@@ -60,9 +60,20 @@ check_dependencies() {
     
     local missing_deps=()
     local optional_missing=()
+    local is_debian_based=false
+    
+    # 检测是否为 Debian/Ubuntu/Deepin 系统
+    if [ -f /etc/debian_version ] || command -v dpkg &> /dev/null; then
+        is_debian_based=true
+    fi
     
     if ! command -v rpmbuild &> /dev/null; then
-        missing_deps+=("rpm-build")
+        if [ "$is_debian_based" = true ]; then
+            missing_deps+=("rpm")
+            missing_deps+=("rpm-build")
+        else
+            missing_deps+=("rpm-build")
+        fi
     fi
     
     if ! command -v gcc &> /dev/null; then
@@ -81,6 +92,57 @@ check_dependencies() {
         missing_deps+=("tar")
     fi
     
+    if ! command -v pkg-config &> /dev/null; then
+        missing_deps+=("pkg-config")
+    fi
+    
+    # 检查开发库依赖
+    if [ "$is_debian_based" = true ]; then
+        # Debian/Ubuntu/Deepin 系统：检查 deb 包
+        local deb_dev_libs=(
+            "libavcodec-dev"
+            "libavformat-dev"
+            "libavutil-dev"
+            "libswresample-dev"
+            "libncurses-dev"
+            "libpulse-dev"
+        )
+        
+        for lib in "${deb_dev_libs[@]}"; do
+            if ! dpkg -l "$lib" 2>/dev/null | grep -q "^ii"; then
+                missing_deps+=("$lib")
+            fi
+        done
+    else
+        # RPM 系统：检查 rpm 包
+        local dev_libs=(
+            "ffmpeg-free-devel"
+            "ncurses-devel"
+            "pulseaudio-libs-devel"
+        )
+        
+        for lib in "${dev_libs[@]}"; do
+            if ! rpm -q "$lib" &> /dev/null; then
+                # 尝试替代包名（不同发行版可能有不同的包名）
+                case "$lib" in
+                    ffmpeg-free-devel)
+                        if ! rpm -q "ffmpeg-devel" &> /dev/null; then
+                            missing_deps+=("ffmpeg-free-devel 或 ffmpeg-devel")
+                        fi
+                        ;;
+                    pulseaudio-libs-devel)
+                        if ! rpm -q "libpulse-devel" &> /dev/null; then
+                            missing_deps+=("pulseaudio-libs-devel 或 libpulse-devel")
+                        fi
+                        ;;
+                    *)
+                        missing_deps+=("$lib")
+                        ;;
+                esac
+            fi
+        done
+    fi
+    
     # 检查可选依赖（用于生成 debuginfo）
     if ! command -v eu-strip &> /dev/null; then
         optional_missing+=("elfutils")
@@ -93,7 +155,11 @@ check_dependencies() {
         done
         echo ""
         log_error "请使用以下命令安装缺失的工具:"
-        echo "  sudo dnf install ${missing_deps[*]}"
+        if [ "$is_debian_based" = true ]; then
+            echo "  sudo apt install ${missing_deps[*]}"
+        else
+            echo "  sudo dnf install ${missing_deps[*]}"
+        fi
         exit 1
     fi
     
@@ -104,11 +170,15 @@ check_dependencies() {
         done
         echo ""
         log_info "如需生成 debuginfo 包，请安装:"
-        echo "  sudo dnf install ${optional_missing[*]}"
+        if [ "$is_debian_based" = true ]; then
+            echo "  sudo apt install ${optional_missing[*]}"
+        else
+            echo "  sudo dnf install ${optional_missing[*]}"
+        fi
         echo ""
         read -p "是否继续构建（不生成 debuginfo）？[Y/n] " -n 1 -r
         echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]] && [ -n "$REPLY" ]; then
+        if [[ ! $REPLY =~ ^[Yy]$ ]] && [ -n "$REREPLY" ]]; then
             exit 1
         fi
     fi
@@ -335,15 +405,33 @@ build_rpm() {
     
     export RPM_TOPDIR="${TEMP_DIR}"
     
+    # 检测是否为 Debian/Ubuntu/Deepin 系统
+    local is_debian_based=false
+    if [ -f /etc/debian_version ] || command -v dpkg &> /dev/null; then
+        is_debian_based=true
+    fi
+    
+    # 构建 rpmbuild 命令参数
+    local rpmbuild_args=(
+        -ba "${TEMP_DIR}/SPECS/${PROJECT_NAME}.spec"
+        --define "_topdir ${TEMP_DIR}"
+        --define "_sourcedir ${TEMP_DIR}/SOURCES"
+        --define "_specdir ${TEMP_DIR}/SPECS"
+        --define "_builddir ${TEMP_DIR}/BUILD"
+        --define "_rpmdir ${TEMP_DIR}/RPMS"
+        --define "_srcrpmdir ${TEMP_DIR}/SRPMS"
+        --target "$target_arch"
+    )
+    
+    # 在 Debian 系统上使用 --nodeps 跳过 RPM 依赖检查
+    # 因为我们已经在 check_dependencies 中手动检查了等效的 deb 包
+    if [ "$is_debian_based" = true ]; then
+        log_info "检测到 Debian 系统，使用 --nodeps 跳过 RPM 依赖检查"
+        rpmbuild_args+=(--nodeps)
+    fi
+    
     # 执行 rpmbuild 命令并检查退出状态
-    if rpmbuild -ba "${TEMP_DIR}/SPECS/${PROJECT_NAME}.spec" \
-        --define "_topdir ${TEMP_DIR}" \
-        --define "_sourcedir ${TEMP_DIR}/SOURCES" \
-        --define "_specdir ${TEMP_DIR}/SPECS" \
-        --define "_builddir ${TEMP_DIR}/BUILD" \
-        --define "_rpmdir ${TEMP_DIR}/RPMS" \
-        --define "_srcrpmdir ${TEMP_DIR}/SRPMS" \
-        --target "$target_arch"; then
+    if rpmbuild "${rpmbuild_args[@]}"; then
         log_info "RPM 包构建完成"
         return 0
     else

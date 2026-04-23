@@ -21,7 +21,7 @@ PROJECT_REQUIRED_PATHS=(
     "img/icons/hicolor/scalable/apps/${PROJECT_NAME}.svg"
     "CMakeLists.txt"
     "README.md"
-    "README_CN.md"
+    "README_zh-CN_Modern.md"
     "BUILD_GUIDE.md"
     "LICENSE"
 )
@@ -33,7 +33,8 @@ PROJECT_SOURCE_PATHS=(
     "img"
     "CMakeLists.txt"
     "README.md"
-    "README_CN.md"
+    "README_zh-CN_Modern.md"
+    "README_zh-CN_Legacy.md"
     "BUILD_GUIDE.md"
     "LICENSE"
     "build-deb.sh"
