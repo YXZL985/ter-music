@@ -343,6 +343,134 @@ sudo pacman -U ter-music-cn-*.pkg.tar.zst
 sudo apt install dpkg-dev fakeroot cmake make gcc
 ```
 
+## 交叉编译支持
+
+所有构建脚本都支持在 x86_64/amd64 机器上通过交叉编译工具链构建 aarch64/arm64 架构的包。
+
+### 方式一：使用 Docker 容器（推荐）
+
+为了避免污染主机系统，推荐使用 Docker 容器进行交叉编译。
+
+**前置要求：** 安装 Docker
+```bash
+sudo apt install docker.io
+```
+
+**1. 构建 Docker 镜像**
+```bash
+# 使用提供的脚本构建镜像（会自动构建 Dockerfile.cross-build）
+./cross-build.sh -b
+```
+
+**2. 在容器中运行交叉编译**
+```bash
+# 构建 arm64 DEB 包（默认）
+./cross-build.sh
+
+# 构建 arm64 RPM 包
+./cross-build.sh -s build-rpm.sh
+
+# 构建 aarch64 AppImage
+./cross-build.sh -s build-appimage.sh -a aarch64
+
+# 构建可移植包
+./cross-build.sh -s build-portable.sh -a arm64
+
+# 传递额外参数给构建脚本
+./cross-build.sh -- --keep-temp
+```
+
+**3. 进入交互式容器 shell**
+```bash
+./cross-build.sh -i
+```
+
+**4. 使用 docker-compose（可选）**
+```bash
+# 构建镜像
+docker-compose -f docker-compose.cross.yml build
+
+# 运行（需要手动指定命令）
+docker-compose -f docker-compose.cross.yml run --rm cross-build ./build-deb.sh -a arm64
+```
+
+**容器环境包含：**
+- Ubuntu 22.04 基础系统
+- ARM64 交叉编译工具链（gcc, g++, binutils）
+- ARM64 架构的开发库（libavcodec, libavformat, libswresample, libavutil, libpulse, ncurses）
+- 各种包格式构建工具（dpkg-dev, rpm, squashfs-tools 等）
+
+### 方式二：在主机上直接交叉编译
+
+如果你确定要在主机上进行交叉编译：
+
+**安装交叉编译工具链**
+
+在 Debian/Ubuntu 上：
+```bash
+# 安装交叉编译工具链
+sudo apt install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu
+
+# 添加 arm64 架构支持
+sudo dpkg --add-architecture arm64
+sudo apt update
+
+# 安装目标架构的开发库
+sudo apt install libncurses-dev:arm64 libavcodec-dev:arm64 libavformat-dev:arm64 \
+                 libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64
+```
+
+⚠️ **警告**：在主机上添加多架构支持可能会卸载某些 amd64 软件包，导致系统不稳定！建议在测试环境或虚拟机中执行。
+
+### 使用交叉编译构建
+
+**推荐使用容器方式**（见上方"方式一"），以下是在主机上直接编译的方法：
+
+只需指定目标架构为 arm64/aarch64，脚本会自动检测并使用交叉编译：
+
+```bash
+# 构建 arm64 架构的 DEB 包
+./build-deb.sh -a arm64
+
+# 构建 arm64 架构的 RPM 包
+./build-rpm.sh -a arm64
+
+# 构建 aarch64 架构的 AppImage
+./build-appimage.sh -a aarch64
+
+# 构建 aarch64 架构的可移植包
+./build-portable.sh -a aarch64
+
+# 构建 arm64 架构的 Linyaps 包
+./build-linyaps.sh -a arm64
+```
+
+脚本会自动：
+1. 检测主机架构与目标架构是否不同
+2. 检查交叉编译工具链是否已安装
+3. 设置交叉编译环境变量（CC, CXX, AR, PKG_CONFIG_PATH 等）
+4. 使用 CMake 工具链文件进行交叉编译
+
+### 验证交叉编译结果
+
+构建完成后，可以使用 `file` 命令验证生成的二进制文件架构：
+
+```bash
+# 检查 DEB 包中的二进制文件
+dpkg-deb -x build/deb/arm64/ter-music_*.deb /tmp/ter-music-test
+file /tmp/ter-music-test/usr/bin/ter-music
+# 应显示: ELF 64-bit LSB executable, ARM aarch64
+
+# 检查 RPM 包中的二进制文件
+rpm2cpio build/rpm/arm64/ter-music-*.rpm | cpio -idmv -D /tmp/ter-music-test
+file /tmp/ter-music-test/usr/bin/ter-music
+
+# 检查可移植包中的二进制文件
+tar -xzf build/portable/aarch64/ter-music-*-portable-aarch64.tar.gz -C /tmp
+cd /tmp/ter-music-portable
+file bin/ter-music
+```
+
 ## 推荐的构建流程
 
 现在可以直接构建可移植包或 AppImage，不需要先构建 RPM。推荐直接指定版本号构建：
