@@ -237,6 +237,10 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    if (!open_path && optind < argc) {
+        open_path = argv[optind];
+    }
+
     if (!isatty(STDOUT_FILENO)) {
         fprintf(stderr, "错误：ter-music 需要在终端里直接运行。\n");
         fprintf(stderr, "请不要把它通过管道重定向到其他命令。\n");
