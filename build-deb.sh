@@ -56,6 +56,143 @@ log_clean() {
     echo "[CLEAN] $1"
 }
 
+log_warn() {
+    echo "[WARN] $1" >&2
+}
+
+# 检测是否需要交叉编译
+is_cross_compiling() {
+    local host_arch=$(uname -m)
+    local target_arch="$1"
+    
+    # 标准化架构名称进行比较
+    local normalized_host="$host_arch"
+    local normalized_target="$target_arch"
+    
+    # 将 x86_64 和 amd64 视为相同
+    if [ "$normalized_host" = "x86_64" ]; then
+        normalized_host="amd64"
+    fi
+    if [ "$normalized_target" = "x86_64" ]; then
+        normalized_target="amd64"
+    fi
+    
+    # 将 aarch64 和 arm64 视为相同
+    if [ "$normalized_host" = "aarch64" ]; then
+        normalized_host="arm64"
+    fi
+    if [ "$normalized_target" = "aarch64" ]; then
+        normalized_target="arm64"
+    fi
+    
+    if [ "$normalized_host" != "$normalized_target" ]; then
+        return 0  # true - 需要交叉编译
+    else
+        return 1  # false - 不需要交叉编译
+    fi
+}
+
+# 获取交叉编译工具链前缀
+get_cross_compile_prefix() {
+    local target_arch="$1"
+    
+    case "$target_arch" in
+        arm64|aarch64)
+            echo "aarch64-linux-gnu"
+            ;;
+        *)
+            echo ""
+            ;;
+    esac
+}
+
+# 检查交叉编译依赖
+check_cross_compile_deps() {
+    local target_arch="$1"
+    local arch_prefix=$(get_cross_compile_prefix "$target_arch")
+    
+    if [ -z "$arch_prefix" ]; then
+        return 0
+    fi
+    
+    log_info "检查交叉编译工具链..."
+    
+    local missing_deps=()
+    
+    # 检查交叉编译器
+    if ! command -v ${arch_prefix}-gcc &> /dev/null; then
+        missing_deps+=("gcc-${arch_prefix}")
+    fi
+    
+    if ! command -v ${arch_prefix}-g++ &> /dev/null; then
+        missing_deps+=("g++-${arch_prefix}")
+    fi
+    
+    if ! command -v ${arch_prefix}-ar &> /dev/null; then
+        missing_deps+=("binutils-${arch_prefix}")
+    fi
+    
+    if [ ${#missing_deps[@]} -gt 0 ]; then
+        log_error "缺少以下交叉编译工具链组件:"
+        for dep in "${missing_deps[@]}"; do
+            echo "  - $dep"
+        done
+        echo ""
+        log_error "请使用以下命令安装交叉编译工具链:"
+        echo "  sudo apt install gcc-${arch_prefix} g++-${arch_prefix} binutils-${arch_prefix}"
+        return 1
+    fi
+    
+    # 检查aarch64开发库
+    local pkg_config_dir="/usr/lib/${arch_prefix}/pkgconfig"
+    if [ ! -d "$pkg_config_dir" ] && [ ! -d "/usr/${arch_prefix}/lib/pkgconfig" ]; then
+        log_warn "未找到 ${arch_prefix} 的 pkgconfig 目录"
+        echo ""
+        echo "【重要警告】以下命令仅应在以下环境执行："
+        echo "  - 临时构建容器/虚拟机"
+        echo "  - 专用的交叉编译环境"
+        echo "  - 不是你的日常使用系统！"
+        echo ""
+        log_warn "如需安装目标架构开发库，请谨慎执行:"
+        echo "  sudo dpkg --add-architecture arm64"
+        echo "  sudo apt update"
+        echo "  sudo apt install libncurses-dev:arm64 libavcodec-dev:arm64 libavformat-dev:arm64 \\"
+        echo "                   libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64"
+        echo ""
+        echo "【风险提示】这些命令会添加 arm64 架构支持并可能卸载当前系统的"
+        echo "            某些 amd64 软件包，可能导致系统不稳定！"
+        echo "            建议先在测试环境中尝试，或考虑使用容器进行交叉编译。"
+    fi
+    
+    log_info "交叉编译工具链检查通过"
+    return 0
+}
+
+# 设置交叉编译环境变量
+setup_cross_compile_env() {
+    local target_arch="$1"
+    local arch_prefix=$(get_cross_compile_prefix "$target_arch")
+    
+    if [ -z "$arch_prefix" ]; then
+        return 0
+    fi
+    
+    log_info "设置交叉编译环境..."
+    
+    export CC=${arch_prefix}-gcc
+    export CXX=${arch_prefix}-g++
+    export AR=${arch_prefix}-ar
+    export STRIP=${arch_prefix}-strip
+    export LD=${arch_prefix}-ld
+    export PKG_CONFIG_PATH=/usr/lib/${arch_prefix}/pkgconfig
+    export PKG_CONFIG_LIBDIR=/usr/lib/${arch_prefix}/pkgconfig
+    
+    log_info "交叉编译环境已设置:"
+    log_info "  CC=$CC"
+    log_info "  CXX=$CXX"
+    log_info "  PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
+}
+
 show_help() {
     cat << EOF
 用法: $0 [选项]
@@ -78,6 +215,16 @@ show_help() {
     sw64                申威
     mips64el            MIPS 64位小端
 
+交叉编译:
+    在 x86_64/amd64 机器上构建 arm64 包时，会自动使用交叉编译
+    需要安装交叉编译工具链:
+      sudo apt install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu
+    需要安装目标架构开发库:
+      sudo dpkg --add-architecture arm64
+      sudo apt update
+      sudo apt install libncurses-dev:arm64 libavcodec-dev:arm64 libavformat-dev:arm64 \
+                       libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64
+
 示例:
     $0                  使用自动检测的版本号和架构构建 DEB
     $0 -v 1.2.3         使用指定版本号 1.2.3 构建 DEB
@@ -94,6 +241,8 @@ EOF
 }
 
 check_dependencies() {
+    local target_arch="${1:-}"
+    
     log_info "检查构建依赖..."
 
     local missing_deps=()
@@ -110,8 +259,17 @@ check_dependencies() {
         missing_deps+=("fakeroot")
     fi
 
-    if ! command -v gcc &> /dev/null; then
-        missing_deps+=("gcc")
+    # 检查是否需要交叉编译
+    if [ -n "$target_arch" ] && is_cross_compiling "$target_arch"; then
+        # 交叉编译模式下，不检查本地gcc
+        if ! check_cross_compile_deps "$target_arch"; then
+            exit 1
+        fi
+    else
+        # 本地编译模式下，检查本地gcc
+        if ! command -v gcc &> /dev/null; then
+            missing_deps+=("gcc")
+        fi
     fi
 
     if ! command -v make &> /dev/null; then
@@ -264,8 +422,13 @@ copy_project_sources() {
     local path=""
     for path in "${PROJECT_SOURCE_PATHS[@]}"; do
         if [ -e "${SCRIPT_DIR}/${path}" ]; then
-            mkdir -p "${destination_dir}/$(dirname "${path}")"
-            cp -a "${SCRIPT_DIR}/${path}" "${destination_dir}/${path}"
+            if [ -d "${SCRIPT_DIR}/${path}" ]; then
+                mkdir -p "${destination_dir}/${path}"
+                cp -a "${SCRIPT_DIR}/${path}/." "${destination_dir}/${path}/"
+            else
+                mkdir -p "${destination_dir}/$(dirname "${path}")"
+                cp -a "${SCRIPT_DIR}/${path}" "${destination_dir}/${path}"
+            fi
         fi
     done
 }
@@ -431,7 +594,10 @@ EOF
     # 使用 dpkg-source 构建源码包
     # 注意：dpkg-source 期望 .orig.tar.gz 在父目录中
     cd "${TEMP_DIR}/source"
-    dpkg-source -b "${PROJECT_NAME}-${version}"
+    if ! dpkg-source -b "${PROJECT_NAME}-${version}"; then
+        log_error "dpkg-source 构建源码包失败"
+        return 1
+    fi
 
     # 移动生成的文件到输出目录
     local dsc_file="${TEMP_DIR}/source/${PROJECT_NAME}_${version}-1.dsc"
@@ -459,14 +625,35 @@ EOF
 build_from_source() {
     local build_dir="$1"
     local with_debug="$2"
+    local target_arch="${3:-}"
 
     log_info "从源码构建..."
-
-    if [ "$with_debug" = "true" ]; then
-        cmake -S "${SCRIPT_DIR}" -B "${build_dir}" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=/usr
-    else
-        cmake -S "${SCRIPT_DIR}" -B "${build_dir}" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+    
+    # 检查是否需要交叉编译
+    if [ -n "$target_arch" ] && is_cross_compiling "$target_arch"; then
+        setup_cross_compile_env "$target_arch"
+        log_info "使用交叉编译模式构建目标架构: $target_arch"
     fi
+
+    # 准备CMake参数
+    local cmake_args=(-S "${SCRIPT_DIR}" -B "${build_dir}" -DCMAKE_INSTALL_PREFIX=/usr)
+    
+    if [ "$with_debug" = "true" ]; then
+        cmake_args+=(-DCMAKE_BUILD_TYPE=RelWithDebInfo)
+    else
+        cmake_args+=(-DCMAKE_BUILD_TYPE=Release)
+    fi
+    
+    # 如果是交叉编译，添加工具链文件
+    if [ -n "$target_arch" ] && is_cross_compiling "$target_arch"; then
+        local toolchain_file="${SCRIPT_DIR}/cmake/toolchain-aarch64-linux-gnu.cmake"
+        if [ -f "$toolchain_file" ]; then
+            cmake_args+=(-DCMAKE_TOOLCHAIN_FILE="$toolchain_file")
+            log_info "使用工具链文件: $toolchain_file"
+        fi
+    fi
+    
+    cmake "${cmake_args[@]}"
     cmake --build "${build_dir}" --parallel "$(nproc)"
 
     log_info "源码构建完成"
@@ -734,11 +921,7 @@ main() {
     log_info "  主机架构: $(uname -m)"
     echo ""
 
-    check_dependencies
-    if ! validate_project_layout; then
-        exit 1
-    fi
-
+    # 首先检测版本和架构
     if [ "$version" = "$DEFAULT_VERSION" ]; then
         version=$(detect_version)
         if [ "$version" != "$DEFAULT_VERSION" ]; then
@@ -763,6 +946,12 @@ main() {
             exit 1
         fi
         log_info "使用指定架构: $target_arch"
+    fi
+    
+    # 检查依赖（传入目标架构以支持交叉编译检测）
+    check_dependencies "$target_arch"
+    if ! validate_project_layout; then
+        exit 1
     fi
 
     prepare_directories "$target_arch"
@@ -801,9 +990,9 @@ main() {
     local temp_output="${TEMP_DIR}/${PROJECT_NAME}_${version}_${target_arch}.deb"
 
     if [ "$build_debuginfo" = "true" ]; then
-        build_from_source "$build_dir" "true"
+        build_from_source "$build_dir" "true" "$target_arch"
     else
-        build_from_source "$build_dir" "false"
+        build_from_source "$build_dir" "false" "$target_arch"
     fi
 
     install_files "$deb_root" "$build_dir"
