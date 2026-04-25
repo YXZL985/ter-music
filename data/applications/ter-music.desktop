@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Ter-Music
+Name[zh_CN]=端闱乐部
+Comment=Lightweight terminal-based music player for Linux
+Comment[zh_CN]=轻量级Linux终端音乐播放器
+Exec=ter-music %F
+Icon=ter-music
+Terminal=true
+Type=Application
+Categories=Audio;AudioVideo;Player;Music;
+Keywords=Music;Player;Terminal;Console;Audio;
+MimeType=audio/mpeg;audio/mp3;audio/x-mpeg;audio/x-mp3;audio/mpeg3;audio/mpg;audio/x-mpg;audio/flac;audio/x-flac;audio/ogg;audio/x-ogg;audio/x-wav;audio/wav;audio/x-ms-wma;audio/x-ms-wmv;audio/x-m4a;audio/mp4;audio/x-matroska;audio/x-musepack;audio/ape;audio/x-ape;audio/opus;audio/x-opus;
