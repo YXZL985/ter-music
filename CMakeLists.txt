@@ -123,20 +123,20 @@ install(TARGETS ${PROJECT_NAME}
 )
 
 # 安装 desktop 文件
-install(FILES share/applications/${PROJECT_NAME}.desktop
+install(FILES data/applications/${PROJECT_NAME}.desktop
     DESTINATION share/applications
 )
 
 # 安装图标
-install(FILES img/icons/hicolor/32x32/apps/${PROJECT_NAME}.png
+install(FILES resources/icons/hicolor/32x32/apps/${PROJECT_NAME}.png
     DESTINATION share/icons/hicolor/32x32/apps
 )
-install(FILES img/icons/hicolor/48x48/apps/${PROJECT_NAME}.png
+install(FILES resources/icons/hicolor/48x48/apps/${PROJECT_NAME}.png
     DESTINATION share/icons/hicolor/48x48/apps
 )
-install(FILES img/icons/hicolor/128x128/apps/${PROJECT_NAME}.png
+install(FILES resources/icons/hicolor/128x128/apps/${PROJECT_NAME}.png
     DESTINATION share/icons/hicolor/128x128/apps
 )
-install(FILES img/icons/hicolor/scalable/apps/${PROJECT_NAME}.svg
+install(FILES resources/icons/hicolor/scalable/apps/${PROJECT_NAME}.svg
     DESTINATION share/icons/hicolor/scalable/apps
 )
