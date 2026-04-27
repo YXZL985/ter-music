@@ -1210,11 +1210,17 @@ int utf8_str_pad(char *dest, size_t dest_size, const char *src, int width) {
 
     int current_width = utf8_str_width(dest);
     size_t len = strlen(dest);
-    while (current_width < width && len + 1 < dest_size) {
-        dest[len++] = ' ';
+    // 使用条件表达式避免 GCC 的 -Wstringop-overflow 误报
+    while (current_width < width && len < dest_size - 1) {
+        if (len < dest_size - 1) {
+            dest[len] = ' ';
+            len++;
+        }
         current_width++;
     }
-    dest[len] = '\0';
+    if (len < dest_size) {
+        dest[len] = '\0';
+    }
     return current_width;
 }
 
