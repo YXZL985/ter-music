@@ -3,10 +3,24 @@
 #   docker build -f scripts/cross-compile/Dockerfile -t ter-music-cross .
 #   docker run --rm -v $(pwd):/workspace ter-music-cross ./scripts/build/build-deb.sh -a arm64
 
-FROM ubuntu:22.04
+FROM debian:13
 
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Shanghai
+
+# Remove default sources and configure USTC mirror sources for Debian 13 (trixie)
+RUN rm -f /etc/apt/sources.list.d/debian.sources && \
+    echo 'Types: deb' > /etc/apt/sources.list.d/ustc.sources && \
+    echo 'URIs: http://mirrors.ustc.edu.cn/debian' >> /etc/apt/sources.list.d/ustc.sources && \
+    echo 'Suites: trixie trixie-updates' >> /etc/apt/sources.list.d/ustc.sources && \
+    echo 'Components: main contrib non-free non-free-firmware' >> /etc/apt/sources.list.d/ustc.sources && \
+    echo 'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' >> /etc/apt/sources.list.d/ustc.sources && \
+    echo '' >> /etc/apt/sources.list.d/ustc.sources && \
+    echo 'Types: deb' >> /etc/apt/sources.list.d/ustc.sources && \
+    echo 'URIs: http://mirrors.ustc.edu.cn/debian-security' >> /etc/apt/sources.list.d/ustc.sources && \
+    echo 'Suites: trixie-security' >> /etc/apt/sources.list.d/ustc.sources && \
+    echo 'Components: main contrib non-free non-free-firmware' >> /etc/apt/sources.list.d/ustc.sources && \
+    echo 'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' >> /etc/apt/sources.list.d/ustc.sources
 
 # Install basic tools
 RUN apt-get update && apt-get install -y \
@@ -66,7 +80,7 @@ WORKDIR /workspace
 COPY . /workspace/
 
 # Make build scripts executable
-RUN chmod +x /workspace/build-*.sh
+RUN chmod +x /workspace/scripts/build/*.sh
 
 # Default command: build for ARM64
 CMD ["./scripts/build/build-deb.sh", "-a", "arm64"]
