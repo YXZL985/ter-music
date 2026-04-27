@@ -275,6 +275,14 @@ int main(int argc, char *argv[]) {
     if (temp_loaded > 0) {
         loaded = 1;
         playlist_copy_folder_path(final_path, sizeof(final_path));
+
+        // 重新扫描目录以更新曲库（检测新增或删除的歌曲）
+        if (final_path[0] != '\0') {
+            struct stat st;
+            if (stat(final_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+                load_playlist(final_path);
+            }
+        }
     }
     
     if (open_path && strlen(open_path) > 0) {
