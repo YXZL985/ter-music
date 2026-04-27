@@ -29,6 +29,7 @@ RUN apt-get update && apt-get install -y \
     git \
     wget \
     curl \
+    rsync \
     && rm -rf /var/lib/apt/lists/*
 
 # Install cross-compilation toolchain for ARM64
@@ -42,6 +43,7 @@ RUN apt-get update && apt-get install -y \
 RUN dpkg --add-architecture arm64 && \
     apt-get update && apt-get install -y \
     libncurses-dev:arm64 \
+    libdbus-1-dev:arm64 \
     libavcodec-dev:arm64 \
     libavformat-dev:arm64 \
     libswresample-dev:arm64 \
@@ -61,7 +63,6 @@ RUN apt-get update && apt-get install -y \
 # RPM packages
 RUN apt-get update && apt-get install -y \
     rpm \
-    rpmbuild \
     && rm -rf /var/lib/apt/lists/*
 
 # AppImage dependencies
@@ -70,8 +71,13 @@ RUN apt-get update && apt-get install -y \
     file \
     && rm -rf /var/lib/apt/lists/*
 
-# Linyaps (linglong) - if available
-# RUN apt-get update && apt-get install -y linglong-builder || true
+# Linyaps (linglong) - install from Deepin OBS repository
+# Install xdg-utils first for xdg-mime command required by linglong-installer
+RUN apt-get update && apt-get install -y xdg-utils && rm -rf /var/lib/apt/lists/*
+RUN echo "deb [trusted=yes] https://ci.deepin.com/repo/obs/linglong:/CI:/release/Debian_13/ ./" > /etc/apt/sources.list.d/linglong.list && \
+    apt-get update && \
+    apt-get install -y linglong-bin linglong-installer linglong-builder && \
+    rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /workspace

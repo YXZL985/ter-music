@@ -137,6 +137,7 @@ else
     docker run --rm \
         -v "$SCRIPT_DIR":/workspace \
         --workdir /workspace \
+        --privileged \
         "$IMAGE_NAME" \
         ./scripts/build/$SCRIPT -a "$TARGET_ARCH" "${BUILD_SCRIPT_ARGS[@]}"
     

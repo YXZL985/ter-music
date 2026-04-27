@@ -13,7 +13,8 @@ set(CMAKE_RANLIB aarch64-linux-gnu-ranlib)
 set(CMAKE_LINKER aarch64-linux-gnu-ld)
 
 # Where to look for libraries and headers
-set(CMAKE_FIND_ROOT_PATH /usr/aarch64-linux-gnu)
+set(CMAKE_FIND_ROOT_PATH /)
+set(CMAKE_SYSROOT /)
 
 # Adjust the default behavior of the FIND_XXX() commands:
 # Search programs in the host environment
@@ -26,7 +27,7 @@ set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 # pkg-config settings for cross-compilation
 set(ENV{PKG_CONFIG_PATH} "/usr/lib/aarch64-linux-gnu/pkgconfig")
 set(ENV{PKG_CONFIG_LIBDIR} "/usr/lib/aarch64-linux-gnu/pkgconfig")
-set(ENV{PKG_CONFIG_SYSROOT_DIR} "/usr/aarch64-linux-gnu")
+set(ENV{PKG_CONFIG_SYSROOT_DIR} "/")
 
 # Disable pkg-config search in host paths
 set(ENV{PKG_CONFIG_ALLOW_SYSTEM_LIBS} "0")
