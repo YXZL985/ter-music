@@ -161,6 +161,7 @@ typedef struct {
     int volume_percent;
     int audio_latency_ms;
     int show_lyrics_panel;
+    int default_loop_mode;
 } AppConfig;
 
 typedef struct {

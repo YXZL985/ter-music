@@ -556,6 +556,7 @@ void init_default_config(void) {
     g_app_config.volume_percent = 100;
     g_app_config.audio_latency_ms = 80;
     g_app_config.show_lyrics_panel = 1;
+    g_app_config.default_loop_mode = LOOP_OFF;
 }
 
 void apply_color_theme(void) {
@@ -646,6 +647,12 @@ void load_config(void) {
     if (strstr(json, "\"show_lyrics_panel\"")) {
         g_app_config.show_lyrics_panel = (int)extract_json_int(json, "show_lyrics_panel");
     }
+    if (strstr(json, "\"default_loop_mode\"")) {
+        g_app_config.default_loop_mode = (int)extract_json_int(json, "default_loop_mode");
+    }
+    if (g_app_config.default_loop_mode < LOOP_OFF || g_app_config.default_loop_mode > LOOP_RANDOM) {
+        g_app_config.default_loop_mode = LOOP_OFF;
+    }
 
     g_app_config.resume_last_playback = g_app_config.resume_last_playback ? 1 : 0;
     if (g_app_config.last_played_position < 0) {
@@ -713,7 +720,8 @@ void save_config(void) {
     fprintf(f, "  \"ui_language\": %d,\n", g_app_config.ui_language);
     fprintf(f, "  \"volume_percent\": %d,\n", g_app_config.volume_percent);
     fprintf(f, "  \"audio_latency_ms\": %d,\n", g_app_config.audio_latency_ms);
-    fprintf(f, "  \"show_lyrics_panel\": %d\n", g_app_config.show_lyrics_panel);
+    fprintf(f, "  \"show_lyrics_panel\": %d,\n", g_app_config.show_lyrics_panel);
+    fprintf(f, "  \"default_loop_mode\": %d\n", g_app_config.default_loop_mode);
     
     fprintf(f, "}\n");
     
@@ -1611,6 +1619,7 @@ void init_all_persistent_data(void) {
     ensure_config_dir_exists();
     load_config();
     apply_color_theme();
+    g_loop_mode = g_app_config.default_loop_mode;
     load_history();
     load_favorites();
     load_dir_history();
@@ -1783,7 +1792,8 @@ static const char *settings_options[] = {
     "界面语言",
     "默认音量",
     "输出时延",
-    "显示歌词面板"
+    "显示歌词面板",
+    "默认循环模式"
 };
 static const char *settings_options_ascii[] = {
     "Playlist Foreground",
@@ -1805,9 +1815,10 @@ static const char *settings_options_ascii[] = {
     "Language",
     "Default Volume",
     "Output Latency",
-    "Show Lyrics Panel"
+    "Show Lyrics Panel",
+    "Default Loop Mode"
 };
-#define SETTINGS_OPTION_COUNT 20
+#define SETTINGS_OPTION_COUNT 21
 
 enum {
     SETTINGS_IDX_THEME_COLOR_PAIR_0 = 0,
@@ -1829,7 +1840,8 @@ enum {
     SETTINGS_IDX_LANGUAGE = 16,
     SETTINGS_IDX_VOLUME = 17,
     SETTINGS_IDX_LATENCY = 18,
-    SETTINGS_IDX_SHOW_LYRICS = 19
+    SETTINGS_IDX_SHOW_LYRICS = 19,
+    SETTINGS_IDX_DEFAULT_LOOP = 20
 };
 
 typedef struct {
@@ -1863,7 +1875,8 @@ static const int settings_playback_option_indices[] = {
     SETTINGS_IDX_LANGUAGE,
     SETTINGS_IDX_VOLUME,
     SETTINGS_IDX_LATENCY,
-    SETTINGS_IDX_SHOW_LYRICS
+    SETTINGS_IDX_SHOW_LYRICS,
+    SETTINGS_IDX_DEFAULT_LOOP
 };
 
 static SettingsSectionSpec get_settings_section_spec_for_sidebar(int sidebar_idx) {
@@ -1972,6 +1985,27 @@ static void format_settings_option_line(int option_index, char *line, size_t lin
         snprintf(line, line_size, "%s%s%s",
                  current_settings_options[option_index], separator,
                  menu_bool_text(g_app_config.show_lyrics_panel));
+    } else if (option_index == SETTINGS_IDX_DEFAULT_LOOP) {
+        const char *loop_mode_str;
+        switch (g_app_config.default_loop_mode) {
+            case LOOP_OFF:
+                loop_mode_str = use_english_ui() ? "Off" : "关闭";
+                break;
+            case LOOP_SINGLE:
+                loop_mode_str = use_english_ui() ? "Single" : "单曲";
+                break;
+            case LOOP_LIST:
+                loop_mode_str = use_english_ui() ? "List" : "列表";
+                break;
+            case LOOP_RANDOM:
+                loop_mode_str = use_english_ui() ? "Random" : "随机";
+                break;
+            default:
+                loop_mode_str = use_english_ui() ? "Off" : "关闭";
+        }
+        snprintf(line, line_size, "%s%s%s",
+                 current_settings_options[option_index], separator,
+                 loop_mode_str);
     } else {
         snprintf(line, line_size, "%s", current_settings_options[option_index]);
     }
@@ -2168,6 +2202,19 @@ static void adjust_or_toggle_settings_option(int option_index, int delta) {
             g_app_config.show_lyrics_panel = !g_app_config.show_lyrics_panel;
             save_config();
             break;
+        case SETTINGS_IDX_DEFAULT_LOOP:
+            if (delta < 0) {
+                g_app_config.default_loop_mode = (g_app_config.default_loop_mode - 1 + 4) % 4;
+            } else if (delta > 0) {
+                g_app_config.default_loop_mode = (g_app_config.default_loop_mode + 1) % 4;
+            } else {
+                g_app_config.default_loop_mode = (g_app_config.default_loop_mode + 1) % 4;
+            }
+            save_config();
+            g_loop_mode = g_app_config.default_loop_mode;
+            show_status_message(menu_text("默认循环模式已更新，当前会话已应用",
+                                          "Default loop mode updated, applied to current session"));
+            break;
         default:
             break;
     }
@@ -2183,7 +2230,8 @@ static void activate_settings_current_option(void) {
         g_settings_current_option == SETTINGS_IDX_REMEMBER_PATH ||
         g_settings_current_option == SETTINGS_IDX_CLEAR_HISTORY ||
         g_settings_current_option == SETTINGS_IDX_LANGUAGE ||
-        g_settings_current_option == SETTINGS_IDX_SHOW_LYRICS) {
+        g_settings_current_option == SETTINGS_IDX_SHOW_LYRICS ||
+        g_settings_current_option == SETTINGS_IDX_DEFAULT_LOOP) {
         adjust_or_toggle_settings_option(g_settings_current_option, 0);
         return;
     }
