@@ -5,7 +5,7 @@
 ![Platform: Linux](https://img.shields.io/badge/Platform-Linux-green.svg)
 
 **其他语言版本 / Other Languages:**
-- [English](README.md)
+- [English](../README.md)
 - [中文（文言版）](README_zh-CN_Legacy.md)
 
 ## 第一章 产品概述

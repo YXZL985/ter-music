@@ -5,7 +5,7 @@
 ![Platform: Linux](https://img.shields.io/badge/Platform-Linux-green.svg)
 
 **他语之版 / Other Languages:**
-- [English](README.md)
+- [English](../README.md)
 - [中文（现代版）](README_zh-CN_Modern.md)
 
 ## 卷一 本志叙略
