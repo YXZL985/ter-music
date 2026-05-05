@@ -6,6 +6,7 @@ Build-Depends:
  cmake,
  debhelper-compat (= 13),
  libavcodec-dev,
+ libavfilter-dev,
  libavformat-dev,
  libavutil-dev,
  libdbus-1-dev,

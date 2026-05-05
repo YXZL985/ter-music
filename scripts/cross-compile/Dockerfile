@@ -48,6 +48,7 @@ RUN dpkg --add-architecture arm64 && \
     libavformat-dev:arm64 \
     libswresample-dev:arm64 \
     libavutil-dev:arm64 \
+    libavfilter-dev:arm64 \
     libpulse-dev:arm64 \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*

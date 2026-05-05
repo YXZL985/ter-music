@@ -191,8 +191,8 @@ show_help() {
     需要安装目标架构开发库:
       sudo dpkg --add-architecture arm64
       sudo apt update
-      sudo apt install libncurses-dev:arm64 libavcodec-dev:arm64 libavformat-dev:arm64 \
-                       libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64
+      sudo apt install libncurses-dev:arm64 libavcodec-dev:arm64 libavfilter-dev:arm64 \
+                       libavformat-dev:arm64 libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64
 
 示例:
     $0                  使用自动检测版本和架构构建 Linyaps 包

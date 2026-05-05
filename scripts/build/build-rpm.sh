@@ -184,8 +184,8 @@ show_help() {
     需要安装目标架构开发库:
       sudo dpkg --add-architecture arm64
       sudo apt update
-      sudo apt install libncurses-dev:arm64 libavcodec-dev:arm64 libavformat-dev:arm64 \
-                       libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64
+      sudo apt install libncurses-dev:arm64 libavcodec-dev:arm64 libavfilter-dev:arm64 \
+                       libavformat-dev:arm64 libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64
 
 示例:
     $0                  使用自动检测的版本号和架构构建 RPM
@@ -258,6 +258,7 @@ check_dependencies() {
         # Debian/Ubuntu/Deepin 系统：检查 deb 包
         local deb_dev_libs=(
             "libavcodec-dev"
+            "libavfilter-dev"
             "libavformat-dev"
             "libavutil-dev"
             "libswresample-dev"
@@ -464,7 +465,7 @@ Source0:        %{name}-%{version}.tar.gz
 BuildRequires:  gcc, make, cmake, pkg-config
 BuildRequires:  ffmpeg-free-devel, pulseaudio-libs-devel, ncurses-devel
 
-Requires:       libavcodec-free, libavformat-free, libavutil-free, libswresample-free, pulseaudio-libs, ncurses-libs
+Requires:       libavcodec-free, libavfilter-free, libavformat-free, libavutil-free, libswresample-free, pulseaudio-libs, ncurses-libs
 
 %description
 Ter-Music is a lightweight terminal-based music player for Linux systems.
