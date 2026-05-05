@@ -12,10 +12,11 @@ typedef struct {
     // === 核心状态 ===
     int64_t total_samples_played;      // 累计已播放的样本帧数
     int sample_rate;                    // 当前音频采样率（如 44100）
+    float playback_speed;               // 倍速播放因子（如 1.0, 1.5, 2.0）
     
     // === Wall-clock 时间跟踪（用于校准） ===
     uint64_t play_start_time_us;        // 播放开始时的微秒时间戳
-    uint64_t pause_accumulated_us;      // 暂停累计的微秒时间
+    uint64_t pause_accumulated_us;      // 暂停累计的微秒
     uint64_t last_pause_time_us;        // 上次暂停的时间点
     int is_playing;                     // 是否正在播放
     
@@ -85,6 +86,12 @@ int progress_tracker_is_ready(void);
  * @param new_sample_rate 新的采样率
  */
 void progress_tracker_set_sample_rate(int new_sample_rate);
+
+/**
+ * 设置倍速播放因子
+ * @param speed 倍速值（如 1.0, 1.5, 2.0）
+ */
+void progress_tracker_set_speed(float speed);
 
 /**
  * 开始播放，启动wall-clock计时

@@ -8,6 +8,7 @@
 static ProgressTracker g_tracker = {
     .total_samples_played = 0,
     .sample_rate = 0,
+    .playback_speed = 1.0f,
     .play_start_time_us = 0,
     .pause_accumulated_us = 0,
     .last_pause_time_us = 0,
@@ -28,6 +29,7 @@ void progress_tracker_init(int sample_rate) {
     pthread_mutex_lock(&g_tracker.lock);
     
     g_tracker.sample_rate = sample_rate;
+    g_tracker.playback_speed = 1.0f;
     g_tracker.total_samples_played = 0;
     g_tracker.play_start_time_us = 0;
     g_tracker.pause_accumulated_us = 0;
@@ -54,11 +56,13 @@ void progress_tracker_destroy(void) {
 
 void progress_tracker_add_samples(int num_samples) {
     pthread_mutex_lock(&g_tracker.lock);
-    
-    if (g_tracker.is_playing && num_samples > 0) {
-        g_tracker.total_samples_played += num_samples;
+
+    if (g_tracker.is_playing && num_samples > 0 && g_tracker.playback_speed > 0) {
+        // atempo 滤镜输出的样本数已经根据倍速调整
+        // 为了正确计算原始音频的播放位置，需要将样本数乘以倍速
+        g_tracker.total_samples_played += (int64_t)(num_samples * g_tracker.playback_speed);
     }
-    
+
     pthread_mutex_unlock(&g_tracker.lock);
 }
 
@@ -195,20 +199,20 @@ int progress_tracker_is_ready(void) {
 
 void progress_tracker_set_sample_rate(int new_sample_rate) {
     pthread_mutex_lock(&g_tracker.lock);
-    
+
     if (new_sample_rate <= 0) {
         pthread_mutex_unlock(&g_tracker.lock);
         return;
     }
-    
+
     // 如果已有样本累加，按旧采样率计算位置并转换为新采样率的样本数
     if (g_tracker.sample_rate > 0 && g_tracker.total_samples_played > 0) {
         int position_seconds = (int)(g_tracker.total_samples_played / g_tracker.sample_rate);
         g_tracker.total_samples_played = (int64_t)position_seconds * new_sample_rate;
     }
-    
+
     g_tracker.sample_rate = new_sample_rate;
-    
+
     // 只在已经有样本累加时才重新校准 wall-clock
     // 这避免了在播放开始前（total_samples_played = 0）意外启动计时
     // 场景 1：播放开始时 set_sample_rate 在 start() 之前调用，此时 total_samples_played = 0，不校准
@@ -224,6 +228,16 @@ void progress_tracker_set_sample_rate(int new_sample_rate) {
         }
         g_tracker.pause_accumulated_us = 0;
     }
-    
+
+    pthread_mutex_unlock(&g_tracker.lock);
+}
+
+void progress_tracker_set_speed(float speed) {
+    pthread_mutex_lock(&g_tracker.lock);
+
+    if (speed > 0) {
+        g_tracker.playback_speed = speed;
+    }
+
     pthread_mutex_unlock(&g_tracker.lock);
 }
