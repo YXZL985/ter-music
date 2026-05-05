@@ -15,6 +15,7 @@ pkg_check_modules(AVCODEC REQUIRED libavcodec)
 pkg_check_modules(AVFORMAT REQUIRED libavformat)
 pkg_check_modules(SWRESAMPLE REQUIRED libswresample)
 pkg_check_modules(AVUTIL REQUIRED libavutil)
+pkg_check_modules(AVFILTER REQUIRED libavfilter)
 pkg_check_modules(PULSE libpulse)
 pkg_check_modules(DBUS dbus-1)
 
@@ -71,6 +72,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${AVFORMAT_INCLUDE_DIRS}
     ${SWRESAMPLE_INCLUDE_DIRS}
     ${AVUTIL_INCLUDE_DIRS}
+    ${AVFILTER_INCLUDE_DIRS}
     ${AUDIO_BACKEND_INCLUDE_DIRS}
 )
 
@@ -84,6 +86,7 @@ target_link_libraries(${PROJECT_NAME}
     ${AVFORMAT_LIBRARIES}
     ${SWRESAMPLE_LIBRARIES}
     ${AVUTIL_LIBRARIES}
+    ${AVFILTER_LIBRARIES}
     ${AUDIO_BACKEND_LIBRARIES}
     ${NCURSESW_LIBRARY}
     m
@@ -100,11 +103,16 @@ target_compile_options(${PROJECT_NAME} PRIVATE
     ${AVFORMAT_CFLAGS_OTHER}
     ${SWRESAMPLE_CFLAGS_OTHER}
     ${AVUTIL_CFLAGS_OTHER}
+    ${AVFILTER_CFLAGS_OTHER}
     ${AUDIO_BACKEND_CFLAGS}
 )
 
 if(DBUS_FOUND)
     target_compile_options(${PROJECT_NAME} PRIVATE ${DBUS_CFLAGS_OTHER})
+endif()
+
+if(AVFILTER_FOUND)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_AVFILTER=1)
 endif()
 
 # 添加预处理器定义
