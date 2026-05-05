@@ -30,8 +30,8 @@ WINDOW *win_controls;
 WINDOW *win_lyrics;
 
 // 控件标签文本
-const char *control_labels[] = {"上一曲", "播放/暂停", "下一曲", "停止", "循环", "音量", "进度"};
-static const char *control_labels_en[] = {"Prev", "Play/Pause", "Next", "Stop", "Loop", "Vol", "Prog"};
+const char *control_labels[] = {"上一曲", "播放/暂停", "下一曲", "停止", "循环", "倍速", "音量", "进度"};
+static const char *control_labels_en[] = {"Prev", "Play/Pause", "Next", "Stop", "Loop", "Speed", "Vol", "Prog"};
 int g_control_count = sizeof(control_labels) / sizeof(control_labels[0]);
 
 // 歌词光标操作模式全局变量
@@ -70,8 +70,9 @@ enum {
     CONTROL_IDX_NEXT = 2,
     CONTROL_IDX_STOP = 3,
     CONTROL_IDX_LOOP = 4,
-    CONTROL_IDX_VOLUME = 5,
-    CONTROL_IDX_PROGRESS = 6
+    CONTROL_IDX_SPEED = 5,
+    CONTROL_IDX_VOLUME = 6,
+    CONTROL_IDX_PROGRESS = 7
 };
 
 void render_playlist_content(void);
@@ -516,6 +517,11 @@ static void build_control_label(int index, char *dest, size_t dest_size) {
 
     if (index == CONTROL_IDX_LOOP) {
         snprintf(dest, dest_size, "%s:%s", get_control_label(index), get_loop_mode_str());
+        return;
+    }
+
+    if (index == CONTROL_IDX_SPEED) {
+        snprintf(dest, dest_size, "%s:%.2fx", get_control_label(index), g_playback_speed);
         return;
     }
 
@@ -2635,6 +2641,9 @@ static void activate_current_control(void) {
             break;
         case CONTROL_IDX_LOOP:
             toggle_loop_mode();
+            break;
+        case CONTROL_IDX_SPEED:
+            toggle_playback_speed();
             break;
         case CONTROL_IDX_VOLUME:
             adjust_volume(10);

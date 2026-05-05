@@ -32,6 +32,9 @@
 #include <libavutil/channel_layout.h>
 #include <libavutil/samplefmt.h>
 #include <libavutil/version.h>
+#include <libavfilter/avfilter.h>
+#include <libavfilter/buffersink.h>
+#include <libavfilter/buffersrc.h>
 
 // 确保DT_REG和DT_UNKNOWN被定义
 #ifndef DT_REG
@@ -532,6 +535,27 @@ static int g_play_thread_active = 0;
 static int g_play_thread_finished = 0;
 static int g_pending_playback_index = -1;
 
+// 倍速播放相关
+float g_playback_speed = 1.0f;
+static float g_speed_ratios[] = {0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 3.0f};
+static int g_speed_index = 1;
+static int g_speed_count = sizeof(g_speed_ratios) / sizeof(g_speed_ratios[0]);
+
+// atempo 滤镜相关结构体
+typedef struct {
+    AVFilterGraph *graph;
+    AVFilterContext *src_ctx;
+    AVFilterContext *sink_ctx;
+    int initialized;
+    float speed;
+    int input_sample_rate;
+    int input_channels;
+    uint64_t input_channel_layout;
+    enum AVSampleFormat input_sample_fmt;
+} AtempoFilter;
+
+static AtempoFilter g_atempo_filter = {0};
+
 // 跳转相关变量
 int g_seek_request = 0; // 跳转请求标志
 int g_seek_position = 0; // 目标跳转位置（秒）
@@ -553,6 +577,263 @@ char g_default_audio_device[128] = "default";
 } while(0)
 
 
+
+/**
+ * 根据倍速值构建 atempo 滤镜字符串
+ * atempo 滤镜的有效范围是 0.5 到 2.0，超出范围需要链式使用
+ */
+static void build_atempo_filter_string(char *buf, size_t buf_size, float speed) {
+    if (speed == 1.0f) {
+        // 1.0x 不需要滤镜
+        buf[0] = '\0';
+        return;
+    }
+    
+    // atempo 滤镜范围是 0.5 到 2.0
+    if (speed >= 0.5f && speed <= 2.0f) {
+        snprintf(buf, buf_size, "atempo=%.2f", speed);
+        return;
+    }
+    
+    // 对于 3.0x，使用链式滤镜: atempo=2.0,atempo=1.5
+    if (speed > 2.0f) {
+        float remaining = speed;
+        buf[0] = '\0';
+        size_t offset = 0;
+        int first = 1;
+        
+        while (remaining > 1.01f) {
+            float factor = (remaining > 2.0f) ? 2.0f : remaining;
+            int written = snprintf(buf + offset, buf_size - offset, 
+                                   first ? "atempo=%.2f" : ",atempo=%.2f", factor);
+            if (written < 0 || (size_t)written >= buf_size - offset) {
+                break;
+            }
+            offset += written;
+            remaining /= factor;
+            first = 0;
+        }
+        return;
+    }
+    
+    // 对于小于 0.5 的速度（如 0.25x），需要链式使用
+    if (speed < 0.5f) {
+        float remaining = speed;
+        buf[0] = '\0';
+        size_t offset = 0;
+        int first = 1;
+        
+        while (remaining < 0.99f) {
+            float factor = (remaining < 0.5f) ? 0.5f : remaining;
+            int written = snprintf(buf + offset, buf_size - offset,
+                                   first ? "atempo=%.2f" : ",atempo=%.2f", factor);
+            if (written < 0 || (size_t)written >= buf_size - offset) {
+                break;
+            }
+            offset += written;
+            remaining /= factor;
+            first = 0;
+        }
+        return;
+    }
+    
+    // 默认情况
+    buf[0] = '\0';
+}
+
+/**
+ * 初始化 atempo 滤镜图
+ */
+static int init_atempo_filter(AtempoFilter *filter, const AVCodecContext *codec_ctx, float speed) {
+    if (!filter || !codec_ctx || speed <= 0) {
+        return -1;
+    }
+    
+    // 如果速度是 1.0x，不需要滤镜
+    if (speed == 1.0f) {
+        filter->initialized = 0;
+        filter->speed = 1.0f;
+        return 0;
+    }
+    
+    // 构建滤镜字符串
+    char filter_str[256];
+    build_atempo_filter_string(filter_str, sizeof(filter_str), speed);
+    if (filter_str[0] == '\0') {
+        filter->initialized = 0;
+        filter->speed = 1.0f;
+        return 0;
+    }
+    
+    // 保存输入参数
+    filter->speed = speed;
+    filter->input_sample_rate = codec_ctx->sample_rate;
+    filter->input_channels = codec_channel_count(codec_ctx);
+    filter->input_sample_fmt = codec_ctx->sample_fmt;
+#if LIBAVUTIL_VERSION_MAJOR >= 57
+    filter->input_channel_layout = codec_ctx->ch_layout.u.mask;
+#else
+    filter->input_channel_layout = codec_ctx->channel_layout;
+#endif
+    
+    // 创建滤镜图
+    filter->graph = avfilter_graph_alloc();
+    if (!filter->graph) {
+        return -1;
+    }
+    
+    // 创建 buffer 源滤镜（输入）
+    const AVFilter *abuffersrc = avfilter_get_by_name("abuffer");
+    if (!abuffersrc) {
+        avfilter_graph_free(&filter->graph);
+        return -1;
+    }
+    
+    char ch_layout_str[64];
+#if LIBAVUTIL_VERSION_MAJOR >= 57
+    AVChannelLayout ch_layout = codec_ctx->ch_layout;
+    av_channel_layout_describe(&ch_layout, ch_layout_str, sizeof(ch_layout_str));
+#else
+    snprintf(ch_layout_str, sizeof(ch_layout_str), "0x%"PRIx64, filter->input_channel_layout);
+#endif
+    
+    char args[512];
+    snprintf(args, sizeof(args),
+             "sample_rate=%d:sample_fmt=%s:channel_layout=%s:channels=%d",
+             filter->input_sample_rate,
+             av_get_sample_fmt_name(filter->input_sample_fmt),
+             ch_layout_str,
+             filter->input_channels);
+    
+    int ret = avfilter_graph_create_filter(&filter->src_ctx, abuffersrc, "in",
+                                           args, NULL, filter->graph);
+    if (ret < 0) {
+        avfilter_graph_free(&filter->graph);
+        return -1;
+    }
+    
+    // 创建 buffer sink 滤镜（输出）
+    const AVFilter *abuffersink = avfilter_get_by_name("abuffersink");
+    if (!abuffersink) {
+        avfilter_graph_free(&filter->graph);
+        return -1;
+    }
+    
+    ret = avfilter_graph_create_filter(&filter->sink_ctx, abuffersink, "out",
+                                       NULL, NULL, filter->graph);
+    if (ret < 0) {
+        avfilter_graph_free(&filter->graph);
+        return -1;
+    }
+    
+    // 设置输出格式
+    enum AVSampleFormat sample_fmts[] = { filter->input_sample_fmt, AV_SAMPLE_FMT_NONE };
+    ret = av_opt_set_int_list(filter->sink_ctx, "sample_fmts", sample_fmts,
+                              AV_SAMPLE_FMT_NONE, AV_OPT_SEARCH_CHILDREN);
+    if (ret < 0) {
+        avfilter_graph_free(&filter->graph);
+        return -1;
+    }
+    
+    // 解析滤镜字符串并连接
+    AVFilterInOut *outputs = avfilter_inout_alloc();
+    AVFilterInOut *inputs = avfilter_inout_alloc();
+    if (!outputs || !inputs) {
+        avfilter_inout_free(&outputs);
+        avfilter_inout_free(&inputs);
+        avfilter_graph_free(&filter->graph);
+        return -1;
+    }
+    
+    outputs->name = av_strdup("in");
+    outputs->filter_ctx = filter->src_ctx;
+    outputs->pad_idx = 0;
+    outputs->next = NULL;
+    
+    inputs->name = av_strdup("out");
+    inputs->filter_ctx = filter->sink_ctx;
+    inputs->pad_idx = 0;
+    inputs->next = NULL;
+    
+    ret = avfilter_graph_parse_ptr(filter->graph, filter_str, &inputs, &outputs, NULL);
+    avfilter_inout_free(&outputs);
+    avfilter_inout_free(&inputs);
+    
+    if (ret < 0) {
+        avfilter_graph_free(&filter->graph);
+        return -1;
+    }
+    
+    // 配置滤镜图
+    ret = avfilter_graph_config(filter->graph, NULL);
+    if (ret < 0) {
+        avfilter_graph_free(&filter->graph);
+        return -1;
+    }
+    
+    filter->initialized = 1;
+    return 0;
+}
+
+/**
+ * 销毁 atempo 滤镜图
+ */
+static void cleanup_atempo_filter(AtempoFilter *filter) {
+    if (!filter) {
+        return;
+    }
+    
+    if (filter->graph) {
+        avfilter_graph_free(&filter->graph);
+        filter->graph = NULL;
+    }
+    
+    filter->src_ctx = NULL;
+    filter->sink_ctx = NULL;
+    filter->initialized = 0;
+}
+
+/**
+ * 发送帧到 atempo 滤镜
+ */
+static int send_frame_to_atempo(AtempoFilter *filter, AVFrame *frame) {
+    if (!filter || !filter->initialized) {
+        return 0;
+    }
+    
+    int ret = av_buffersrc_add_frame(filter->src_ctx, frame);
+    if (ret < 0) {
+        return -1;
+    }
+    return 0;
+}
+
+/**
+ * 从 atempo 滤镜接收帧
+ */
+static int receive_frame_from_atempo(AtempoFilter *filter, AVFrame *frame) {
+    if (!filter || !filter->initialized) {
+        return -1;
+    }
+    
+    int ret = av_buffersink_get_frame(filter->sink_ctx, frame);
+    return ret;  // 返回 AVERROR(EAGAIN) 或 AVERROR_EOF 表示没有更多帧
+}
+
+/**
+ * 刷新 atempo 滤镜（发送 NULL 帧表示输入结束）
+ */
+static int flush_atempo_filter(AtempoFilter *filter) {
+    if (!filter || !filter->initialized) {
+        return 0;
+    }
+    
+    int ret = av_buffersrc_add_frame(filter->src_ctx, NULL);
+    if (ret < 0) {
+        return -1;
+    }
+    return 0;
+}
 
 /**
  * 自定义FFmpeg日志回调，完全禁止输出到终端
@@ -971,6 +1252,55 @@ void toggle_loop_mode() {
     render_controls();
 }
 
+/**
+ * 切换倍速播放
+ * 按顺序切换：0.75x -> 1.0x -> 1.25x -> 1.5x -> 2.0x -> 3.0x -> 0.75x
+ * 切换倍速后重启播放以应用新的 atempo 滤镜
+ */
+void toggle_playback_speed(void) {
+    g_speed_index = (g_speed_index + 1) % g_speed_count;
+    g_playback_speed = g_speed_ratios[g_speed_index];
+    g_app_config.default_playback_speed = g_playback_speed;
+    save_config();
+    char msg[64];
+    snprintf(msg, sizeof(msg), "%s: %.2fx",
+             use_english_ui() ? "Speed" : "倍速",
+             g_playback_speed);
+    update_controls_status(msg);
+    render_controls();
+
+    // 如果正在播放或暂停，重启播放以应用新的倍速
+    if (g_play_state == PLAY_STATE_PLAYING || g_play_state == PLAY_STATE_PAUSED) {
+        pthread_mutex_lock(&g_play_mutex);
+        int was_paused = (g_play_state == PLAY_STATE_PAUSED);
+        int current_idx = g_current_play_index;
+        int current_pos = g_current_position;
+        pthread_mutex_unlock(&g_play_mutex);
+
+        // 设置重启位置，让新线程从当前位置开始播放
+        g_initial_seek_position = current_pos;
+
+        // 停止当前播放线程
+        pthread_mutex_lock(&g_play_mutex);
+        g_play_thread_running = 0;
+        pthread_mutex_unlock(&g_play_mutex);
+        signal_playback_thread();
+
+        // 等待线程结束
+        reap_finished_playback_thread();
+
+        // 重新播放相同索引，会从 g_initial_seek_position 恢复位置
+        play_audio(current_idx);
+
+        // 如果之前是暂停状态，恢复暂停
+        if (was_paused) {
+            // 等待一小段时间确保播放开始
+            usleep(50000);
+            pause_audio();
+        }
+    }
+}
+
 void reap_finished_playback_thread(void) {
     pthread_t thread_to_join;
     int should_join = 0;
@@ -1092,8 +1422,10 @@ static int handle_seek_request_in_decoder(AVFormatContext *fmt_ctx,
 static int decode_next_pcm_chunk(AVFormatContext *fmt_ctx,
                                  AVCodecContext *codec_ctx,
                                  SwrContext *swr_ctx,
+                                 AtempoFilter *atempo_filter,
                                  AVPacket *packet,
                                  AVFrame *frame,
+                                 AVFrame *filtered_frame,
                                  PCMQueue *queue,
                                  int audio_stream_index,
                                  int output_sample_rate,
@@ -1101,13 +1433,71 @@ static int decode_next_pcm_chunk(AVFormatContext *fmt_ctx,
                                  int use_resampler,
                                  int *decoder_draining,
                                  int *decoder_finished) {
-    if (!fmt_ctx || !codec_ctx || !packet || !frame || !queue) {
+    if (!fmt_ctx || !codec_ctx || !packet || !frame || !filtered_frame || !queue) {
         return -1;
     }
 
     while (!*decoder_finished) {
+        // 首先尝试从 atempo 滤镜获取已处理的帧
+        if (atempo_filter && atempo_filter->initialized) {
+            int filter_ret = receive_frame_from_atempo(atempo_filter, filtered_frame);
+            if (filter_ret == 0) {
+                // 成功获取到滤镜输出帧
+                PCMChunk *slot = pcm_queue_write_slot(queue);
+                if (!slot) {
+                    av_frame_unref(filtered_frame);
+                    return 0;
+                }
+
+                int produced_frames = 0;
+                int produced_bytes = 0;
+
+                if (!use_resampler) {
+                    produced_bytes = av_samples_get_buffer_size(NULL, output_channels, filtered_frame->nb_samples,
+                                                                AV_SAMPLE_FMT_S16, 1);
+                    if (produced_bytes > 0 && pcm_chunk_ensure_capacity(slot, produced_bytes) == 0) {
+                        memcpy(slot->data, filtered_frame->data[0], (size_t)produced_bytes);
+                        produced_frames = filtered_frame->nb_samples;
+                    }
+                } else {
+                    int dst_nb_samples = av_rescale_rnd(
+                        swr_get_delay(swr_ctx, atempo_filter->input_sample_rate) + filtered_frame->nb_samples,
+                        output_sample_rate, atempo_filter->input_sample_rate, AV_ROUND_UP);
+                    produced_bytes = av_samples_get_buffer_size(NULL, output_channels, dst_nb_samples,
+                                                                AV_SAMPLE_FMT_S16, 1);
+                    if (produced_bytes > 0 && pcm_chunk_ensure_capacity(slot, produced_bytes) == 0) {
+                        uint8_t *output_planes[] = {(uint8_t *)slot->data};
+                        produced_frames = swr_convert(swr_ctx, output_planes, dst_nb_samples,
+                                                      (const uint8_t **)filtered_frame->data, filtered_frame->nb_samples);
+                        if (produced_frames > 0) {
+                            produced_bytes = produced_frames * output_channels * (int)sizeof(int16_t);
+                        }
+                    }
+                }
+
+                av_frame_unref(filtered_frame);
+
+                if (produced_frames > 0 && produced_bytes > 0) {
+                    pcm_queue_commit_write(queue, produced_frames, produced_bytes);
+                    return 1;
+                }
+                continue;
+            }
+        }
+
         int ret = avcodec_receive_frame(codec_ctx, frame);
         if (ret == 0) {
+            // 如果有 atempo 滤镜，发送帧到滤镜
+            if (atempo_filter && atempo_filter->initialized) {
+                if (send_frame_to_atempo(atempo_filter, frame) < 0) {
+                    av_frame_unref(frame);
+                    return -1;
+                }
+                av_frame_unref(frame);
+                continue;  // 继续循环以从滤镜获取输出
+            }
+
+            // 没有 atempo 滤镜，直接处理
             PCMChunk *slot = pcm_queue_write_slot(queue);
             if (!slot) {
                 av_frame_unref(frame);
@@ -1331,9 +1721,12 @@ void *play_audio_thread(void *arg) {
         input_channels = 2;
     }
     output_channels = (input_channels == 1) ? 1 : 2;
+    // 使用原始采样率，倍速通过 atempo 滤镜实现
     output_sample_rate = codec_ctx->sample_rate > 0 ? codec_ctx->sample_rate : 44100;
     prefill_target_frames = (output_sample_rate * get_pcm_prefill_target_ms(output_sample_rate) + 999) / 1000;
-    use_resampler = !(codec_ctx->sample_fmt == AV_SAMPLE_FMT_S16 && input_channels <= 2);
+    
+    // 检查是否需要重采样（输出格式不是 S16 或通道数需要转换）
+    use_resampler = (codec_ctx->sample_fmt != AV_SAMPLE_FMT_S16 || input_channels != output_channels);
 
     if (use_resampler) {
         swr_ctx = swr_alloc();
@@ -1347,10 +1740,17 @@ void *play_audio_thread(void *arg) {
             goto cleanup;
         }
     }
+    
+    // 初始化 atempo 滤镜（如果倍速不是 1.0x）
+    if (init_atempo_filter(&g_atempo_filter, codec_ctx, g_playback_speed) < 0) {
+        update_controls_status(audio_text("无法初始化倍速滤镜", "Cannot initialize speed filter"));
+        goto cleanup;
+    }
 
     packet = av_packet_alloc();
     frame = av_frame_alloc();
-    if (!packet || !frame) {
+    AVFrame *filtered_frame = av_frame_alloc();
+    if (!packet || !frame || !filtered_frame) {
         update_controls_status(audio_text("无法分配解码数据结构", "Cannot allocate decode structures"));
         goto cleanup;
     }
@@ -1369,6 +1769,7 @@ void *play_audio_thread(void *arg) {
 
     progress_tracker_init(output_sample_rate);
     progress_tracker_set_sample_rate(output_sample_rate);
+    progress_tracker_set_speed(g_playback_speed);
     progress_tracker_start();
 
     g_play_state = PLAY_STATE_PLAYING;
@@ -1400,7 +1801,8 @@ void *play_audio_thread(void *arg) {
                !decoder_finished &&
                pcm_queue.count < PCM_QUEUE_CAPACITY &&
                pcm_queue.buffered_frames < prefill_target_frames) {
-            int decode_result = decode_next_pcm_chunk(fmt_ctx, codec_ctx, swr_ctx, packet, frame, &pcm_queue,
+            int decode_result = decode_next_pcm_chunk(fmt_ctx, codec_ctx, swr_ctx, &g_atempo_filter, 
+                                                      packet, frame, filtered_frame, &pcm_queue,
                                                       audio_stream_index, output_sample_rate, output_channels,
                                                       use_resampler, &decoder_draining, &decoder_finished);
             if (decode_result < 0) {
@@ -1441,12 +1843,23 @@ void *play_audio_thread(void *arg) {
     }
     
 cleanup:
+    // 刷新并清理 atempo 滤镜
+    if (g_atempo_filter.initialized && decoder_draining) {
+        flush_atempo_filter(&g_atempo_filter);
+        // 消费滤镜中剩余的帧
+        while (receive_frame_from_atempo(&g_atempo_filter, filtered_frame) == 0) {
+            av_frame_unref(filtered_frame);
+        }
+    }
+    cleanup_atempo_filter(&g_atempo_filter);
+    
     audio_backend_cleanup_stream();
 
     if (pcm_queue_initialized) {
         pcm_queue_destroy(&pcm_queue);
     }
 
+    av_frame_free(&filtered_frame);
     av_frame_free(&frame);
     av_packet_free(&packet);
     swr_free(&swr_ctx);
@@ -1515,7 +1928,11 @@ void play_audio(int index) {
     
     pthread_mutex_lock(&g_play_mutex);
     
-    if (g_play_state == PLAY_STATE_PLAYING && g_current_play_index == index) {
+    // 允许倍速切换重启：如果有初始跳转位置（g_initial_seek_position > 0），
+    // 说明是倍速切换导致的重启，允许重新播放相同索引
+    int is_speed_change_restart = (g_initial_seek_position > 0);
+    
+    if (!is_speed_change_restart && g_play_state == PLAY_STATE_PLAYING && g_current_play_index == index) {
         pthread_mutex_unlock(&g_play_mutex);
         return;
     }

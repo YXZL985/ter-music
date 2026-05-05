@@ -56,7 +56,7 @@ typedef enum {
 #define UI_DIRTY_CONTROLS 0x02
 #define UI_DIRTY_LYRICS 0x04
 
-#define CONTROL_COUNT 7
+#define CONTROL_COUNT 8
 #define MAX_AUDIO_BUFFER_SIZE (44100 * 2 * sizeof(int16_t))
 #define MAX_PATH_LEN 512
 #define MAX_TRACKS 1000
@@ -162,6 +162,7 @@ typedef struct {
     int audio_latency_ms;
     int show_lyrics_panel;
     int default_loop_mode;
+    float default_playback_speed;
 } AppConfig;
 
 typedef struct {
@@ -214,7 +215,9 @@ extern int g_lyric_cursor_mode;
 extern int g_lyric_cursor_index;
 
 extern SearchState g_search_state;
+extern float g_playback_speed;
 
+void toggle_playback_speed(void);
 void init_ffmpeg();
 void init_audio_device();
 int load_playlist(const char *folder_path);

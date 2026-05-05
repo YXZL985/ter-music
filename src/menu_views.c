@@ -21,6 +21,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <ctype.h>
+#include <math.h>
 
 extern WINDOW *win_playlist;
 extern WINDOW *win_controls;
@@ -291,17 +292,33 @@ static char* extract_json_string(const char *json, const char *key, char *output
 static long extract_json_int(const char *json, const char *key) {
     char search_key[128];
     snprintf(search_key, sizeof(search_key), "\"%s\"", key);
-    
+
     const char *pos = strstr(json, search_key);
     if (!pos) return 0;
-    
+
     pos = strchr(pos, ':');
     if (!pos) return 0;
-    
+
     pos++;
     while (*pos == ' ' || *pos == '\t' || *pos == '\n' || *pos == '\r') pos++;
-    
+
     return atol(pos);
+}
+
+static double extract_json_float(const char *json, const char *key) {
+    char search_key[128];
+    snprintf(search_key, sizeof(search_key), "\"%s\"", key);
+
+    const char *pos = strstr(json, search_key);
+    if (!pos) return 0.0;
+
+    pos = strchr(pos, ':');
+    if (!pos) return 0.0;
+
+    pos++;
+    while (*pos == ' ' || *pos == '\t' || *pos == '\n' || *pos == '\r') pos++;
+
+    return atof(pos);
 }
 
 static void escape_json_string(const char *src, char *dest, size_t dest_size) {
@@ -557,6 +574,7 @@ void init_default_config(void) {
     g_app_config.audio_latency_ms = 80;
     g_app_config.show_lyrics_panel = 1;
     g_app_config.default_loop_mode = LOOP_OFF;
+    g_app_config.default_playback_speed = 1.0f;
 }
 
 void apply_color_theme(void) {
@@ -653,6 +671,15 @@ void load_config(void) {
     if (g_app_config.default_loop_mode < LOOP_OFF || g_app_config.default_loop_mode > LOOP_RANDOM) {
         g_app_config.default_loop_mode = LOOP_OFF;
     }
+    if (strstr(json, "\"default_playback_speed\"")) {
+        g_app_config.default_playback_speed = (float)extract_json_float(json, "default_playback_speed");
+        if (g_app_config.default_playback_speed < 0.5f || g_app_config.default_playback_speed > 3.0f) {
+            g_app_config.default_playback_speed = 1.0f;
+        }
+    } else {
+        g_app_config.default_playback_speed = 1.0f;
+    }
+    g_playback_speed = g_app_config.default_playback_speed;
 
     g_app_config.resume_last_playback = g_app_config.resume_last_playback ? 1 : 0;
     if (g_app_config.last_played_position < 0) {
@@ -721,8 +748,9 @@ void save_config(void) {
     fprintf(f, "  \"volume_percent\": %d,\n", g_app_config.volume_percent);
     fprintf(f, "  \"audio_latency_ms\": %d,\n", g_app_config.audio_latency_ms);
     fprintf(f, "  \"show_lyrics_panel\": %d,\n", g_app_config.show_lyrics_panel);
-    fprintf(f, "  \"default_loop_mode\": %d\n", g_app_config.default_loop_mode);
-    
+    fprintf(f, "  \"default_loop_mode\": %d,\n", g_app_config.default_loop_mode);
+    fprintf(f, "  \"default_playback_speed\": %.2f\n", g_app_config.default_playback_speed);
+
     fprintf(f, "}\n");
     
     fclose(f);
@@ -1793,7 +1821,8 @@ static const char *settings_options[] = {
     "默认音量",
     "输出时延",
     "显示歌词面板",
-    "默认循环模式"
+    "默认循环模式",
+    "默认倍速"
 };
 static const char *settings_options_ascii[] = {
     "Playlist Foreground",
@@ -1816,9 +1845,10 @@ static const char *settings_options_ascii[] = {
     "Default Volume",
     "Output Latency",
     "Show Lyrics Panel",
-    "Default Loop Mode"
+    "Default Loop Mode",
+    "Default Speed"
 };
-#define SETTINGS_OPTION_COUNT 21
+#define SETTINGS_OPTION_COUNT 22
 
 enum {
     SETTINGS_IDX_THEME_COLOR_PAIR_0 = 0,
@@ -1841,7 +1871,8 @@ enum {
     SETTINGS_IDX_VOLUME = 17,
     SETTINGS_IDX_LATENCY = 18,
     SETTINGS_IDX_SHOW_LYRICS = 19,
-    SETTINGS_IDX_DEFAULT_LOOP = 20
+    SETTINGS_IDX_DEFAULT_LOOP = 20,
+    SETTINGS_IDX_DEFAULT_SPEED = 21
 };
 
 typedef struct {
@@ -1876,7 +1907,8 @@ static const int settings_playback_option_indices[] = {
     SETTINGS_IDX_VOLUME,
     SETTINGS_IDX_LATENCY,
     SETTINGS_IDX_SHOW_LYRICS,
-    SETTINGS_IDX_DEFAULT_LOOP
+    SETTINGS_IDX_DEFAULT_LOOP,
+    SETTINGS_IDX_DEFAULT_SPEED
 };
 
 static SettingsSectionSpec get_settings_section_spec_for_sidebar(int sidebar_idx) {
@@ -2006,6 +2038,10 @@ static void format_settings_option_line(int option_index, char *line, size_t lin
         snprintf(line, line_size, "%s%s%s",
                  current_settings_options[option_index], separator,
                  loop_mode_str);
+    } else if (option_index == SETTINGS_IDX_DEFAULT_SPEED) {
+        snprintf(line, line_size, "%s%s%.2fx",
+                 current_settings_options[option_index], separator,
+                 g_app_config.default_playback_speed);
     } else {
         snprintf(line, line_size, "%s", current_settings_options[option_index]);
     }
@@ -2215,6 +2251,31 @@ static void adjust_or_toggle_settings_option(int option_index, int delta) {
             show_status_message(menu_text("默认循环模式已更新，当前会话已应用",
                                           "Default loop mode updated, applied to current session"));
             break;
+        case SETTINGS_IDX_DEFAULT_SPEED: {
+            static float speed_ratios[] = {0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 3.0f};
+            static int speed_count = sizeof(speed_ratios) / sizeof(speed_ratios[0]);
+            int current_idx = 1;
+            for (int i = 0; i < speed_count; i++) {
+                if (fabs(g_app_config.default_playback_speed - speed_ratios[i]) < 0.01f) {
+                    current_idx = i;
+                    break;
+                }
+            }
+            if (delta < 0) {
+                current_idx = (current_idx - 1 + speed_count) % speed_count;
+            } else {
+                current_idx = (current_idx + 1) % speed_count;
+            }
+            g_app_config.default_playback_speed = speed_ratios[current_idx];
+            g_playback_speed = g_app_config.default_playback_speed;
+            save_config();
+            char msg[64];
+            snprintf(msg, sizeof(msg), "%s: %.2fx",
+                     menu_text("默认倍速已更新", "Default speed updated"),
+                     g_app_config.default_playback_speed);
+            show_status_message(msg);
+            break;
+        }
         default:
             break;
     }
@@ -2231,7 +2292,8 @@ static void activate_settings_current_option(void) {
         g_settings_current_option == SETTINGS_IDX_CLEAR_HISTORY ||
         g_settings_current_option == SETTINGS_IDX_LANGUAGE ||
         g_settings_current_option == SETTINGS_IDX_SHOW_LYRICS ||
-        g_settings_current_option == SETTINGS_IDX_DEFAULT_LOOP) {
+        g_settings_current_option == SETTINGS_IDX_DEFAULT_LOOP ||
+        g_settings_current_option == SETTINGS_IDX_DEFAULT_SPEED) {
         adjust_or_toggle_settings_option(g_settings_current_option, 0);
         return;
     }
