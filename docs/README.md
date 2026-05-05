@@ -19,6 +19,7 @@ Ter-Music is a lightweight, terminal-based command-line music player designed fo
 - 🎵 **Supports Multiple Audio Formats**: MP3, WAV, FLAC, OGG, M4A, AAC, WMA, APE, OPUS and other popular formats
 - 📝 **LRC Lyrics Synchronization**: Automatically loads and synchronizes lyrics, highlights current line with playback progress
 - 🎶 **Multiple Playback Modes**: Sequential, single repeat, list repeat, shuffle
+- ⚡ **Playback Speed Control**: Supports 0.75x, 1.0x, 1.25x, 1.5x, 2.0x, 3.0x speed adjustment for efficient listening
 - 📚 **Playlist Management**: Supports user-defined creation of multiple playlists
 - ❤️ **Favorites Feature**: Bookmark favorite songs for quick access
 - 🕒 **Playback History**: Automatically records playback history for easy review
@@ -49,6 +50,7 @@ Ter-Music follows the **simple, efficient, native** design philosophy:
 | ⚡ **Responsive UI**: 100 FPS refresh rate, smooth progress bar updates | <br /> |
 | 🔧 **CMake Build**: Modern build system, good cross-platform compatibility | <br /> |
 | 🔊 **PulseAudio Audio Backend**: Stable low-latency audio output | <br /> |
+| ⏩ **Playback Speed Control**: 6 levels of speed adjustment (0.75x-3.0x), switchable during playback | <br /> |
 
 ### 1.4 Use Cases
 
@@ -384,6 +386,7 @@ Menu: Options Menu
 | `>>` | Next track |
 | `Stop` | Stop playback |
 | `Loop` | Switch loop mode (Off → Single → List → Random) |
+| `Speed` | Switch playback speed (0.75x → 1.0x → 1.25x → 1.5x → 2.0x → 3.0x) |
 | `Progress` | Progress bar (shows current playback progress) |
 | `Volume` | Volume control (shows current volume percentage, adjustable) |
 
@@ -434,7 +437,28 @@ Menu: Options Menu
 
 Press `Space` to activate the Loop button to cycle through modes.
 
-### 5.6 Lyrics Display
+### 5.6 Playback Speed Control
+
+Ter-Music supports playback speed adjustment, allowing you to listen to audio at different speeds:
+
+| Speed | Description |
+| ----- | ----------- |
+| `0.75x` | Slow speed, suitable for detailed listening or learning |
+| `1.0x` | Normal speed, default playback speed |
+| `1.25x` | Slightly fast, suitable for faster listening |
+| `1.5x` | Fast speed, suitable for quickly browsing content |
+| `2.0x` | Double speed, suitable for efficient listening |
+| `3.0x` | Triple speed, maximum speed for rapid review |
+
+**How to use:**
+- In the control area, use `←`/`→` to select the Speed button, then press `Space` to switch speeds
+- The current speed will be displayed on the Speed button (e.g., "Speed:1.50x")
+- Speed can be changed during playback; the audio will seamlessly transition to the new speed
+- The default speed setting can be configured in the settings menu (F2)
+
+**Note:** Speed adjustment is implemented using FFmpeg's atempo filter, which maintains audio pitch while changing playback speed.
+
+### 5.7 Lyrics Display
 
 Ter-Music supports automatic loading of LRC format lyrics files:
 
@@ -444,7 +468,7 @@ Ter-Music supports automatic loading of LRC format lyrics files:
 - The program automatically highlights current lyrics based on playback time
 - If no lyrics file is found, the lyrics area will display "No lyrics loaded"
 
-### 5.7 Configuration File
+### 5.8 Configuration File
 
 The configuration file is stored at `~/.config/ter-music/config`. The program will automatically create it on first run.
 
@@ -457,7 +481,7 @@ The configuration file is stored at `~/.config/ter-music/config`. The program wi
 
 The program automatically saves configuration, changes take effect immediately after modification.
 
-### 5.8 Data Storage Location
+### 5.9 Data Storage Location
 
 All user data is stored in the `~/.config/ter-music/` directory:
 
@@ -470,7 +494,7 @@ All user data is stored in the `~/.config/ter-music/` directory:
 └── playlists/     # Custom playlists
 ```
 
-### 5.9 Basic Usage Flow
+### 5.10 Basic Usage Flow
 
 **Example: First time use**
 
@@ -501,7 +525,7 @@ All user data is stored in the `~/.config/ter-music/` directory:
 3. Enter playlist name
 4. Return to main interface, select songs in the list, press `A` to add to playlist
 
-### 5.10 Shortcut Cheat Sheet
+### 5.11 Shortcut Cheat Sheet
 
 | Group | Keys | Function |
 | ------ | ------------------- | -------- |
@@ -524,15 +548,17 @@ All user data is stored in the `~/.config/ter-music/` directory:
 | <br /> | `,` | Back 5 sec |
 | <br /> | `.` | Forward 5 sec |
 | <br /> | `D` | Jump to lyric line |
+| <br /> | `-`/`_` | Decrease volume |
+| <br /> | `=`/`+` | Increase volume |
 | **Lyrics** | `D` | Temp focus to lyrics |
 | <br /> | `↑`/`↓` | Select prev/next line |
 | <br /> | `D`/`Enter`/`Space` | Jump to selected line |
 
-### 5.11 Terminal Resizing
+### 5.12 Terminal Resizing
 
 Ter-Music supports terminal window resizing. When you resize the terminal, the program will automatically readjust the layout and redraw the interface.
 
-### 5.12 Exit the Program
+### 5.13 Exit the Program
 
 There are three ways to exit:
 
