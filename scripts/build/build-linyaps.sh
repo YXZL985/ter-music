@@ -409,8 +409,12 @@ buildext:
       - libavcodec60
       - libswresample4
       - libavutil58
+      - libavfilter9
       - libtag1v5
       - libpulse0
+      - libblas3
+      - liblapack3
+      - libgfortran5
 EOF
 
     log_info "linglong.yaml 已生成: ${project_root}/linglong.yaml"
