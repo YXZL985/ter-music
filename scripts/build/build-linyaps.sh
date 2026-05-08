@@ -385,9 +385,18 @@ build: |
   cd ${PROJECT_NAME}
   mkdir -p build
   cd build
-  cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=\${PREFIX}${cross_compile_cmake_args}
+  cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=\${PREFIX} -DCMAKE_INSTALL_RPATH='\$ORIGIN/../lib'${cross_compile_cmake_args}
   make -j\$(nproc)
   make install
+  mkdir -p \${PREFIX}/lib
+  for dep in libblas.so.3 liblapack.so.3; do
+    dep_path=\$(find /usr/lib /lib \\( -type f -o -type l \\) -name "\${dep}" 2>/dev/null | head -n 1)
+    if [ -z "\${dep_path}" ]; then
+      echo "required runtime library not found: \${dep}" >&2
+      exit 1
+    fi
+    install -Dm755 "\$(readlink -f "\${dep_path}")" "\${PREFIX}/lib/\${dep}"
+  done
 
 buildext:
   apt:
@@ -404,6 +413,8 @@ buildext:
       - libavfilter-dev
       - libswscale-dev
       - libpostproc-dev
+      - libblas3
+      - liblapack3
     depends:
       - libavformat60
       - libavcodec60
