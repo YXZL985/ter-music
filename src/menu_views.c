@@ -575,6 +575,7 @@ void init_default_config(void) {
     g_app_config.show_lyrics_panel = 1;
     g_app_config.default_loop_mode = LOOP_OFF;
     g_app_config.default_playback_speed = 1.0f;
+    g_app_config.show_album_cover = 1;
 }
 
 void apply_color_theme(void) {
@@ -679,6 +680,9 @@ void load_config(void) {
     } else {
         g_app_config.default_playback_speed = 1.0f;
     }
+    if (strstr(json, "\"show_album_cover\"")) {
+        g_app_config.show_album_cover = (int)extract_json_int(json, "show_album_cover");
+    }
     g_playback_speed = g_app_config.default_playback_speed;
 
     g_app_config.resume_last_playback = g_app_config.resume_last_playback ? 1 : 0;
@@ -749,7 +753,8 @@ void save_config(void) {
     fprintf(f, "  \"audio_latency_ms\": %d,\n", g_app_config.audio_latency_ms);
     fprintf(f, "  \"show_lyrics_panel\": %d,\n", g_app_config.show_lyrics_panel);
     fprintf(f, "  \"default_loop_mode\": %d,\n", g_app_config.default_loop_mode);
-    fprintf(f, "  \"default_playback_speed\": %.2f\n", g_app_config.default_playback_speed);
+    fprintf(f, "  \"default_playback_speed\": %.2f,\n", g_app_config.default_playback_speed);
+    fprintf(f, "  \"show_album_cover\": %d\n", g_app_config.show_album_cover);
 
     fprintf(f, "}\n");
     
