@@ -264,6 +264,8 @@ check_dependencies() {
             "libswresample-dev"
             "libncurses-dev"
             "libpulse-dev"
+            "libpng-dev"
+            "libjpeg-dev"
         )
         
         for lib in "${deb_dev_libs[@]}"; do
@@ -277,8 +279,10 @@ check_dependencies() {
             "ffmpeg-free-devel"
             "ncurses-devel"
             "pulseaudio-libs-devel"
+            "libpng-devel"
+            "libjpeg-turbo-devel"
         )
-        
+
         for lib in "${dev_libs[@]}"; do
             if ! rpm -q "$lib" &> /dev/null; then
                 # 尝试替代包名（不同发行版可能有不同的包名）
@@ -291,6 +295,16 @@ check_dependencies() {
                     pulseaudio-libs-devel)
                         if ! rpm -q "libpulse-devel" &> /dev/null; then
                             missing_deps+=("pulseaudio-libs-devel 或 libpulse-devel")
+                        fi
+                        ;;
+                    libpng-devel)
+                        if ! rpm -q "libpng-devel" &> /dev/null && ! rpm -q "libpng16-devel" &> /dev/null; then
+                            missing_deps+=("libpng-devel 或 libpng16-devel")
+                        fi
+                        ;;
+                    libjpeg-turbo-devel)
+                        if ! rpm -q "libjpeg-devel" &> /dev/null && ! rpm -q "libjpeg62-turbo-devel" &> /dev/null; then
+                            missing_deps+=("libjpeg-turbo-devel 或 libjpeg-devel 或 libjpeg62-turbo-devel")
                         fi
                         ;;
                     *)
@@ -464,8 +478,10 @@ Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  gcc, make, cmake, pkg-config
 BuildRequires:  ffmpeg-free-devel, pulseaudio-libs-devel, ncurses-devel
+BuildRequires:  pkgconfig(libpng), pkgconfig(libjpeg)
 
 Requires:       libavcodec-free, libavfilter-free, libavformat-free, libavutil-free, libswresample-free, pulseaudio-libs, ncurses-libs
+Requires:       libpng16, libjpeg62-turbo
 
 %description
 Ter-Music is a lightweight terminal-based music player for Linux systems.

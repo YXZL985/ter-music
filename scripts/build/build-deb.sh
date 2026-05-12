@@ -302,6 +302,27 @@ check_dependencies() {
         missing_deps+=("debhelper")
     fi
 
+    # 检查 Debian 开发库
+    if command -v dpkg &> /dev/null; then
+        local deb_dev_libs=(
+            "libavcodec-dev"
+            "libavfilter-dev"
+            "libavformat-dev"
+            "libavutil-dev"
+            "libswresample-dev"
+            "libpng-dev"
+            "libjpeg-dev"
+            "libncurses-dev"
+            "libpulse-dev"
+        )
+        
+        for lib in "${deb_dev_libs[@]}"; do
+            if ! dpkg -l "$lib" 2>/dev/null | grep -q "^ii"; then
+                missing_deps+=("$lib")
+            fi
+        done
+    fi
+
     if [ ${#missing_deps[@]} -gt 0 ]; then
         log_error "缺少以下构建工具:"
         # 去重
@@ -509,6 +530,7 @@ Priority: optional
 Maintainer: Yanxi Bamboo Forest <maintainer@example.com>
 Build-Depends: debhelper (>= 10), cmake, gcc, make, pkg-config,
                libavcodec-dev, libavfilter-dev, libavformat-dev, libavutil-dev, libswresample-dev,
+               libpng-dev, libjpeg-dev,
                libpulse-dev, libncursesw5-dev | libncurses-dev
 Standards-Version: 4.5.0
 Homepage: ${PROJECT_HOMEPAGE}
@@ -701,7 +723,7 @@ Description: A terminal-based music player with ncurses interface
   - Customizable color themes
   - Keyboard shortcuts
   - Real-time progress bar
-Depends: libavcodec60 | libavcodec59 | libavcodec58 | libavcodec-ffmpeg56 | libavcodec-extra, libavfilter9 | libavfilter8 | libavfilter7, libavformat60 | libavformat59 | libavformat58 | libavformat57, libavutil58 | libavutil57 | libavutil56 | libavutil55, libswresample4 | libswresample3 | libswresample2, libpulse0 | libasound2, libncursesw6 | libncursesw5
+Depends: libavcodec60 | libavcodec59 | libavcodec58 | libavcodec-ffmpeg56 | libavcodec-extra, libavfilter9 | libavfilter8 | libavfilter7, libavformat60 | libavformat59 | libavformat58 | libavformat57, libavutil58 | libavutil57 | libavutil56 | libavutil55, libswresample4 | libswresample3 | libswresample2, libpng16-16 | libpng15-15, libjpeg62-turbo | libjpeg8, libpulse0 | libasound2, libncursesw6 | libncursesw5
 Section: sound
 Priority: optional
 Homepage: ${PROJECT_HOMEPAGE}

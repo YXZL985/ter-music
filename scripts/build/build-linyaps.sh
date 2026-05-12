@@ -415,6 +415,8 @@ buildext:
       - libpostproc-dev
       - libblas3
       - liblapack3
+      - libpng-dev
+      - libjpeg-dev
     depends:
       - libavformat60
       - libavcodec60
@@ -426,6 +428,8 @@ buildext:
       - libblas3
       - liblapack3
       - libgfortran5
+      - libpng16-16
+      - libjpeg62-turbo
 EOF
 
     log_info "linglong.yaml 已生成: ${project_root}/linglong.yaml"

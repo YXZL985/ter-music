@@ -123,7 +123,31 @@ check_cross_compile_deps() {
     local pkg_config_dir="/usr/lib/${arch_prefix}/pkgconfig"
     if [ ! -d "$pkg_config_dir" ] && [ ! -d "/usr/${arch_prefix}/lib/pkgconfig" ]; then
         log_warn "未找到 ${arch_prefix} 的 pkgconfig 目录"
-        log_warn "请确保已安装目标架构的开发库"
+        log_warn "请确保已安装目标架构的开发库，例如:"
+        log_warn "  sudo apt install libpng-dev:arm64 libjpeg-dev:arm64"
+    fi
+
+    # 检查关键开发库是否存在
+    local missing_libs=()
+    if [ -d "$pkg_config_dir" ]; then
+        for lib in libpng libjpeg; do
+            if ! pkg-config --exists --variable pc_path pkg-config 2>/dev/null | grep -q "$arch_prefix"; then
+                :
+            fi
+            if ! [ -f "${pkg_config_dir}/${lib}.pc" ] && ! [ -f "/usr/${arch_prefix}/lib/pkgconfig/${lib}.pc" ]; then
+                missing_libs+=("${lib}-dev:arm64")
+            fi
+        done
+    fi
+
+    if [ ${#missing_libs[@]} -gt 0 ]; then
+        log_warn "以下目标架构开发库可能未安装:"
+        for lib in "${missing_libs[@]}"; do
+            echo "  - $lib"
+        done
+        echo ""
+        log_warn "如需安装，请运行:"
+        echo "  sudo apt install ${missing_libs[*]}"
     fi
     
     log_info "交叉编译工具链检查通过"
@@ -184,7 +208,8 @@ show_help() {
       sudo dpkg --add-architecture arm64
       sudo apt update
       sudo apt install libncurses-dev:arm64 libavcodec-dev:arm64 libavfilter-dev:arm64 \
-                       libavformat-dev:arm64 libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64
+                       libavformat-dev:arm64 libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64 \
+                       libpng-dev:arm64 libjpeg-dev:arm64
 
 示例:
     $0                                          自动检测版本和架构，直接从源码构建
