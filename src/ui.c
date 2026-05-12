@@ -598,6 +598,11 @@ static void render_visualizer_with_album_cover(void) {
     int h, w;
     getmaxyx(win_controls, h, w);
 
+    // 当高度较小时，按钮可能换行，为避免重叠，禁用可视化效果
+    if (h < 9) {
+        return;
+    }
+
     clear_visualizer_area();
 
     render_wave_particle_visualizer(2, w - 4);
@@ -718,30 +723,74 @@ static int get_control_index_from_window_point(int window_y, int window_x) {
 
     int h, w;
     getmaxyx(win_controls, h, w);
-    int row = get_controls_button_row(h);
-    if (window_y != row) {
+
+    int button_start_row = get_controls_button_row(h);
+    int button_end_row = h - 2;
+
+    if (window_y < button_start_row || window_y > button_end_row) {
         return -1;
     }
 
-    int total_len = 0;
-    for (int i = 0; i < CONTROL_COUNT - 1; i++) {
-        char display_label[32];
-        build_control_label(i, display_label, sizeof(display_label));
-        total_len += utf8_str_width(display_label) + 4;
-    }
-
-    int current_col = (w - total_len) / 2;
-    if (current_col < 1) {
-        current_col = 1;
-    }
+    int available_width = w - 2;
+    int current_col = 0;
+    int is_first_in_row = 1;
+    int current_row = button_start_row;
 
     for (int i = 0; i < CONTROL_COUNT - 1; i++) {
         char display_label[32];
         build_control_label(i, display_label, sizeof(display_label));
         int button_width = utf8_str_width(display_label) + 4;
-        if (window_x >= current_col && window_x < current_col + button_width) {
+
+        if (is_first_in_row) {
+            int row_button_count = 0;
+            int row_width = 0;
+            for (int j = i; j < CONTROL_COUNT-1; j++) {
+                char temp_label[32];
+                build_control_label(j, temp_label, sizeof(temp_label));
+                int temp_len = utf8_str_width(temp_label);
+                int temp_button_width = temp_len + 4;
+
+                if (row_width + temp_button_width > available_width && row_button_count > 0) {
+                    break;
+                }
+                row_width += temp_button_width;
+                row_button_count++;
+            }
+
+            current_col = (available_width - row_width) / 2 + 1;
+            if (current_col < 1) current_col = 1;
+            is_first_in_row = 0;
+        }
+
+        if (!is_first_in_row && current_col + button_width > w - 1) {
+            current_row++;
+            if (current_row > button_end_row) {
+                break;
+            }
+
+            int row_button_count = 0;
+            int row_width = 0;
+            for (int j = i; j < CONTROL_COUNT-1; j++) {
+                char temp_label[32];
+                build_control_label(j, temp_label, sizeof(temp_label));
+                int temp_len = utf8_str_width(temp_label);
+                int temp_button_width = temp_len + 4;
+
+                if (row_width + temp_button_width > available_width && row_button_count > 0) {
+                    break;
+                }
+                row_width += temp_button_width;
+                row_button_count++;
+            }
+
+            current_col = (available_width - row_width) / 2 + 1;
+            if (current_col < 1) current_col = 1;
+        }
+
+        if (window_y == current_row && window_x >= current_col && window_x < current_col + button_width) {
             return i;
         }
+
         current_col += button_width;
     }
 
@@ -1854,34 +1903,75 @@ void render_controls() {
         }
     }
     
-    int row = get_controls_button_row(h);
+    int button_start_row = get_controls_button_row(h);
+    int current_row = button_start_row;
 
-    // 计算按钮总宽度以便居中
-    int total_len = 0;
-    for(int i=0; i<CONTROL_COUNT-1; i++) { // 不包括进度条
-        char display_label[32];
-        build_control_label(i, display_label, sizeof(display_label));
-        total_len += utf8_str_width(display_label) + 4;
-    }
-    int start_col = (w - total_len) / 2;
-    if (start_col < 1) start_col = 1;
+    int available_width = w - 2;
+    int current_col = 0;
+    int is_first_in_row = 1;
 
-    int current_col = start_col;
-    for (int i = 0; i < CONTROL_COUNT-1; i++) { // 不包括进度条
+    for (int i = 0; i < CONTROL_COUNT-1; i++) {
         char display_label[32];
         build_control_label(i, display_label, sizeof(display_label));
         int len = utf8_str_width(display_label);
-        
+        int button_width = len + 4;
+
+        if (is_first_in_row) {
+            int row_button_count = 0;
+            int row_width = 0;
+            for (int j = i; j < CONTROL_COUNT-1; j++) {
+                char temp_label[32];
+                build_control_label(j, temp_label, sizeof(temp_label));
+                int temp_len = utf8_str_width(temp_label);
+                int temp_button_width = temp_len + 4;
+
+                if (row_width + temp_button_width > available_width && row_button_count > 0) {
+                    break;
+                }
+                row_width += temp_button_width;
+                row_button_count++;
+            }
+
+            current_col = (available_width - row_width) / 2 + 1;
+            if (current_col < 1) current_col = 1;
+            is_first_in_row = 0;
+        }
+
+        if (!is_first_in_row && current_col + button_width > w - 1) {
+            current_row++;
+
+            if (current_row >= h - 2) {
+                break;
+            }
+
+            int row_button_count = 0;
+            int row_width = 0;
+            for (int j = i; j < CONTROL_COUNT-1; j++) {
+                char temp_label[32];
+                build_control_label(j, temp_label, sizeof(temp_label));
+                int temp_len = utf8_str_width(temp_label);
+                int temp_button_width = temp_len + 4;
+
+                if (row_width + temp_button_width > available_width && row_button_count > 0) {
+                    break;
+                }
+                row_width += temp_button_width;
+                row_button_count++;
+            }
+
+            current_col = (available_width - row_width) / 2 + 1;
+            if (current_col < 1) current_col = 1;
+        }
+
         if (i == g_current_control_idx && g_control_focus == 1) {
-            // 高亮当前选中的控件
             wattron(win_controls, A_REVERSE | A_BOLD);
-            mvwprintw(win_controls, row, current_col, " [%s] ", display_label);
+            mvwprintw(win_controls, current_row, current_col, " [%s] ", display_label);
             wattroff(win_controls, A_REVERSE | A_BOLD);
         } else {
-            mvwprintw(win_controls, row, current_col, " [%s] ", display_label);
+            mvwprintw(win_controls, current_row, current_col, " [%s] ", display_label);
         }
-        
-        current_col += len + 4; // 移动到下一个按钮位置
+
+        current_col += button_width;
     }
 
     render_controls_status_line();
