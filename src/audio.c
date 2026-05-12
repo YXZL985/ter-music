@@ -1997,9 +1997,11 @@ void play_audio(int index) {
     add_history_entry(&track);
     render_playlist_content();
     request_ui_refresh(UI_DIRTY_CONTROLS);
-    
+
     load_lyrics(lyrics_path);
     render_lyrics();
+
+    update_album_cover_for_track(lyrics_path);
 }
 
 /**

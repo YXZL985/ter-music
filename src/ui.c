@@ -1,7 +1,8 @@
 #include "../include/defs.h"
 #include "../include/media_session.h"
-#include "../include/lyrics.h"    // 新增：歌词模块
-#include "../include/menu_views.h" // 新增：菜单视图模块
+#include "../include/lyrics.h"
+#include "../include/menu_views.h"
+#include "../src/braille_art/braille_art.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,6 +50,10 @@ ColorTheme g_saved_theme;
 int g_konami_input_pos = 0;
 uint64_t g_konami_last_time = 0;
 int g_rainbow_color_offset = 0;
+
+char g_braille_art_buffer[8192] = "";
+int g_album_cover_size = 0;
+static int g_album_cover_enabled = 1;
 
 #define KONAMI_SEQ_LENGTH 12
 static const int konami_expected[KONAMI_SEQ_LENGTH] = {
@@ -396,7 +401,7 @@ static const char *get_spectrum_glyph(int units) {
     return glyphs[units];
 }
 
-static void render_wave_particle_visualizer(void) {
+static void render_wave_particle_visualizer(int start_col, int graph_width) {
     if (!win_controls || g_current_view != VIEW_MAIN) {
         return;
     }
@@ -415,18 +420,13 @@ static void render_wave_particle_visualizer(void) {
         return;
     }
 
-    int separator_row = viz_top - 1;
-    if (separator_row > button_row && separator_row < h - 1) {
-        mvwhline(win_controls, separator_row, 1, ACS_HLINE, w - 2);
-        mvwaddch(win_controls, separator_row, 0, ACS_VLINE);
-        mvwaddch(win_controls, separator_row, w - 1, ACS_VLINE);
+    if (graph_width <= 0) {
+        graph_width = w - 4;
+    }
+    if (start_col <= 0) {
+        start_col = 2;
     }
 
-    for (int row = viz_top; row <= viz_bottom; row++) {
-        mvwhline(win_controls, row, 1, ' ', w - 2);
-    }
-
-    int graph_width = w - 4;
     if (graph_width < 12) {
         return;
     }
@@ -500,9 +500,107 @@ static void render_wave_particle_visualizer(void) {
             if (units > 8) {
                 units = 8;
             }
-            mvwaddstr(win_controls, row, 2 + col, get_spectrum_glyph(units));
+            mvwaddstr(win_controls, row, start_col + col, get_spectrum_glyph(units));
         }
     }
+}
+
+static void render_album_cover(void) {
+    if (!win_controls || g_current_view != VIEW_MAIN) {
+        return;
+    }
+
+    if (!g_album_cover_enabled || !g_app_config.show_album_cover) {
+        return;
+    }
+
+    int h, w;
+    getmaxyx(win_controls, h, w);
+
+    int viz_top = get_controls_visualizer_top(h);
+    int viz_bottom = get_controls_visualizer_bottom(h);
+    int viz_height = viz_bottom - viz_top + 1;
+
+    if (viz_height < BRAILLE_MIN_SIZE * BRAILLE_CELL_H) {
+        return;
+    }
+
+    int optimal_size = calculate_optimal_cover_size(h);
+    if (optimal_size < BRAILLE_MIN_SIZE) {
+        return;
+    }
+
+    int cover_char_width = optimal_size * 2;
+    int min_spectrum_width = 20;
+
+    if (w - cover_char_width - 4 < min_spectrum_width) {
+        return;
+    }
+
+    char cover_path[MAX_PATH_LEN];
+    if (get_current_album_cover_path(cover_path, sizeof(cover_path)) != 0) {
+        return;
+    }
+
+    if (g_album_cover_size != optimal_size || g_braille_art_buffer[0] == '\0') {
+        g_album_cover_size = optimal_size;
+        if (generate_braille_art_dynamic(cover_path, BRAILLE_DEFAULT_THRESHOLD,
+                                          cover_char_width, optimal_size,
+                                          g_braille_art_buffer, sizeof(g_braille_art_buffer)) != 0) {
+            g_braille_art_buffer[0] = '\0';
+            return;
+        }
+    }
+
+    char *lines[BRAILLE_MAX_SIZE];
+    int line_count = get_braille_art_lines(g_braille_art_buffer, lines, BRAILLE_MAX_SIZE);
+
+    int start_row = viz_top;
+    int start_col = 2;
+
+    for (int i = 0; i < line_count && i < optimal_size; i++) {
+        if (start_row + i < viz_bottom) {
+            mvwprintw(win_controls, start_row + i, start_col, "%s", lines[i]);
+        }
+        free(lines[i]);
+    }
+}
+
+static void clear_visualizer_area(void) {
+    if (!win_controls) {
+        return;
+    }
+
+    int h, w;
+    getmaxyx(win_controls, h, w);
+
+    int button_row = get_controls_button_row(h);
+    int viz_top = get_controls_visualizer_top(h);
+    int viz_bottom = get_controls_visualizer_bottom(h);
+
+    int separator_row = viz_top - 1;
+    if (separator_row > button_row && separator_row < h - 1) {
+        mvwhline(win_controls, separator_row, 1, ACS_HLINE, w - 2);
+        mvwaddch(win_controls, separator_row, 0, ACS_VLINE);
+        mvwaddch(win_controls, separator_row, w - 1, ACS_VLINE);
+    }
+
+    for (int row = viz_top; row <= viz_bottom; row++) {
+        mvwhline(win_controls, row, 1, ' ', w - 2);
+    }
+}
+
+static void render_visualizer_with_album_cover(void) {
+    if (!win_controls || g_current_view != VIEW_MAIN) {
+        return;
+    }
+
+    int h, w;
+    getmaxyx(win_controls, h, w);
+
+    clear_visualizer_area();
+
+    render_wave_particle_visualizer(2, w - 4);
 }
 
 static void build_control_label(int index, char *dest, size_t dest_size) {
@@ -1522,7 +1620,7 @@ void render_playlist_content() {
         }
 
         // --- 新增：在播放列表底部绘制状态栏 ---
-        int status_line = h - 6;
+        int status_line = h - 7;  // 上移一行，为5行信息栏留出空间
         mvwhline(win_playlist, status_line, 1, ACS_HLINE, w - 2);
         
         // 根据全局播放状态更新状态信息
@@ -1550,36 +1648,103 @@ void render_playlist_content() {
                 index = playlist_total - 1;
             }
             get_track_metadata(index, &t);
-            
-            // 计算可用宽度，确保不超出边框
-            int content_width = w - 4;  // 减去左右边框和空格
-            int status_width = w - 4;
-            int title_width = status_width * 2 / 5;
-            int artist_width = status_width * 2 / 5;
-            int album_width = status_width * 1 / 5;
-            
+
+            // 计算专辑封面显示区域
+            int cover_start_col = w - 2;
+            int cover_char_width = 0;
+            int cover_lines = 0;
+            int show_cover = 0;
+
+            // 检查是否需要重新生成字符画
+            char cover_path[MAX_PATH_LEN];
+            if (g_album_cover_enabled && g_app_config.show_album_cover &&
+                get_current_album_cover_path(cover_path, sizeof(cover_path)) == 0) {
+                // 根据窗口宽度计算合适的封面大小
+                int min_info_width = 40;  // 左侧信息栏最小宽度
+                int max_cover_size = 12;  // 最大封面大小（字符高度）
+                int min_cover_size = 5;   // 最小封面大小
+
+                // 计算可用空间（5行信息：状态、循环、标题、艺术家、专辑）
+                int available_width = w - min_info_width - 4;  // 减去边框和间距
+                int available_height = 5;  // 信息栏有5行可用
+
+                // 计算封面大小（每个盲文字符2字符宽x4像素高，封面宽高比应为1:2字符）
+                // 为了正方效果，封面高度（字符行数）= 封面宽度（字符数）/ 2
+                int max_cover_width = available_width / 2;
+                int max_cover_height = available_height;  // 高度等于行数
+
+                // 让封面接近方形：宽度（字符数）= 高度（行数）* 2
+                int cover_size = max_cover_width < max_cover_height ? max_cover_width : max_cover_height;
+                if (cover_size > max_cover_size) cover_size = max_cover_size;
+                if (cover_size < min_cover_size) cover_size = min_cover_size;
+
+                cover_char_width = cover_size * 2;
+                cover_lines = cover_size;
+
+                // 检查空间是否足够
+                if (w - cover_char_width - 4 >= min_info_width) {
+                    // 重新生成字符画（如果大小变化或缓存为空）
+                    if (g_album_cover_size != cover_size || g_braille_art_buffer[0] == '\0') {
+                        g_album_cover_size = cover_size;
+                        if (generate_braille_art_dynamic(cover_path, BRAILLE_DEFAULT_THRESHOLD,
+                                                          cover_char_width, cover_size,
+                                                          g_braille_art_buffer, sizeof(g_braille_art_buffer)) != 0) {
+                            g_braille_art_buffer[0] = '\0';
+                        }
+                    }
+
+                    if (g_braille_art_buffer[0] != '\0') {
+                        show_cover = 1;
+                        cover_start_col = w - cover_char_width - 2;
+                    }
+                }
+            }
+
+            // 计算左侧信息栏宽度
+            int info_width = show_cover ? cover_start_col - 4 : w - 4;
+            int title_width = info_width * 2 / 5;
+            int artist_width = info_width * 2 / 5;
+            int album_width = info_width * 1 / 5;
+
             // 截断过长的字符串
             char truncated_title[MAX_META_LEN];
             char truncated_artist[MAX_META_LEN];
             char truncated_album[MAX_META_LEN];
-            
+
             format_display_text(truncated_title, sizeof(truncated_title), t.title, title_width - 1, 0);
             format_display_text(truncated_artist, sizeof(truncated_artist), t.artist, artist_width - 1, 0);
             format_display_text(truncated_album, sizeof(truncated_album), t.album, album_width - 1, 0);
-            
-            mvwprintw(win_playlist, status_line + 1, 2, "%s%s | %s%s",
-                      ui_text("状态：", "State: "), status_msg,
+
+            mvwprintw(win_playlist, status_line + 1, 2, "%s%s",
+                      ui_text("状态：", "State: "), status_msg);
+            mvwprintw(win_playlist, status_line + 2, 2, "%s%s",
                       ui_text("循环：", "Loop: "), get_loop_mode_str());
-            mvwprintw(win_playlist, status_line + 2, 2, "%s%s", ui_text("标题：", "Title: "), truncated_title);
-            mvwprintw(win_playlist, status_line + 3, 2, "%s%s", ui_text("艺术家：", "Artist: "), truncated_artist);
-            mvwprintw(win_playlist, status_line + 4, 2, "%s%s", ui_text("专辑：", "Album: "), truncated_album);
+            mvwprintw(win_playlist, status_line + 3, 2, "%s%s", ui_text("标题：", "Title: "), truncated_title);
+            mvwprintw(win_playlist, status_line + 4, 2, "%s%s", ui_text("艺术家：", "Artist: "), truncated_artist);
+            mvwprintw(win_playlist, status_line + 5, 2, "%s%s", ui_text("专辑：", "Album: "), truncated_album);
+
+            // 绘制专辑封面字符画
+            if (show_cover) {
+                char *lines[BRAILLE_MAX_SIZE];
+                int line_count = get_braille_art_lines(g_braille_art_buffer, lines, BRAILLE_MAX_SIZE);
+
+                // 从状态行开始绘制，覆盖5行（状态+循环+标题+艺术家+专辑）
+                int start_row = status_line + 1;
+                for (int i = 0; i < line_count && i < cover_lines; i++) {
+                    if (start_row + i < h - 1) {
+                        mvwprintw(win_playlist, start_row + i, cover_start_col, "%s", lines[i]);
+                    }
+                    free(lines[i]);
+                }
+            }
         } else {
-             mvwprintw(win_playlist, status_line + 1, 2, "%s%s | %s--",
-                       ui_text("状态：", "State: "), status_msg,
-                       ui_text("曲目：", "Track: "));
-             mvwprintw(win_playlist, status_line + 2, 2, "%s--", ui_text("标题：", "Title: "));
-             mvwprintw(win_playlist, status_line + 3, 2, "%s--", ui_text("艺术家：", "Artist: "));
-             mvwprintw(win_playlist, status_line + 4, 2, "%s--", ui_text("专辑：", "Album: "));
+             mvwprintw(win_playlist, status_line + 1, 2, "%s%s",
+                       ui_text("状态：", "State: "), status_msg);
+             mvwprintw(win_playlist, status_line + 2, 2, "%s%s",
+                       ui_text("循环：", "Loop: "), get_loop_mode_str());
+             mvwprintw(win_playlist, status_line + 3, 2, "%s--", ui_text("标题：", "Title: "));
+             mvwprintw(win_playlist, status_line + 4, 2, "%s--", ui_text("艺术家：", "Artist: "));
+             mvwprintw(win_playlist, status_line + 5, 2, "%s--", ui_text("专辑：", "Album: "));
         }
     }
     wrefresh(win_playlist);
@@ -1720,6 +1885,9 @@ void render_controls() {
     }
 
     render_controls_status_line();
+
+    render_visualizer_with_album_cover();
+
     wrefresh(win_controls);
 }
 
