@@ -109,6 +109,13 @@ int load_jpeg_image(const char *filepath, unsigned char **rgb_out, int *w, int *
         return -1;
     }
 
+    unsigned char jpeg_sig[2];
+    if (fread(jpeg_sig, 1, 2, fp) != 2 || jpeg_sig[0] != 0xFF || jpeg_sig[1] != 0xD8) {
+        fclose(fp);
+        return -1;
+    }
+    fseek(fp, 0, SEEK_SET);
+
     struct jpeg_decompress_struct cinfo;
     struct jpeg_error_mgr jerr;
 
