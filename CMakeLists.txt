@@ -65,14 +65,13 @@ add_executable(${PROJECT_NAME}
     src/lyrics.c
     src/media_session.c
     src/menu_views.c
-    src/braille_art/braille_art.c
-    src/braille_art/image_loader.c
+    src/braille_art.c
+    src/image_loader.c
 )
 
 # 包含头文件目录
 target_include_directories(${PROJECT_NAME} PRIVATE 
     include 
-    src/braille_art
     ${AVCODEC_INCLUDE_DIRS}
     ${AVFORMAT_INCLUDE_DIRS}
     ${SWRESAMPLE_INCLUDE_DIRS}

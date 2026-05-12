@@ -2,7 +2,7 @@
 #include "../include/media_session.h"
 #include "../include/lyrics.h"
 #include "../include/menu_views.h"
-#include "../src/braille_art/braille_art.h"
+#include "../include/braille_art.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
