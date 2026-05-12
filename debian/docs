@@ -1,4 +1,4 @@
-README.md
-README_zh-CN_Legacy.md
-README_zh-CN_Modern.md
-BUILD_GUIDE.md
+docs/README.md
+docs/translations/README_zh-CN_Legacy.md
+docs/translations/README_zh-CN_Modern.md
+docs/BUILD_GUIDE.md
