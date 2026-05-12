@@ -16,6 +16,8 @@ pkg_check_modules(AVFORMAT REQUIRED libavformat)
 pkg_check_modules(SWRESAMPLE REQUIRED libswresample)
 pkg_check_modules(AVUTIL REQUIRED libavutil)
 pkg_check_modules(AVFILTER REQUIRED libavfilter)
+pkg_check_modules(PNG REQUIRED libpng)
+pkg_check_modules(JPEG REQUIRED libjpeg)
 pkg_check_modules(PULSE libpulse)
 pkg_check_modules(DBUS dbus-1)
 
@@ -62,18 +64,23 @@ add_executable(${PROJECT_NAME}
     src/progress.c
     src/lyrics.c
     src/media_session.c
-    src/menu_views.c    # 新增：菜单视图模块
+    src/menu_views.c
+    src/braille_art/braille_art.c
+    src/braille_art/image_loader.c
 )
 
 # 包含头文件目录
 target_include_directories(${PROJECT_NAME} PRIVATE 
     include 
+    src/braille_art
     ${AVCODEC_INCLUDE_DIRS}
     ${AVFORMAT_INCLUDE_DIRS}
     ${SWRESAMPLE_INCLUDE_DIRS}
     ${AVUTIL_INCLUDE_DIRS}
     ${AVFILTER_INCLUDE_DIRS}
     ${AUDIO_BACKEND_INCLUDE_DIRS}
+    ${PNG_INCLUDE_DIRS}
+    ${JPEG_INCLUDE_DIRS}
 )
 
 if(DBUS_FOUND)
@@ -88,6 +95,8 @@ target_link_libraries(${PROJECT_NAME}
     ${AVUTIL_LIBRARIES}
     ${AVFILTER_LIBRARIES}
     ${AUDIO_BACKEND_LIBRARIES}
+    ${PNG_LIBRARIES}
+    ${JPEG_LIBRARIES}
     ${NCURSESW_LIBRARY}
     m
     ${PTHREAD_LIBRARY}
@@ -105,6 +114,8 @@ target_compile_options(${PROJECT_NAME} PRIVATE
     ${AVUTIL_CFLAGS_OTHER}
     ${AVFILTER_CFLAGS_OTHER}
     ${AUDIO_BACKEND_CFLAGS}
+    ${PNG_CFLAGS_OTHER}
+    ${JPEG_CFLAGS_OTHER}
 )
 
 if(DBUS_FOUND)
