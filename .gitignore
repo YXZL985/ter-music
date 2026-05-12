@@ -21,6 +21,14 @@ ter-music
 *.tmp
 *.temp
 
+# Debian build files
+*.deb
+debian/*.debhelper.log
+debian/debhelper-build-stamp
+debian/files
+debian/*.substvars
+debian/ter-music/
+
 # Object files
 *.o
 *.obj
