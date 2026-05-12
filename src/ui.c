@@ -1468,6 +1468,7 @@ void create_layout() {
     int total_inner_height = max_y - 3;
     if (total_inner_height < 3) total_inner_height = 3;
 
+    // 控制区域高度计算（优先保证最小4行）
     int controls_height;
     if (max_y >= 34) {
         controls_height = 7;
@@ -1477,19 +1478,48 @@ void create_layout() {
         controls_height = 5;
     }
 
-    if (controls_height > total_inner_height - 4) {
-        controls_height = total_inner_height - 4;
-    }
-    if (controls_height < 4) {
-        controls_height = 4;
-    }
-
+    // 播放列表信息栏需要2行：边框1行 + 标题1行
+    int min_controls = 4;        // 控制区域最小4行
+    int min_playlist_info = 2;   // 播放列表信息栏最小2行
+    int min_playlist = 1;        // 播放列表最小1行（极端情况）
+    
+    // 逐步压缩逻辑（优先级从高到低）：
+    // 1. 控制区域（最小4行）
+    // 2. 播放列表信息栏（最小2行）
+    // 3. 播放列表内容区域（首先被压缩）
+    
+    // 计算初始播放列表高度
     int playlist_height = total_inner_height - controls_height;
-    if (playlist_height < 4) {
-        playlist_height = 4;
+    
+    // 步骤1：保证播放列表信息栏至少2行
+    if (playlist_height < min_playlist_info) {
+        playlist_height = min_playlist_info;
         controls_height = total_inner_height - playlist_height;
-        if (controls_height < 3) {
-            controls_height = 3;
+    }
+    
+    // 步骤2：保证控制区域至少4行
+    if (controls_height < min_controls) {
+        controls_height = min_controls;
+        playlist_height = total_inner_height - controls_height;
+    }
+    
+    // 步骤3：如果播放列表被压缩到小于1行，调整
+    if (playlist_height < min_playlist) {
+        playlist_height = min_playlist;
+        controls_height = total_inner_height - playlist_height;
+    }
+    
+    // 步骤4：最终保护，确保没有负数高度
+    if (controls_height < 1) controls_height = 1;
+    if (playlist_height < 1) playlist_height = 1;
+    
+    // 重新平衡：如果总和超过 total_inner_height，压缩播放列表
+    int total_used = controls_height + playlist_height;
+    if (total_used > total_inner_height) {
+        playlist_height = total_inner_height - controls_height;
+        if (playlist_height < 1) {
+            playlist_height = 1;
+            controls_height = total_inner_height - playlist_height;
         }
     }
 
