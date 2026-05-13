@@ -86,7 +86,9 @@ Ter-Music是一款简洁的终端音乐播放器，专门为Linux系统开发。
 ### 一 必备依赖
 | 依赖库 | 版本要求 | 功能 |
 | --- | --- | --- |
-| `ffmpeg-free-devel` | 4.0+ | 音频解码（包含libavcodec、libavformat、libswresample、libavutil） |
+| `ffmpeg-free-devel` | 4.0+ | 音声解绎（libavcodec, libavformat, libswresample, libavutil, libavfilter） |
+| `libpng` | 1.6+ | 专辑封面显示（PNG格式支持） |
+| `libjpeg` | 6b+ | 专辑封面显示（JPEG格式支持） |
 | `pulseaudio-libs-devel` | 10.0+ | PulseAudio音频输出 |
 | `ncurses-devel` | 6.0+ | 终端界面处理，支持宽字符 |
 | `pthread-devel` | 系统自带 | 多线程处理 |
@@ -98,14 +100,14 @@ Ter-Music是一款简洁的终端音乐播放器，专门为Linux系统开发。
 ### 二 Fedora / RHEL / CentOS 安装命令
 ```bash
 sudo dnf install cmake gcc make pkg-config
-sudo dnf install ffmpeg-free-devel pulseaudio-libs-devel ncurses-devel
+sudo dnf install ffmpeg-free-devel libpng-devel libjpeg-turbo-devel pulseaudio-libs-devel ncurses-devel
 ```
 
 ### 三 Ubuntu / Debian / Linux Mint 安装命令
 ```bash
 sudo apt update
 sudo apt install cmake gcc make pkg-config
-sudo apt install libavcodec-dev libavformat-dev libswresample-dev libavutil-dev
+sudo apt install libavcodec-dev libavformat-dev libswresample-dev libavutil-dev libavfilter-dev libpng-dev libjpeg-dev
 sudo apt install libpulse-dev libncursesw5-dev
 ```
 
@@ -146,7 +148,7 @@ makepkg -si
 **手动从源码构建：**
 ```bash
 sudo pacman -S cmake gcc make pkg-config
-sudo pacman -S ffmpeg pulseaudio ncurses
+sudo pacman -S ffmpeg libpng libjpeg pulseaudio ncurses
 ```
 
 ## 第四章 编译步骤

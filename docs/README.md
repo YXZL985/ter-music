@@ -103,7 +103,9 @@ Ter-Music follows the **simple, efficient, native** design philosophy:
 
 | Dependency Library | Version | Purpose |
 | ----------------- | ----- | ------------------------------------------------------- |
-| `ffmpeg-free-devel` | 4.0+ | Audio decoding (libavcodec, libavformat, libswresample, libavutil) |
+| `ffmpeg-free-devel` | 4.0+ | Audio decoding (libavcodec, libavformat, libswresample, libavutil, libavfilter) |
+| `libpng` | 1.6+ | Album cover display (PNG format support) |
+| `libjpeg` | 6b+ | Album cover display (JPEG format support) |
 | `pulseaudio-libs-devel` | 10.0+ | PulseAudio audio output |
 | `ncurses-devel` | 6.0+ | Text user interface, wide character support |
 | `pthread-devel` | System | Multi-threading support |
@@ -116,7 +118,7 @@ Ter-Music follows the **simple, efficient, native** design philosophy:
 
 ```bash
 sudo dnf install cmake gcc make pkg-config
-sudo dnf install ffmpeg-free-devel pulseaudio-libs-devel ncurses-devel
+sudo dnf install ffmpeg-free-devel libpng-devel libjpeg-turbo-devel pulseaudio-libs-devel ncurses-devel
 ```
 
 ### 3.3 Ubuntu / Debian / Linux Mint
@@ -124,7 +126,7 @@ sudo dnf install ffmpeg-free-devel pulseaudio-libs-devel ncurses-devel
 ```bash
 sudo apt update
 sudo apt install cmake gcc make pkg-config
-sudo apt install libavcodec-dev libavformat-dev libswresample-dev libavutil-dev
+sudo apt install libavcodec-dev libavformat-dev libswresample-dev libavutil-dev libavfilter-dev libpng-dev libjpeg-dev
 sudo apt install libpulse-dev libncursesw5-dev
 ```
 
@@ -171,7 +173,7 @@ makepkg -si
 
 ```bash
 sudo pacman -S cmake gcc make pkg-config
-sudo pacman -S ffmpeg pulseaudio ncurses
+sudo pacman -S ffmpeg libpng libjpeg pulseaudio ncurses
 ```
 
 ## 4. Compilation Steps
@@ -260,7 +262,8 @@ Solution: Install ncurses-devel (Fedora) or libncursesw5-dev (Ubuntu)
 **Issue 3: Cannot find ffmpeg header files**
 
 ```
-Solution: Install ffmpeg-devel (Fedora) or libavcodec-dev libavformat-dev... (Ubuntu)
+Solution: Install ffmpeg-devel (Fedora) or libavcodec-dev libavformat-dev libswresample-dev libavutil-dev libavfilter-dev (Ubuntu)
+Note: Also ensure libavfilter-dev is installed for audio filter support
 ```
 
 ### 4.9 Using Build Scripts

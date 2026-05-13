@@ -284,9 +284,11 @@ sudo pacman -U ter-music-cn-*.pkg.tar.zst
 - `make`
 - `cmake`
 - `pkg-config`
-- `ffmpeg-free-devel`
+- `ffmpeg-free-devel`（提供 libavfilter）
 - `pulseaudio-libs-devel`
 - `ncurses-devel`
+- `libpng-devel`
+- `libjpeg-turbo-devel`
 
 ### build-appimage.sh 依赖：
 - `squashfs-tools`
@@ -324,6 +326,9 @@ sudo pacman -U ter-music-cn-*.pkg.tar.zst
 - `make`
 - `gcc`
 - `tar`
+- `libavfilter-dev`
+- `libpng-dev`
+- `libjpeg-dev`
 
 ### PKGBUILD 依赖：
 - `base-devel`
@@ -340,7 +345,7 @@ sudo pacman -U ter-music-cn-*.pkg.tar.zst
 
 在 Debian/Ubuntu 上安装构建依赖：
 ```bash
-sudo apt install dpkg-dev fakeroot cmake make gcc
+sudo apt install dpkg-dev fakeroot cmake make gcc libavfilter-dev libpng-dev libjpeg-dev
 ```
 
 ## 交叉编译支持
@@ -397,7 +402,7 @@ docker-compose -f docker-compose.cross.yml run --rm cross-build ./build-deb.sh -
 **容器环境包含：**
 - Ubuntu 22.04 基础系统
 - ARM64 交叉编译工具链（gcc, g++, binutils）
-- ARM64 架构的开发库（libavcodec, libavformat, libswresample, libavutil, libpulse, ncurses）
+- ARM64 架构的开发库（libavcodec, libavformat, libswresample, libavutil, libavfilter, libpng, libjpeg, libpulse, ncurses）
 - 各种包格式构建工具（dpkg-dev, rpm, squashfs-tools 等）
 
 ### 方式二：在主机上直接交叉编译
@@ -417,7 +422,8 @@ sudo apt update
 
 # 安装目标架构的开发库
 sudo apt install libncurses-dev:arm64 libavcodec-dev:arm64 libavformat-dev:arm64 \
-                 libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64
+                 libswresample-dev:arm64 libavutil-dev:arm64 libavfilter-dev:arm64 \
+                 libpng-dev:arm64 libjpeg-dev:arm64 libpulse-dev:arm64
 ```
 
 ⚠️ **警告**：在主机上添加多架构支持可能会卸载某些 amd64 软件包，导致系统不稳定！建议在测试环境或虚拟机中执行。
