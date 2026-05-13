@@ -9,6 +9,7 @@ set -e
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 SCRIPT_DIR="$(pwd)"
 IMAGE_NAME="ter-music-cross"
+DOCKERFILE="scripts/cross-compile/Dockerfile"
 CONTAINER_NAME="ter-music-cross-build"
 
 # Colors for output
@@ -41,6 +42,9 @@ show_help() {
     -s, --script SCRIPT 指定构建脚本 (默认: build-deb.sh)
     -a, --arch ARCH     指定目标架构 (默认: arm64)
     -i, --interactive   进入容器的交互式 shell
+    -f, --dockerfile DOCKERFILE  指定 Dockerfile 路径 (默认: scripts/cross-compile/Dockerfile)
+    -n, --image-name NAME        指定 Docker 镜像名 (默认: ter-music-cross)
+    --build-arg KEY=VALUE        传递构建参数给 docker build
     --no-cache          构建镜像时不使用缓存
 
 示例:
@@ -61,6 +65,7 @@ SCRIPT="build-deb.sh"
 TARGET_ARCH="arm64"
 INTERACTIVE=false
 NO_CACHE=""
+BUILD_ARGS=()
 BUILD_SCRIPT_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -89,6 +94,22 @@ while [[ $# -gt 0 ]]; do
             NO_CACHE="--no-cache"
             shift
             ;;
+        -f|--dockerfile)
+            DOCKERFILE="$2"
+            shift 2
+            ;;
+        -n|--image-name)
+            IMAGE_NAME="$2"
+            shift 2
+            ;;
+        --build-arg)
+            if [ -z "$2" ]; then
+                log_error "--build-arg requires a value (format: KEY=VALUE)"
+                exit 1
+            fi
+            BUILD_ARGS+=("--build-arg" "$2")
+            shift 2
+            ;;
         --)
             shift
             BUILD_SCRIPT_ARGS=("$@")
@@ -110,8 +131,8 @@ fi
 
 # Build Docker image if needed
 if [ "$BUILD_IMAGE" = true ] || ! docker image inspect "$IMAGE_NAME" &> /dev/null; then
-    log_info "构建 Docker 镜像: $IMAGE_NAME"
-    docker build $NO_CACHE -f scripts/cross-compile/Dockerfile -t "$IMAGE_NAME" "$SCRIPT_DIR"
+    log_info "构建 Docker 镜像: $IMAGE_NAME (Dockerfile: $DOCKERFILE)"
+    docker build "${BUILD_ARGS[@]}" $NO_CACHE -f "$DOCKERFILE" -t "$IMAGE_NAME" "$SCRIPT_DIR"
     if [ $? -ne 0 ]; then
         log_error "Docker 镜像构建失败"
         exit 1

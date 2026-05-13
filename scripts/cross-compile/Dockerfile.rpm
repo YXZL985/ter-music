@@ -1,0 +1,64 @@
+# Dockerfile.rpm - RHEL-compatible RPM build environment
+# Builds inside a Rocky Linux container so auto-generated soname
+# dependencies match the target platform (EL8, EL9, or EL10).
+#
+# Usage:
+#   docker build --build-arg EL_VERSION=9 \
+#     -f scripts/cross-compile/Dockerfile.rpm \
+#     -t ter-music-rpm .
+#
+#   docker run --rm -v $(pwd):/workspace ter-music-rpm \
+#     ./scripts/build/build-rpm.sh
+
+ARG EL_VERSION=9
+FROM rockylinux:${EL_VERSION}
+
+ARG EL_VERSION
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Enable EPEL and RPM Fusion repositories (via USTC mirrors)
+RUN sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+        -e 's|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.ustc.edu.cn/rocky|g' \
+        -i /etc/yum.repos.d/*.repo && \
+    if [ "$EL_VERSION" = "10" ]; then \
+        dnf install -y dnf-plugins-core && \
+        dnf config-manager --set-enabled crb && \
+        dnf install -y https://mirrors.ustc.edu.cn/epel/epel-release-latest-10.noarch.rpm && \
+        dnf install -y https://mirrors.ustc.edu.cn/rpmfusion/free/el/rpmfusion-free-release-10.noarch.rpm; \
+    elif [ "$EL_VERSION" = "9" ]; then \
+        dnf install -y dnf-plugins-core && \
+        dnf config-manager --set-enabled crb && \
+        dnf install -y https://mirrors.ustc.edu.cn/epel/epel-release-latest-9.noarch.rpm && \
+        dnf install -y https://mirrors.ustc.edu.cn/rpmfusion/free/el/rpmfusion-free-release-9.noarch.rpm; \
+    elif [ "$EL_VERSION" = "8" ]; then \
+        dnf install -y dnf-plugins-core && \
+        dnf config-manager --set-enabled powertools && \
+        dnf install -y https://mirrors.ustc.edu.cn/epel/epel-release-latest-8.noarch.rpm && \
+        dnf install -y https://mirrors.ustc.edu.cn/rpmfusion/free/el/rpmfusion-free-release-8.noarch.rpm; \
+    else \
+        echo "Unsupported EL_VERSION: $EL_VERSION" >&2; \
+        exit 1; \
+    fi && \
+    dnf clean all
+
+# Install build toolchain
+RUN dnf groupinstall -y "Development Tools" && \
+    dnf install -y \
+        cmake \
+        pkgconfig \
+        rpm-build \
+        wget \
+        git && \
+    dnf clean all
+
+# Install project-specific build dependencies (from RPM Fusion + EPEL)
+RUN dnf install -y \
+        ffmpeg-devel \
+        ncurses-devel \
+        pulseaudio-libs-devel \
+        libcurl-devel \
+        libpng-devel \
+        libjpeg-turbo-devel && \
+    dnf clean all
+
+WORKDIR /workspace

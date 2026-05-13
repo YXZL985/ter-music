@@ -4,19 +4,37 @@ project(ter-music LANGUAGES C)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+# 静态链接选项（仅将 FFmpeg 库静态链接，其他库动态链接）
+# FFmpeg 的 soname 在不同 EL 版本间不同，是跨版本兼容的主要障碍。
+# 其他库（ncurses、libcurl、libpng、libjpeg、pulse）的 soname
+# 在 EL8/9/10 间稳定，使用动态链接即可。
+option(STATIC_LINKING "Statically link FFmpeg only, other libs dynamic" OFF)
+
+if(STATIC_LINKING)
+    message(STATUS "静态链接模式已启用（仅 FFmpeg 静态）")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static-libgcc")
+endif()
+
 # 查找必要的库
 find_package(PkgConfig REQUIRED)
 if(NOT PKG_CONFIG_FOUND)
     message(FATAL_ERROR "pkg-config is required but not found.")
 endif()
 
-# 使用pkg-config查找依赖库
+# FFmpeg 库（静态链接时使用 --static 获取所有传递依赖，并优先查找 .a 文件）
+if(STATIC_LINKING)
+    set(ENV{PKG_CONFIG_ARGN} "--static")
+    set(CMAKE_FIND_LIBRARY_SUFFIXES .a ${CMAKE_FIND_LIBRARY_SUFFIXES})
+endif()
 pkg_check_modules(AVCODEC REQUIRED libavcodec)
 pkg_check_modules(AVFORMAT REQUIRED libavformat)
 pkg_check_modules(SWRESAMPLE REQUIRED libswresample)
 pkg_check_modules(AVUTIL REQUIRED libavutil)
 pkg_check_modules(AVFILTER REQUIRED libavfilter)
 pkg_check_modules(SWSCALE REQUIRED libswscale)
+if(STATIC_LINKING)
+    unset(ENV{PKG_CONFIG_ARGN})
+endif()
 pkg_check_modules(PNG REQUIRED libpng)
 pkg_check_modules(JPEG REQUIRED libjpeg)
 pkg_check_modules(PULSE libpulse)

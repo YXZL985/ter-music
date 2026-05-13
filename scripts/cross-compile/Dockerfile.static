@@ -1,0 +1,59 @@
+# Dockerfile.static - Portable RPM build environment
+# Builds a statically-linked binary compatible with EL8/9/10.
+# Based on rockylinux:8 for the oldest glibc (2.28) = widest compatibility.
+#
+# Usage:
+#   docker build -f scripts/cross-compile/Dockerfile.static -t ter-music-static .
+#   docker run --rm -v $(pwd):/workspace ter-music-static ./scripts/build/build-rpm.sh
+
+FROM rockylinux:8
+
+# Install build toolchain and development libraries
+# Uses USTC mirrors for faster downloads.
+# Only FFmpeg is built from source as static (the main cross-version
+# incompatibility). Other libs (ncurses, libcurl, libpng, libjpeg, pulse)
+# are dynamically linked — their sonames are stable across EL8/9/10.
+RUN sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+        -e 's|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://mirrors.ustc.edu.cn/rocky|g' \
+        -i /etc/yum.repos.d/*.repo && \
+    dnf groupinstall -y "Development Tools" && \
+    dnf install -y dnf-plugins-core && \
+    dnf config-manager --set-enabled powertools && \
+    dnf install -y \
+        https://mirrors.ustc.edu.cn/epel/epel-release-latest-8.noarch.rpm && \
+    dnf install -y \
+        cmake pkgconfig rpm-build wget git \
+        ncurses-devel libcurl-devel libjpeg-turbo-devel libpng-devel \
+        pulseaudio-libs-devel && \
+    dnf clean all
+
+# Build FFmpeg as static libraries (audio-only, minimal footprint)
+# Disables video/encoding/network/external deps so the static build
+# has no transitive .so dependencies beyond glibc/libm/libpthread.
+RUN curl -L https://ffmpeg.org/releases/ffmpeg-7.1.tar.gz | tar xz && \
+    cd ffmpeg-7.1 && \
+    ./configure \
+        --enable-static --disable-shared \
+        --disable-programs --disable-doc \
+        --disable-everything \
+        --enable-decoder="mp3*,aac*,flac,vorbis*,opus,wavpack*,wmav*,ape,alac,pcm*,libopus" \
+        --enable-demuxer="mp3,aac,flac,ogg,opus,wav,wv,wma*,ape,alac,mov,m4a,rm,aiff" \
+        --enable-parser="mpegaudio,aac,flac,vorbis,opus" \
+        --enable-protocol="file" \
+        --enable-filter="aresample" \
+        --disable-network --disable-iconv \
+        --disable-libxcb --disable-xlib --disable-zlib --disable-bzlib \
+        --disable-vaapi --disable-vdpau --disable-cuda \
+        --disable-x86asm \
+        --disable-ffplay --disable-ffprobe --disable-ffmpeg && \
+    make -j$(nproc) && \
+    make install && \
+    cd / && rm -rf ffmpeg-7.1
+
+# Make FFmpeg's pkgconfig files discoverable
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
+
+# Verify the static libs were installed
+RUN ls -la /usr/local/lib/libavcodec.a /usr/local/lib/libavformat.a /usr/local/lib/libavutil.a
+
+WORKDIR /workspace

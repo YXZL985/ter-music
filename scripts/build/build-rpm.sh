@@ -169,6 +169,10 @@ show_help() {
     -k, --keep-temp     保留临时构建文件（用于调试）
     --with-debuginfo    生成 debuginfo 包（默认不生成）
 
+    --container         在 Rocky Linux 容器中构建 RPM（解决跨发行版兼容性问题）
+    --static            构建通用静态链接 RPM，单包兼容 EL8/9/10（自动启用 --container）
+    --el-version VERSION  指定目标 EL 版本: 8、9 或 10（默认：9，需配合 --container 使用）
+
 支持的架构:
     x86_64              Intel/AMD 64位
     arm64               ARM 64位 (aarch64)
@@ -204,7 +208,8 @@ EOF
 
 check_dependencies() {
     local target_arch="${1:-}"
-    
+    local static_build="${2:-false}"
+
     log_info "检查构建依赖..."
     
     local missing_deps=()
@@ -277,14 +282,26 @@ check_dependencies() {
         done
     else
         # RPM 系统：检查 rpm 包
-        local dev_libs=(
-            "ffmpeg-free-devel"
-            "ncurses-devel"
-            "pulseaudio-libs-devel"
-            "libpng-devel"
-            "libjpeg-turbo-devel"
-            "libcurl-devel"
-        )
+        local dev_libs=()
+        if [ "$static_build" = "true" ]; then
+            # 静态构建：FFmpeg 从源码编译，不需要 ffmpeg-devel
+            dev_libs=(
+                "ncurses-devel"
+                "pulseaudio-libs-devel"
+                "libpng-devel"
+                "libjpeg-turbo-devel"
+                "libcurl-devel"
+            )
+        else
+            dev_libs=(
+                "ffmpeg-free-devel"
+                "ncurses-devel"
+                "pulseaudio-libs-devel"
+                "libpng-devel"
+                "libjpeg-turbo-devel"
+                "libcurl-devel"
+            )
+        fi
 
         for lib in "${dev_libs[@]}"; do
             if ! rpm -q "$lib" &> /dev/null; then
@@ -450,6 +467,7 @@ generate_spec_file() {
     local version="$1"
     local no_debuginfo="$2"
     local target_arch="$3"
+    local static_build="${4:-false}"
     local spec_file="${TEMP_DIR}/SPECS/${PROJECT_NAME}.spec"
 
     log_info "生成 RPM spec file (目标架构: $target_arch)..."
@@ -467,6 +485,22 @@ generate_spec_file() {
         log_info "将在spec中使用交叉编译工具链"
     fi
 
+    # 静态链接参数
+    local cmake_extra_args=""
+    local ffmpeg_build_requires=""
+    if [ "$static_build" = "true" ]; then
+        cmake_extra_args="-DSTATIC_LINKING=ON"
+        # 静态构建时 FFmpeg 从源码编译，移除 spec 中的 BuildRequires
+        ffmpeg_build_requires="# FFmpeg built from source (static)"
+    else
+        ffmpeg_build_requires="BuildRequires:  pkgconfig(libavcodec) >= 4.0
+BuildRequires:  pkgconfig(libavformat) >= 4.0
+BuildRequires:  pkgconfig(libavutil) >= 4.0
+BuildRequires:  pkgconfig(libswresample) >= 4.0
+BuildRequires:  pkgconfig(libavfilter) >= 4.0
+BuildRequires:  pkgconfig(libswscale) >= 4.0"
+    fi
+
     cat > "$spec_file" << EOF
 ${debuginfo_macro}
 Name:           ${PROJECT_NAME}
@@ -481,11 +515,7 @@ Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  gcc, make, cmake, pkg-config
 BuildRequires:  pkgconfig(libcurl)
-BuildRequires:  pkgconfig(libavcodec) >= 4.0
-BuildRequires:  pkgconfig(libavformat) >= 4.0
-BuildRequires:  pkgconfig(libavutil) >= 4.0
-BuildRequires:  pkgconfig(libswresample) >= 4.0
-BuildRequires:  pkgconfig(libavfilter) >= 4.0
+${ffmpeg_build_requires}
 BuildRequires:  pkgconfig(libpulse) >= 10.0
 BuildRequires:  pkgconfig(ncursesw) >= 6.0
 BuildRequires:  pkgconfig(libpng) >= 1.6
@@ -517,7 +547,7 @@ Features:
 %build
 mkdir -p build
 cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release ${cross_compile_cmake_args}
+cmake .. -DCMAKE_BUILD_TYPE=Release ${cross_compile_cmake_args} ${cmake_extra_args}
 make %{?_smp_mflags}
 
 %install
@@ -594,6 +624,7 @@ create_source_tarball() {
 
 build_rpm() {
     local target_arch="$1"
+    local static_build="${2:-false}"
     log_info "开始构建 RPM 包 (目标架构: $target_arch)..."
     
     export RPM_TOPDIR="${TEMP_DIR}"
@@ -616,10 +647,10 @@ build_rpm() {
         --target "$target_arch"
     )
     
-    # 在 Debian 系统上使用 --nodeps 跳过 RPM 依赖检查
-    # 因为我们已经在 check_dependencies 中手动检查了等效的 deb 包
-    if [ "$is_debian_based" = true ]; then
-        log_info "检测到 Debian 系统，使用 --nodeps 跳过 RPM 依赖检查"
+    # 静态构建或 Debian 系统上跳过 RPM 依赖检查
+    # 静态构建：环境由 Dockerfile 保证；Debian：手动检查了 deb 包
+    if [ "$static_build" = "true" ] || [ "$is_debian_based" = true ]; then
+        log_info "使用 --nodeps 跳过 RPM 依赖检查"
         rpmbuild_args+=(--nodeps)
     fi
     
@@ -701,6 +732,9 @@ main() {
     local keep_temp="false"
     local no_debuginfo="true"
     local target_arch=""
+    local use_container="false"
+    local use_static="false"
+    local el_version="9"
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -726,6 +760,28 @@ main() {
                 ;;
             --with-debuginfo)
                 no_debuginfo="false"
+                shift
+                ;;
+            --container)
+                use_container="true"
+                shift
+                ;;
+            --el-version)
+                el_version="$2"
+                if [ "$el_version" != "8" ] && [ "$el_version" != "9" ] && [ "$el_version" != "10" ]; then
+                    log_error "不支持的 EL 版本: $el_version（仅支持 8、9 或 10）"
+                    exit 1
+                fi
+                shift 2
+                ;;
+            --static)
+                use_static="true"
+                use_container="true"
+                shift
+                ;;
+            --static-build)
+                use_static="true"
+                # 容器内部调用时使用，不再触发 --container 逻辑
                 shift
                 ;;
             *)
@@ -772,23 +828,69 @@ main() {
         fi
         log_info "使用指定架构: $target_arch"
     fi
-    
+
+    # 容器构建模式：委托给 cross-build.sh
+    if [ "$use_container" = "true" ]; then
+        if ! command -v docker &> /dev/null; then
+            log_error "Docker 未安装，无法使用容器构建模式"
+            log_info "请先安装 Docker：sudo apt install docker.io"
+            exit 1
+        fi
+
+        local dockerfile image_name build_args=()
+        if [ "$use_static" = "true" ]; then
+            log_info "进入容器构建模式（静态链接，单包兼容 EL8/9/10）..."
+            dockerfile="scripts/cross-compile/Dockerfile.static"
+            image_name="ter-music-static"
+        else
+            log_info "进入容器构建模式（Rocky Linux ${el_version}）..."
+            dockerfile="scripts/cross-compile/Dockerfile.rpm"
+            image_name="ter-music-rpm-el${el_version}"
+            build_args=(--build-arg "EL_VERSION=${el_version}")
+        fi
+
+        local xb_args=(
+            -s "build-rpm.sh"
+            -f "$dockerfile"
+            -n "$image_name"
+            -a "$target_arch"
+        )
+
+        # 透传 build-arg
+        for arg in "${build_args[@]}"; do
+            xb_args+=("$arg")
+        done
+
+        # 构造传递给内部 build-rpm.sh 的参数
+        local inner_args=()
+        [ "$version" != "$DEFAULT_VERSION" ] && inner_args+=("-v" "$version")
+        [ "$use_static" = "true" ] && inner_args+=(--static-build)
+        [ "$no_debuginfo" = "false" ] && inner_args+=(--with-debuginfo)
+        [ "$keep_temp" = "true" ] && inner_args+=(--keep-temp)
+        if [ ${#inner_args[@]} -gt 0 ]; then
+            xb_args+=("--" "${inner_args[@]}")
+        fi
+
+        log_info "委托给 cross-build.sh: ${xb_args[*]}"
+        exec "${SCRIPT_DIR}/scripts/cross-compile/cross-build.sh" "${xb_args[@]}"
+    fi
+
     # 检查是否需要交叉编译
     if is_cross_compiling "$target_arch"; then
         log_info "检测到交叉编译模式: $(uname -m) -> $target_arch"
     fi
     
-    check_dependencies "$target_arch"
+    check_dependencies "$target_arch" "$use_static"
 
     prepare_directories "$target_arch"
-    generate_spec_file "$version" "$no_debuginfo" "$target_arch"
+    generate_spec_file "$version" "$no_debuginfo" "$target_arch" "$use_static"
     if ! create_source_tarball "$version"; then
         log_error "创建源码压缩包失败"
         cleanup "$keep_temp"
         exit 1
     fi
 
-    if build_rpm "$target_arch"; then
+    if build_rpm "$target_arch" "$use_static"; then
         if collect_results "$target_arch"; then
             cleanup "$keep_temp"
             show_summary "$target_arch"
