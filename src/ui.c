@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../include/remote.h"
 #include <ncursesw/ncurses.h>
 #include <dirent.h>
 #include <sys/stat.h>
@@ -2896,6 +2897,7 @@ void cleanup() {
         win_lyrics = NULL;
     }
     endwin(); // 结束 ncurses 模式
+    remote_cleanup();
 }
 
 static void activate_current_control(void) {

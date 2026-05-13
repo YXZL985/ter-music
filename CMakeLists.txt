@@ -21,6 +21,7 @@ pkg_check_modules(PNG REQUIRED libpng)
 pkg_check_modules(JPEG REQUIRED libjpeg)
 pkg_check_modules(PULSE libpulse)
 pkg_check_modules(DBUS dbus-1)
+pkg_check_modules(LIBCURL libcurl)
 
 if(PULSE_FOUND)
     set(AUDIO_BACKEND_NAME "PulseAudio")
@@ -68,6 +69,7 @@ add_executable(${PROJECT_NAME}
     src/menu_views.c
     src/braille_art.c
     src/image_loader.c
+    src/remote.c
 )
 
 # 包含头文件目录
@@ -86,6 +88,16 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 if(DBUS_FOUND)
     target_include_directories(${PROJECT_NAME} PRIVATE ${DBUS_INCLUDE_DIRS})
+endif()
+
+if(LIBCURL_FOUND)
+    message(STATUS "Using libcurl: ${LIBCURL_VERSION}")
+    target_include_directories(${PROJECT_NAME} PRIVATE ${LIBCURL_INCLUDE_DIRS})
+    target_link_libraries(${PROJECT_NAME} ${LIBCURL_LIBRARIES})
+    target_compile_options(${PROJECT_NAME} PRIVATE ${LIBCURL_CFLAGS_OTHER})
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_LIBCURL=1)
+else()
+    message(FATAL_ERROR "libcurl is required for remote playback (SMB/SFTP/FTP/WebDAV)")
 endif()
 
 # 链接库

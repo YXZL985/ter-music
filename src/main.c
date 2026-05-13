@@ -1,6 +1,7 @@
 #include "../include/defs.h"
 #include "../include/media_session.h"
 #include "../include/menu_views.h"
+#include "../include/remote.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -201,14 +202,18 @@ static int find_audio_directory_recursive(const char *path, char *found_path, si
 static void print_usage(const char *prog_name) {
     printf("用法：%s [选项]\n\n", prog_name);
     printf("选项：\n");
-    printf("  -o, --open <path>    启动时打开指定音乐目录或音频文件\n");
+    printf("  -o, --open <path>    启动时打开指定音乐目录、音频文件或远程URL\n");
     printf("  -h, --help           显示帮助信息\n");
     printf("\n");
-    printf("示例：\n");
+    printf("远程 URL 示例：\n");
+    printf("  %s ftp://user:pass@host/path/to/music\n", prog_name);
+    printf("  %s sftp://host/path\n", prog_name);
+    printf("  %s --open http://webdav-server/music\n", prog_name);
+    printf("\n");
+    printf("本地示例：\n");
     printf("  %s -o ~/Music\n", prog_name);
     printf("  %s --open /path/to/music\n", prog_name);
     printf("  %s -o /path/to/song.mp3\n", prog_name);
-    printf("  %s --open /path/to/song.flac\n", prog_name);
 }
 
 int main(int argc, char *argv[]) {
@@ -257,7 +262,8 @@ int main(int argc, char *argv[]) {
     }
     
     init_ffmpeg();
-    
+    remote_init();
+
     init_audio_device();
     media_session_init();
     
@@ -286,6 +292,47 @@ int main(int argc, char *argv[]) {
     }
     
     if (open_path && strlen(open_path) > 0) {
+        // Check if it's a remote URL
+        if (remote_is_remote_path(open_path)) {
+            RemoteConnectionConfig rconn;
+            if (remote_parse_url(open_path, &rconn) == 0) {
+                int count = load_remote_playlist(&rconn, rconn.base_path);
+                if (count > 0) {
+                    loaded = 1;
+                    snprintf(final_path, sizeof(final_path), "%s", open_path);
+                } else {
+                    const char *err = remote_strerror();
+                    if (err && err[0]) {
+                        mvprintw(2, 2, "%s",
+                                 use_english_ui()
+                                     ? "Warning:" : "警告：");
+                        mvprintw(2, 12, "%s", err);
+                    } else {
+                        mvprintw(2, 2, "%s",
+                                 use_english_ui()
+                                     ? "Warning: no audio files found"
+                                     : "警告：没有找到音频文件");
+                    }
+                    mvprintw(3, 2, "%s",
+                             use_english_ui()
+                                 ? "Continuing with current directory and default paths..."
+                                 : "将继续尝试当前目录和默认启动路径...");
+                    refresh();
+                    used_fallback = 1;
+                }
+            } else {
+                mvprintw(2, 2, "%s",
+                         use_english_ui()
+                             ? "Warning: invalid remote URL"
+                             : "警告：远程 URL 格式无效");
+                mvprintw(3, 2, "%s",
+                         use_english_ui()
+                             ? "Continuing with current directory and default paths..."
+                             : "将继续尝试当前目录和默认启动路径...");
+                refresh();
+                used_fallback = 1;
+            }
+        } else {
         char expanded_path[MAX_PATH_LEN];
         expand_user_path(open_path, expanded_path, sizeof(expanded_path));
 
@@ -324,6 +371,7 @@ int main(int argc, char *argv[]) {
                          : "将继续尝试当前目录和默认启动路径...");
             refresh();
             used_fallback = 1;
+        }
         }
     }
 

@@ -12,6 +12,7 @@
 #include "../include/defs.h"
 #include "../include/lyrics.h"
 #include "../include/menu_views.h"
+#include "../include/remote.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -60,9 +61,10 @@ static const char *settings_sidebar_items[] = {
     "默认路径",
     "播放设置",
     "快捷键",
+    "远程设备",
     "← 返回"
 };
-#define SETTINGS_ITEM_COUNT 5
+#define SETTINGS_ITEM_COUNT 6
 
 static const char *history_sidebar_items[] = {
     "目录历史",
@@ -96,6 +98,7 @@ static const char *settings_sidebar_items_ascii[] = {
     "Default Path",
     "Playback",
     "Hotkeys",
+    "Remote Devices",
     "<- Back"
 };
 
@@ -576,6 +579,8 @@ void init_default_config(void) {
     g_app_config.default_loop_mode = LOOP_OFF;
     g_app_config.default_playback_speed = 1.0f;
     g_app_config.show_album_cover = 1;
+    g_app_config.remote_connection_count = 0;
+    memset(g_app_config.remote_connections, 0, sizeof(g_app_config.remote_connections));
 }
 
 void apply_color_theme(void) {
@@ -704,7 +709,34 @@ void load_config(void) {
     if (g_app_config.audio_latency_ms > 250) {
         g_app_config.audio_latency_ms = 250;
     }
-    
+
+    // Parse remote connections
+    g_app_config.remote_connection_count = 0;
+    if (strstr(json, "\"remote_connection_count\"")) {
+        int count = (int)extract_json_int(json, "remote_connection_count");
+        if (count > MAX_REMOTE_CONNECTIONS) count = MAX_REMOTE_CONNECTIONS;
+        if (count < 0) count = 0;
+        g_app_config.remote_connection_count = count;
+        for (int ri = 0; ri < count; ri++) {
+            RemoteConnectionConfig *rc = &g_app_config.remote_connections[ri];
+            char key[64];
+            snprintf(key, sizeof(key), "remote_%d_name", ri);
+            extract_json_string(json, key, rc->name, sizeof(rc->name));
+            snprintf(key, sizeof(key), "remote_%d_protocol", ri);
+            rc->protocol = (int)extract_json_int(json, key);
+            snprintf(key, sizeof(key), "remote_%d_host", ri);
+            extract_json_string(json, key, rc->host, sizeof(rc->host));
+            snprintf(key, sizeof(key), "remote_%d_port", ri);
+            rc->port = (int)extract_json_int(json, key);
+            snprintf(key, sizeof(key), "remote_%d_username", ri);
+            extract_json_string(json, key, rc->username, sizeof(rc->username));
+            snprintf(key, sizeof(key), "remote_%d_password", ri);
+            extract_json_string(json, key, rc->password, sizeof(rc->password));
+            snprintf(key, sizeof(key), "remote_%d_base_path", ri);
+            extract_json_string(json, key, rc->base_path, sizeof(rc->base_path));
+        }
+    }
+
     free(json);
 }
 
@@ -754,7 +786,26 @@ void save_config(void) {
     fprintf(f, "  \"show_lyrics_panel\": %d,\n", g_app_config.show_lyrics_panel);
     fprintf(f, "  \"default_loop_mode\": %d,\n", g_app_config.default_loop_mode);
     fprintf(f, "  \"default_playback_speed\": %.2f,\n", g_app_config.default_playback_speed);
-    fprintf(f, "  \"show_album_cover\": %d\n", g_app_config.show_album_cover);
+    fprintf(f, "  \"show_album_cover\": %d,\n", g_app_config.show_album_cover);
+
+    fprintf(f, "  \"remote_connection_count\": %d,\n", g_app_config.remote_connection_count);
+    for (int ri = 0; ri < g_app_config.remote_connection_count && ri < MAX_REMOTE_CONNECTIONS; ri++) {
+        const RemoteConnectionConfig *rc = &g_app_config.remote_connections[ri];
+        char escaped[1024];
+        escape_json_string(rc->name, escaped, sizeof(escaped));
+        fprintf(f, "  \"remote_%d_name\": \"%s\",\n", ri, escaped);
+        fprintf(f, "  \"remote_%d_protocol\": %d,\n", ri, rc->protocol);
+        escape_json_string(rc->host, escaped, sizeof(escaped));
+        fprintf(f, "  \"remote_%d_host\": \"%s\",\n", ri, escaped);
+        fprintf(f, "  \"remote_%d_port\": %d,\n", ri, rc->port);
+        escape_json_string(rc->username, escaped, sizeof(escaped));
+        fprintf(f, "  \"remote_%d_username\": \"%s\",\n", ri, escaped);
+        escape_json_string(rc->password, escaped, sizeof(escaped));
+        fprintf(f, "  \"remote_%d_password\": \"%s\",\n", ri, escaped);
+        escape_json_string(rc->base_path, escaped, sizeof(escaped));
+        fprintf(f, "  \"remote_%d_base_path\": \"%s\"%s\n", ri, escaped,
+                ri < g_app_config.remote_connection_count - 1 ? "," : "");
+    }
 
     fprintf(f, "}\n");
     
@@ -1795,6 +1846,25 @@ static int g_settings_current_option = 0;
 static int g_settings_color_editing = 0;
 static int g_settings_color_which = 0;
 
+/* ---------- Remote devices state ---------- */
+
+static int g_remote_mode = 0;           // 0=list, 1=actions, 2=form, 3=browse
+static int g_remote_selected = 0;       // selected item in current mode
+static int g_remote_selected_conn = -1; // connection index for actions/form/browse
+static RemoteDirEntry *g_remote_entries = NULL;
+static int g_remote_entry_count = 0;
+static int g_remote_entry_offset = 0;
+static char g_remote_current_path[1024] = "";
+
+static void render_remote_content(void);
+static void handle_remote_content_input(int ch);
+static void remote_enter_list_mode(void);
+static void remote_start_add(void);
+static void remote_start_edit(int conn_idx);
+static void remote_delete_connection(int conn_idx);
+static void remote_start_browse(int conn_idx);
+static void remote_refresh_entries(void);
+
 static int clamp_latency_ms(int latency_ms) {
     if (latency_ms < 20) {
         return 20;
@@ -2321,6 +2391,515 @@ static void activate_settings_current_option(void) {
     }
 }
 
+/* ---------- Remote devices content ---------- */
+
+void remote_enter_list_mode(void) {
+    g_remote_mode = 0;
+    g_remote_selected = 0;
+    g_remote_selected_conn = -1;
+    if (g_remote_entries) {
+        remote_free_entries(g_remote_entries, g_remote_entry_count);
+        g_remote_entries = NULL;
+    }
+    g_remote_entry_count = 0;
+    g_remote_entry_offset = 0;
+    g_remote_current_path[0] = '\0';
+}
+
+static void remote_go_back(void) {
+    switch (g_remote_mode) {
+        case 0: // list -> back to sidebar
+            g_focus_area = FOCUS_SIDEBAR;
+            render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
+            render_settings_content();
+            break;
+        case 1: // actions -> list
+            g_remote_mode = 0;
+            g_remote_selected = 0;
+            render_settings_content();
+            break;
+        case 3: // browse
+            if (g_remote_current_path[0] && strcmp(g_remote_current_path, "/") != 0) {
+                char *last_slash = strrchr(g_remote_current_path, '/');
+                if (last_slash && last_slash != g_remote_current_path) {
+                    *last_slash = '\0';
+                } else if (last_slash == g_remote_current_path) {
+                    g_remote_current_path[1] = '\0';
+                } else {
+                    g_remote_current_path[0] = '\0';
+                }
+                g_remote_selected = 0;
+                remote_refresh_entries();
+            } else {
+                g_remote_mode = 1;
+                g_remote_selected = 0;
+                if (g_remote_entries) {
+                    remote_free_entries(g_remote_entries, g_remote_entry_count);
+                    g_remote_entries = NULL;
+                }
+                g_remote_entry_count = 0;
+                render_settings_content();
+            }
+            break;
+    }
+}
+
+static void rerender_remote_view(void) {
+    render_menu_frame(menu_text("设置 [F2]", "Settings [F2]"));
+    render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
+    render_settings_content();
+    render_menu_hint_bar();
+}
+
+static void remote_refresh_entries(void) {
+    if (g_remote_selected_conn < 0 || g_remote_selected_conn >= g_app_config.remote_connection_count) {
+        return;
+    }
+    if (g_remote_entries) {
+        remote_free_entries(g_remote_entries, g_remote_entry_count);
+        g_remote_entries = NULL;
+    }
+    g_remote_entry_count = 0;
+    g_remote_entry_offset = 0;
+
+    const RemoteConnectionConfig *conn = &g_app_config.remote_connections[g_remote_selected_conn];
+    int ret = remote_list_directory(conn, g_remote_current_path, &g_remote_entries, &g_remote_entry_count);
+    if (ret < 0) {
+        g_remote_entries = NULL;
+        g_remote_entry_count = 0;
+        const char *err = remote_strerror();
+        if (err && err[0]) {
+            char buf[256];
+            snprintf(buf, sizeof(buf), "%s: %s",
+                     menu_text("无法列出远程目录", "Cannot list remote directory"), err);
+            show_status_message(buf);
+        } else {
+            show_status_message(menu_text("无法列出远程目录", "Cannot list remote directory"));
+        }
+    }
+}
+
+static void remote_start_browse(int conn_idx) {
+    g_remote_selected_conn = conn_idx;
+    g_remote_mode = 3;
+    g_remote_selected = 0;
+
+    const RemoteConnectionConfig *conn = &g_app_config.remote_connections[conn_idx];
+    strncpy(g_remote_current_path, conn->base_path, sizeof(g_remote_current_path) - 1);
+
+    remote_refresh_entries();
+    rerender_remote_view();
+}
+
+static void remote_load_playlist(void) {
+    if (g_remote_selected_conn < 0) return;
+    const RemoteConnectionConfig *conn = &g_app_config.remote_connections[g_remote_selected_conn];
+
+    int count = load_remote_playlist(conn, g_remote_current_path);
+    if (count > 0) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "%s: %s (%d %s)",
+                 menu_text("已加载", "Loaded"), conn->name, count,
+                 menu_text("首歌曲", "tracks"));
+        show_status_message(msg);
+        exit_current_view();
+    } else {
+        show_status_message(menu_text("该目录没有音频文件", "No audio files in this directory"));
+    }
+}
+
+static void remote_start_add(void) {
+    noecho();
+    curs_set(1);
+
+    RemoteConnectionConfig rc;
+    memset(&rc, 0, sizeof(rc));
+    rc.port = 0;
+
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    int menu_width = max_x / 4;
+    int input_row = max_y - 2;
+
+    prompt_text_input(stdscr, input_row, menu_width + 2,
+                      menu_text("名称：", "Name: "),
+                      rc.name, sizeof(rc.name), 1);
+    if (!rc.name[0]) { curs_set(0); noecho(); return; }
+
+    char protocol_str[16] = "2";
+    prompt_text_input(stdscr, input_row, menu_width + 2,
+                      menu_text("协议(0:SMB 1:SFTP 2:FTP 3:WebDAV)：", "Protocol(0:SMB 1:SFTP 2:FTP 3:WebDAV): "),
+                      protocol_str, sizeof(protocol_str), 1);
+    rc.protocol = atoi(protocol_str);
+    if (rc.protocol < 0) rc.protocol = 0;
+    if (rc.protocol > 3) rc.protocol = 3;
+
+    prompt_text_input(stdscr, input_row, menu_width + 2,
+                      menu_text("主机地址：", "Host: "),
+                      rc.host, sizeof(rc.host), 1);
+    if (!rc.host[0]) { curs_set(0); noecho(); return; }
+
+    char port_str[16] = "";
+    prompt_text_input(stdscr, input_row, menu_width + 2,
+                      menu_text("端口(留空默认)：", "Port (default if empty): "),
+                      port_str, sizeof(port_str), 1);
+    rc.port = port_str[0] ? (int)strtol(port_str, NULL, 10) : 0;
+
+    prompt_text_input(stdscr, input_row, menu_width + 2,
+                      menu_text("用户名(可选)：", "Username (optional): "),
+                      rc.username, sizeof(rc.username), 1);
+
+    prompt_text_input(stdscr, input_row, menu_width + 2,
+                      menu_text("密码(可选)：", "Password (optional): "),
+                      rc.password, sizeof(rc.password), 1);
+
+    prompt_text_input(stdscr, input_row, menu_width + 2,
+                      menu_text("基础路径：", "Base path: "),
+                      rc.base_path, sizeof(rc.base_path), 1);
+    if (!rc.base_path[0]) {
+        strncpy(rc.base_path, "/", sizeof(rc.base_path) - 1);
+    }
+
+    curs_set(0);
+    noecho();
+
+    if (g_app_config.remote_connection_count < MAX_REMOTE_CONNECTIONS) {
+        g_app_config.remote_connections[g_app_config.remote_connection_count++] = rc;
+        save_config();
+        show_status_message(menu_text("远程连接已添加", "Remote connection added"));
+    } else {
+        show_status_message(menu_text("远程连接已满", "Remote connections full"));
+    }
+
+    g_remote_mode = 0;
+    g_remote_selected = g_app_config.remote_connection_count - 1;
+    rerender_remote_view();
+}
+
+static void remote_start_edit(int conn_idx) {
+    if (conn_idx < 0 || conn_idx >= g_app_config.remote_connection_count) return;
+    RemoteConnectionConfig *rc = &g_app_config.remote_connections[conn_idx];
+
+    noecho();
+    curs_set(1);
+
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    int menu_width = max_x / 4;
+    int input_row = max_y - 2;
+
+    prompt_text_input(stdscr, input_row, menu_width + 2,
+                      menu_text("名称：", "Name: "),
+                      rc->name, sizeof(rc->name), 1);
+    if (!rc->name[0]) { curs_set(0); noecho(); return; }
+
+    char protocol_str[16];
+    snprintf(protocol_str, sizeof(protocol_str), "%d", rc->protocol);
+    prompt_text_input(stdscr, input_row, menu_width + 2,
+                      menu_text("协议(0:SMB 1:SFTP 2:FTP 3:WebDAV)：", "Protocol(0:SMB 1:SFTP 2:FTP 3:WebDAV): "),
+                      protocol_str, sizeof(protocol_str), 1);
+    rc->protocol = atoi(protocol_str);
+    if (rc->protocol < 0) rc->protocol = 0;
+    if (rc->protocol > 3) rc->protocol = 3;
+
+    prompt_text_input(stdscr, input_row, menu_width + 2,
+                      menu_text("主机地址：", "Host: "),
+                      rc->host, sizeof(rc->host), 1);
+
+    char port_str[16];
+    snprintf(port_str, sizeof(port_str), "%d", rc->port);
+    prompt_text_input(stdscr, input_row, menu_width + 2,
+                      menu_text("端口(留空默认)：", "Port (default if empty): "),
+                      port_str, sizeof(port_str), 1);
+    rc->port = port_str[0] ? (int)strtol(port_str, NULL, 10) : 0;
+
+    prompt_text_input(stdscr, input_row, menu_width + 2,
+                      menu_text("用户名(可选)：", "Username (optional): "),
+                      rc->username, sizeof(rc->username), 1);
+
+    prompt_text_input(stdscr, input_row, menu_width + 2,
+                      menu_text("密码(可选)：", "Password (optional): "),
+                      rc->password, sizeof(rc->password), 1);
+
+    prompt_text_input(stdscr, input_row, menu_width + 2,
+                      menu_text("基础路径：", "Base path: "),
+                      rc->base_path, sizeof(rc->base_path), 1);
+    if (!rc->base_path[0]) {
+        strncpy(rc->base_path, "/", sizeof(rc->base_path) - 1);
+    }
+
+    curs_set(0);
+    noecho();
+    save_config();
+    show_status_message(menu_text("连接已更新", "Connection updated"));
+    g_remote_mode = 0;
+    rerender_remote_view();
+}
+
+static void remote_delete_connection(int conn_idx) {
+    if (conn_idx < 0 || conn_idx >= g_app_config.remote_connection_count) return;
+    if (conn_idx < g_app_config.remote_connection_count - 1) {
+        memmove(&g_app_config.remote_connections[conn_idx],
+                &g_app_config.remote_connections[conn_idx + 1],
+                sizeof(RemoteConnectionConfig) * (g_app_config.remote_connection_count - conn_idx - 1));
+    }
+    g_app_config.remote_connection_count--;
+    save_config();
+    show_status_message(menu_text("连接已删除", "Connection deleted"));
+
+    g_remote_mode = 0;
+    if (g_remote_selected >= g_app_config.remote_connection_count) {
+        g_remote_selected = g_app_config.remote_connection_count > 0 ? g_app_config.remote_connection_count - 1 : 0;
+    }
+    rerender_remote_view();
+}
+
+static void render_remote_content(void) {
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    int content_start_x = (max_x / 4) + 2;
+    int y = 2;
+
+    attron(COLOR_PAIR(COLOR_PAIR_PLAYLIST));
+
+    for (int row = 2; row < max_y - 2; row++) {
+        move(row, content_start_x);
+        clrtoeol();
+    }
+
+    if (g_remote_mode == 0) {
+        mvprintw(y++, content_start_x, "%s",
+                 menu_text("远程设备：↑/↓ 选择 ENTER 管理  ESC 返回",
+                           "Remote: Up/Down select Enter manage Esc back"));
+        y++;
+
+        int count = g_app_config.remote_connection_count;
+        char header[64];
+        snprintf(header, sizeof(header), "%s (%d)",
+                 menu_text("已保存的连接", "Saved Connections"), count);
+        mvprintw(y++, content_start_x, "%s", header);
+        y++;
+
+        for (int i = 0; i < count && y < max_y - 3; i++) {
+            const RemoteConnectionConfig *rc = &g_app_config.remote_connections[i];
+            if (g_focus_area == FOCUS_CONTENT && g_remote_selected == i) attron(A_REVERSE);
+            mvprintw(y++, content_start_x, "  %-20s [%s] %s",
+                     rc->name, remote_protocol_name(rc->protocol), rc->host);
+            if (g_focus_area == FOCUS_CONTENT && g_remote_selected == i) attroff(A_REVERSE);
+        }
+
+        y++;
+        if (g_focus_area == FOCUS_CONTENT && g_remote_selected == count) attron(A_REVERSE);
+        mvprintw(y++, content_start_x, "  %s", menu_text("↓ 添加新连接", "↓ Add New Connection"));
+        if (g_focus_area == FOCUS_CONTENT && g_remote_selected == count) attroff(A_REVERSE);
+
+    } else if (g_remote_mode == 1) {
+        int conn_idx = g_remote_selected_conn;
+        if (conn_idx < 0 || conn_idx >= g_app_config.remote_connection_count) {
+            mvprintw(y++, content_start_x, "%s", menu_text("(无连接)", "(No connection)"));
+            attroff(COLOR_PAIR(COLOR_PAIR_PLAYLIST));
+            return;
+        }
+        const RemoteConnectionConfig *rc = &g_app_config.remote_connections[conn_idx];
+
+        mvprintw(y++, content_start_x, "%s: %s [%s]",
+                 menu_text("连接", "Connection"), rc->name, remote_protocol_name(rc->protocol));
+        y++;
+
+        const char *actions[] = {
+            menu_text("浏览目录", "Browse Folder"),
+            menu_text("编辑连接", "Edit Connection"),
+            menu_text("删除连接", "Delete Connection")
+        };
+        int action_count = 3;
+
+        for (int i = 0; i < action_count; i++) {
+            if (g_focus_area == FOCUS_CONTENT && g_remote_selected == i) attron(A_REVERSE);
+            mvprintw(y++, content_start_x, "  %s", actions[i]);
+            if (g_focus_area == FOCUS_CONTENT && g_remote_selected == i) attroff(A_REVERSE);
+        }
+
+    } else if (g_remote_mode == 3) {
+        if (g_remote_selected_conn < 0) {
+            mvprintw(y++, content_start_x, "%s", menu_text("(无连接)", "(No connection)"));
+            attroff(COLOR_PAIR(COLOR_PAIR_PLAYLIST));
+            return;
+        }
+        const RemoteConnectionConfig *conn = &g_app_config.remote_connections[g_remote_selected_conn];
+
+        char header[256];
+        snprintf(header, sizeof(header), "%s: %s > %s",
+                 menu_text("浏览", "Browse"), conn->name,
+                 g_remote_current_path[0] ? g_remote_current_path : "/");
+        mvprintw(y++, content_start_x, "%s", header);
+        y++;
+
+        if (!g_remote_entries) {
+            mvprintw(y++, content_start_x, "%s", menu_text("正在加载...", "Loading..."));
+        } else if (g_remote_entry_count == 0) {
+            mvprintw(y++, content_start_x, "%s", menu_text("(空目录)", "(Empty directory)"));
+        } else {
+            int display_count = g_remote_entry_count;
+            int max_display = max_y - y - 3;
+            if (display_count > max_display) display_count = max_display;
+            if (g_remote_entry_offset > g_remote_entry_count - display_count)
+                g_remote_entry_offset = g_remote_entry_count - display_count;
+            if (g_remote_entry_offset < 0) g_remote_entry_offset = 0;
+
+            if (g_focus_area == FOCUS_CONTENT && g_remote_selected == 0) attron(A_REVERSE);
+            mvprintw(y++, content_start_x, "  %s",
+                     menu_text("↓ 加载此目录到播放列表", "↓ Load into Playlist"));
+            if (g_focus_area == FOCUS_CONTENT && g_remote_selected == 0) attroff(A_REVERSE);
+
+            for (int i = g_remote_entry_offset; i < g_remote_entry_count && y < max_y - 3; i++) {
+                const RemoteDirEntry *e = &g_remote_entries[i];
+                int is_sel = (g_focus_area == FOCUS_CONTENT && g_remote_selected == i + 1);
+                if (is_sel) attron(A_REVERSE);
+                if (e->is_dir) {
+                    mvprintw(y++, content_start_x, "  [%s] %s",
+                             menu_text("目录", "dir"), e->name);
+                } else {
+                    mvprintw(y++, content_start_x, "  %s", e->name);
+                }
+                if (is_sel) attroff(A_REVERSE);
+            }
+        }
+
+        if (y < max_y - 2) {
+            mvprintw(y, content_start_x, "%s",
+                     menu_text("↑/↓ 选择  ENTER 加载  RIGHT 进入目录  ESC 返回",
+                               "Up/Down select  Enter load  Right enter dir  Esc back"));
+        }
+    }
+
+    attroff(COLOR_PAIR(COLOR_PAIR_PLAYLIST));
+    refresh();
+}
+
+static void handle_remote_content_input(int ch) {
+    int conn_count = g_app_config.remote_connection_count;
+
+    if (g_remote_mode == 0) {
+        switch (ch) {
+            case KEY_UP:
+                g_remote_selected--;
+                if (g_remote_selected < 0) g_remote_selected = conn_count;
+                render_settings_content();
+                break;
+            case KEY_DOWN:
+                g_remote_selected++;
+                if (g_remote_selected > conn_count) g_remote_selected = 0;
+                render_settings_content();
+                break;
+            case 10:
+            case ' ':
+                if (g_remote_selected >= 0 && g_remote_selected < conn_count) {
+                    g_remote_selected_conn = g_remote_selected;
+                    g_remote_mode = 1;
+                    g_remote_selected = 0;
+                    rerender_remote_view();
+                } else {
+                    remote_start_add();
+                }
+                break;
+            case KEY_LEFT:
+            case 27:
+                remote_go_back();
+                break;
+        }
+    } else if (g_remote_mode == 1) {
+        switch (ch) {
+            case KEY_UP:
+                g_remote_selected--;
+                if (g_remote_selected < 0) g_remote_selected = 2;
+                render_settings_content();
+                break;
+            case KEY_DOWN:
+                g_remote_selected++;
+                if (g_remote_selected > 2) g_remote_selected = 0;
+                render_settings_content();
+                break;
+            case 10:
+            case ' ':
+                if (g_remote_selected == 0) {
+                    remote_start_browse(g_remote_selected_conn);
+                } else if (g_remote_selected == 1) {
+                    remote_start_edit(g_remote_selected_conn);
+                } else if (g_remote_selected == 2) {
+                    remote_delete_connection(g_remote_selected_conn);
+                }
+                break;
+            case KEY_LEFT:
+            case 27:
+                remote_go_back();
+                break;
+        }
+    } else if (g_remote_mode == 3) {
+        int total_items = 1 + g_remote_entry_count;
+
+        switch (ch) {
+            case KEY_UP:
+                g_remote_selected--;
+                if (g_remote_selected < 0) g_remote_selected = total_items - 1;
+                render_settings_content();
+                break;
+            case KEY_DOWN:
+                g_remote_selected++;
+                if (g_remote_selected >= total_items) g_remote_selected = 0;
+                render_settings_content();
+                break;
+            case KEY_RIGHT:
+                if (g_remote_selected > 0) {
+                    int entry_idx = g_remote_selected - 1;
+                    if (entry_idx >= 0 && entry_idx < g_remote_entry_count &&
+                        g_remote_entries[entry_idx].is_dir) {
+                        size_t cur_len = strlen(g_remote_current_path);
+                        if (cur_len > 0 && g_remote_current_path[cur_len - 1] != '/') {
+                            strncat(g_remote_current_path, "/", sizeof(g_remote_current_path) - cur_len - 1);
+                        }
+                        strncat(g_remote_current_path, g_remote_entries[entry_idx].name,
+                                sizeof(g_remote_current_path) - strlen(g_remote_current_path) - 1);
+                        g_remote_selected = 0;
+                        g_remote_entry_offset = 0;
+                        remote_refresh_entries();
+                        rerender_remote_view();
+                    }
+                }
+                break;
+            case 10:
+            case ' ':
+                if (g_remote_selected == 0) {
+                    remote_load_playlist();
+                } else {
+                    int entry_idx = g_remote_selected - 1;
+                    if (entry_idx >= 0 && entry_idx < g_remote_entry_count) {
+                        if (g_remote_entries[entry_idx].is_dir) {
+                            size_t cur_len = strlen(g_remote_current_path);
+                            if (cur_len > 0 && g_remote_current_path[cur_len - 1] != '/') {
+                                strncat(g_remote_current_path, "/", sizeof(g_remote_current_path) - cur_len - 1);
+                            }
+                            strncat(g_remote_current_path, g_remote_entries[entry_idx].name,
+                                    sizeof(g_remote_current_path) - strlen(g_remote_current_path) - 1);
+                            g_remote_selected = 0;
+                            g_remote_entry_offset = 0;
+                            remote_refresh_entries();
+                            rerender_remote_view();
+                        } else {
+                            remote_load_playlist();
+                        }
+                    }
+                }
+                break;
+            case KEY_LEFT:
+                remote_go_back();
+                break;
+            case 27:
+                remote_go_back();
+                break;
+        }
+    }
+}
+
 void render_settings_content(void) {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
@@ -2379,6 +2958,8 @@ void render_settings_content(void) {
         mvprintw(start_y++, content_start_x, "%s", menu_text("空格 / Enter：执行当前动作", "Space / Enter: Activate current action"));
         mvprintw(start_y++, content_start_x, "%s", menu_text("+ / -：调整音量", "+ / -: Adjust volume"));
         mvprintw(start_y++, content_start_x, "%s", menu_text(", / .：快退 / 快进", ", / .: Seek backward / forward"));
+    } else if (g_menu_selected_idx == 4) {
+        render_remote_content();
     } else {
         mvprintw(start_y, content_start_x, "%s",
                  menu_text("按 ENTER 返回主界面", "Press Enter to return to the main view"));
@@ -2821,6 +3402,11 @@ void handle_function_keys(int fkey) {
 }
 
 static void handle_settings_input(int ch) {
+    // Remote section handles its own input when content-focused
+    if (g_menu_selected_idx == 4 && g_focus_area == FOCUS_CONTENT) {
+        handle_remote_content_input(ch);
+        return;
+    }
     switch (ch) {
         case KEY_UP:
             if (g_focus_area == FOCUS_SIDEBAR) {

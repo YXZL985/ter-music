@@ -1,5 +1,6 @@
 #include "../include/defs.h"
 #include "../include/pinyin_table.h"
+#include "../include/remote.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -711,6 +712,55 @@ int append_playlist(const char *path) {
 
     free(next);
     return added;
+}
+
+int load_remote_playlist(const RemoteConnectionConfig *conn, const char *subpath) {
+    RemoteDirEntry *entries = NULL;
+    int entry_count = 0;
+
+    if (remote_list_directory(conn, subpath, &entries, &entry_count) < 0) {
+        return -1;
+    }
+
+    Playlist *next = calloc(1, sizeof(*next));
+    if (!next) {
+        remote_free_entries(entries, entry_count);
+        return -1;
+    }
+
+    // Build the base URL for this remote directory
+    char base_url[2048];
+    remote_build_url(conn, subpath, base_url, sizeof(base_url));
+
+    int added = 0;
+    for (int i = 0; i < entry_count && next->count < MAX_TRACKS; i++) {
+        if (!is_audio_file(entries[i].name)) continue;
+
+        // Construct full URL: base_url + "/" + filename
+        char track_url[2048];
+        snprintf(track_url, sizeof(track_url), "%s/%s", base_url, entries[i].name);
+
+        strncpy(next->tracks[next->count], track_url, MAX_PATH_LEN - 1);
+        next->tracks[next->count][MAX_PATH_LEN - 1] = '\0';
+        next->count++;
+        added++;
+    }
+
+    remote_free_entries(entries, entry_count);
+
+    if (next->count > 0) {
+        strncpy(next->folder_path, base_url, sizeof(next->folder_path) - 1);
+        next->is_loaded = 1;
+    }
+
+    playlist_lock();
+    g_playlist = *next;
+    playlist_unlock();
+    memset(&g_search_state, 0, sizeof(g_search_state));
+
+    int total = next->count;
+    free(next);
+    return total;
 }
 
 void clear_metadata_cache(void) {

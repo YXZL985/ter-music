@@ -74,6 +74,8 @@ typedef enum {
 
 #define MAX_ALBUM_COVER_CACHE 10
 #define ALBUM_COVER_TEMP_PREFIX "/tmp/ter-music-cover-"
+#define MAX_REMOTE_CONNECTIONS 20
+#define MAX_REMOTE_NAME_LEN 64
 
 typedef struct {
     char path[MAX_PATH_LEN];
@@ -149,6 +151,23 @@ typedef struct {
     int border_bg;
 } ColorTheme;
 
+typedef enum {
+    REMOTE_PROTOCOL_SMB = 0,
+    REMOTE_PROTOCOL_SFTP = 1,
+    REMOTE_PROTOCOL_FTP = 2,
+    REMOTE_PROTOCOL_WEBDAV = 3
+} RemoteProtocol;
+
+typedef struct {
+    char name[MAX_REMOTE_NAME_LEN];
+    int protocol;               // RemoteProtocol value
+    char host[256];
+    int port;
+    char username[64];
+    char password[256];
+    char base_path[512];
+} RemoteConnectionConfig;
+
 typedef struct {
     char default_startup_path[MAX_PATH_LEN];
     char last_opened_path[MAX_PATH_LEN];
@@ -167,6 +186,8 @@ typedef struct {
     int default_loop_mode;
     float default_playback_speed;
     int show_album_cover;
+    RemoteConnectionConfig remote_connections[MAX_REMOTE_CONNECTIONS];
+    int remote_connection_count;
 } AppConfig;
 
 typedef struct {
@@ -227,6 +248,7 @@ void init_audio_device();
 int load_playlist(const char *folder_path);
 int append_playlist(const char *folder_path);
 int load_single_file(const char *file_path);
+int load_remote_playlist(const RemoteConnectionConfig *conn, const char *subpath);
 void reset_playlist_state(void);
 void playlist_lock(void);
 void playlist_unlock(void);
