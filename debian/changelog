@@ -1,3 +1,9 @@
+ter-music (1.9.1-1) unstable; urgency=medium
+
+  * Add album cover toggle in Settings page.
+
+ -- Yanxi Bamboo Forest <yxzl666xx@outlook.com>  Wed, 13 May 2026 00:00:00 +0800
+
 ter-music (1.9.0-1) unstable; urgency=medium
 
   * Initial Debian packaging.

@@ -1827,7 +1827,8 @@ static const char *settings_options[] = {
     "输出时延",
     "显示歌词面板",
     "默认循环模式",
-    "默认倍速"
+    "默认倍速",
+    "显示专辑图片"
 };
 static const char *settings_options_ascii[] = {
     "Playlist Foreground",
@@ -1851,9 +1852,10 @@ static const char *settings_options_ascii[] = {
     "Output Latency",
     "Show Lyrics Panel",
     "Default Loop Mode",
-    "Default Speed"
+    "Default Speed",
+    "Show Album Cover"
 };
-#define SETTINGS_OPTION_COUNT 22
+#define SETTINGS_OPTION_COUNT 23
 
 enum {
     SETTINGS_IDX_THEME_COLOR_PAIR_0 = 0,
@@ -1877,7 +1879,8 @@ enum {
     SETTINGS_IDX_LATENCY = 18,
     SETTINGS_IDX_SHOW_LYRICS = 19,
     SETTINGS_IDX_DEFAULT_LOOP = 20,
-    SETTINGS_IDX_DEFAULT_SPEED = 21
+    SETTINGS_IDX_DEFAULT_SPEED = 21,
+    SETTINGS_IDX_SHOW_ALBUM_COVER = 22
 };
 
 typedef struct {
@@ -1912,6 +1915,7 @@ static const int settings_playback_option_indices[] = {
     SETTINGS_IDX_VOLUME,
     SETTINGS_IDX_LATENCY,
     SETTINGS_IDX_SHOW_LYRICS,
+    SETTINGS_IDX_SHOW_ALBUM_COVER,
     SETTINGS_IDX_DEFAULT_LOOP,
     SETTINGS_IDX_DEFAULT_SPEED
 };
@@ -2022,6 +2026,10 @@ static void format_settings_option_line(int option_index, char *line, size_t lin
         snprintf(line, line_size, "%s%s%s",
                  current_settings_options[option_index], separator,
                  menu_bool_text(g_app_config.show_lyrics_panel));
+    } else if (option_index == SETTINGS_IDX_SHOW_ALBUM_COVER) {
+        snprintf(line, line_size, "%s%s%s",
+                 current_settings_options[option_index], separator,
+                 menu_bool_text(g_app_config.show_album_cover));
     } else if (option_index == SETTINGS_IDX_DEFAULT_LOOP) {
         const char *loop_mode_str;
         switch (g_app_config.default_loop_mode) {
@@ -2243,6 +2251,10 @@ static void adjust_or_toggle_settings_option(int option_index, int delta) {
             g_app_config.show_lyrics_panel = !g_app_config.show_lyrics_panel;
             save_config();
             break;
+        case SETTINGS_IDX_SHOW_ALBUM_COVER:
+            g_app_config.show_album_cover = !g_app_config.show_album_cover;
+            save_config();
+            break;
         case SETTINGS_IDX_DEFAULT_LOOP:
             if (delta < 0) {
                 g_app_config.default_loop_mode = (g_app_config.default_loop_mode - 1 + 4) % 4;
@@ -2297,6 +2309,7 @@ static void activate_settings_current_option(void) {
         g_settings_current_option == SETTINGS_IDX_CLEAR_HISTORY ||
         g_settings_current_option == SETTINGS_IDX_LANGUAGE ||
         g_settings_current_option == SETTINGS_IDX_SHOW_LYRICS ||
+        g_settings_current_option == SETTINGS_IDX_SHOW_ALBUM_COVER ||
         g_settings_current_option == SETTINGS_IDX_DEFAULT_LOOP ||
         g_settings_current_option == SETTINGS_IDX_DEFAULT_SPEED) {
         adjust_or_toggle_settings_option(g_settings_current_option, 0);
