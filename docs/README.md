@@ -272,7 +272,7 @@ Note: Also ensure libavfilter-dev is installed for audio filter support
 
 ### 4.9 Using Build Scripts
 
-Ter-Music provides multiple build scripts for creating packages in different formats. For detailed usage instructions, please refer to:
+Ter-Music provides multiple build scripts for creating packages in different formats, as well as a test server tool for verifying remote playback functionality. For detailed usage instructions, please refer to:
 
 - [Build Guide](BUILD_GUIDE.md) - Detailed build script usage guide
 - [Scripts README](../scripts/README.md) - Quick reference for all build scripts
@@ -284,6 +284,9 @@ The following formats are supported:
 - **DEB Package** - For Debian/Ubuntu-based distributions
 - **Linyaps Package** - For deepin/UOS systems
 - **Arch Linux Package** - For Arch Linux and derivatives
+
+**Test Server Tools:**
+- **tools/start-server.py** - Interactive script to start local SMB/FTP/SFTP/WebDAV servers for testing remote playback feature. Usage: `pip install -r tools/requirements.txt && python3 tools/start-server.py`
 
 ## 5. Usage
 

@@ -246,6 +246,9 @@ rm -rf build
 - **玲珑包** - 适用于deepin/UOS系统
 - **Arch Linux包** - 适用于Arch Linux及其衍生发行版
 
+**测试服务器工具：**
+- **tools/start-server.py** - 交互式脚本，快速启动本地SMB/FTP/SFTP/WebDAV服务器，用于测试远程音乐播放功能。使用：`pip install -r tools/requirements.txt && python3 tools/start-server.py`
+
 ## 第五章 使用方法
 ### 一 启动播放器
 **若已安装**：
