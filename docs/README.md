@@ -16,6 +16,7 @@ Ter-Music is a lightweight, terminal-based command-line music player designed fo
 
 **Key Features:**
 
+- 🌐 **Remote Music Playback**: Supports SMB, SFTP, FTP, WebDAV protocols for playing music from remote servers and NAS devices
 - 🎵 **Supports Multiple Audio Formats**: MP3, WAV, FLAC, OGG, M4A, AAC, WMA, APE, OPUS and other popular formats
 - 📝 **LRC Lyrics Synchronization**: Automatically loads and synchronizes lyrics, highlights current line with playback progress
 - 🎶 **Multiple Playback Modes**: Sequential, single repeat, list repeat, shuffle
@@ -27,6 +28,7 @@ Ter-Music is a lightweight, terminal-based command-line music player designed fo
 - ⚙️ **Configurable Theme Colors**: Supports custom interface color themes
 - ⌨️ **Keyboard Shortcuts**: Full keyboard operation, efficient and convenient
 - 📊 **Real-time Progress Bar**: Smooth playback progress display and seeking
+- 🎨 **Album Cover Display**: Supports album art rendering in terminal (PNG/JPEG via braille art or chafa), can be toggled on/off in Settings
 
 ### 1.2 Design Philosophy
 
@@ -51,6 +53,8 @@ Ter-Music follows the **simple, efficient, native** design philosophy:
 | 🔧 **CMake Build**: Modern build system, good cross-platform compatibility | <br /> |
 | 🔊 **PulseAudio Audio Backend**: Stable low-latency audio output | <br /> |
 | ⏩ **Playback Speed Control**: 6 levels of speed adjustment (0.75x-3.0x), switchable during playback | <br /> |
+| 🌐 **Remote Playback**: Play music via SMB/SFTP/FTP/WebDAV remote protocols | <br /> |
+| 🎨 **Album Cover**: Terminal album art display, toggleable in Settings | <br /> |
 
 ### 1.4 Use Cases
 
@@ -109,6 +113,7 @@ Ter-Music follows the **simple, efficient, native** design philosophy:
 | `pulseaudio-libs-devel` | 10.0+ | PulseAudio audio output |
 | `ncurses-devel` | 6.0+ | Text user interface, wide character support |
 | `pthread-devel` | System | Multi-threading support |
+| `libcurl-devel` | 7.0+ | Remote music playback (SMB/SFTP/FTP/WebDAV) |
 | `cmake` | 3.10+ | Build system (required for compilation) |
 | `gcc` | 7.0+ | C compiler (required for compilation) |
 | `make` | - | Build tool (required for compilation) |
@@ -118,7 +123,7 @@ Ter-Music follows the **simple, efficient, native** design philosophy:
 
 ```bash
 sudo dnf install cmake gcc make pkg-config
-sudo dnf install ffmpeg-free-devel libpng-devel libjpeg-turbo-devel pulseaudio-libs-devel ncurses-devel
+sudo dnf install ffmpeg-free-devel libpng-devel libjpeg-turbo-devel pulseaudio-libs-devel ncurses-devel libcurl-devel
 ```
 
 ### 3.3 Ubuntu / Debian / Linux Mint
@@ -126,8 +131,7 @@ sudo dnf install ffmpeg-free-devel libpng-devel libjpeg-turbo-devel pulseaudio-l
 ```bash
 sudo apt update
 sudo apt install cmake gcc make pkg-config
-sudo apt install libavcodec-dev libavformat-dev libswresample-dev libavutil-dev libavfilter-dev libpng-dev libjpeg-dev
-sudo apt install libpulse-dev libncursesw5-dev
+sudo apt install libavcodec-dev libavformat-dev libswresample-dev libavutil-dev libavfilter-dev libpng-dev libjpeg-dev libpulse-dev libncursesw5-dev libcurl4-openssl-dev
 ```
 
 **Note**: If you can't find the ffmpeg development packages, you may need to enable the universe repository first:
@@ -173,7 +177,7 @@ makepkg -si
 
 ```bash
 sudo pacman -S cmake gcc make pkg-config
-sudo pacman -S ffmpeg libpng libjpeg pulseaudio ncurses
+sudo pacman -S ffmpeg libpng libjpeg pulseaudio ncurses libcurl
 ```
 
 ## 4. Compilation Steps
@@ -314,6 +318,15 @@ Options:
 # Open my music folder on startup
 ter-music -o ~/Music
 
+# Open a remote FTP music directory
+ter-music ftp://user:pass@host/path/to/music
+
+# Open a remote SFTP directory
+ter-music sftp://host/path
+
+# Open a WebDAV music directory
+ter-music --open http://webdav-server/music
+
 # Show help
 ter-music --help
 ```
@@ -342,7 +355,7 @@ Menu: Options Menu
 
 - **Top Left**: Playlist, displays all audio files in the current directory
 - **Bottom Left**: Control bar, contains playback control buttons and progress bar
-- **Right**: Lyrics display area, synchronously displays lyrics for the currently playing song
+- **Right**: Lyrics display area, synchronously displays lyrics for the currently playing song; also shows album cover (braille art) when enabled in Settings
 - **Bottom**: Options menu, includes settings, playback history, favorites, about, exit, etc.
 
 ### 5.4 Basic Operations
@@ -480,6 +493,9 @@ The configuration file is stored at `~/.config/ter-music/config`. The program wi
 - `default_startup_path`: Default startup directory
 - `auto_play_on_start`: Auto-play on startup (0/1)
 - `remember_last_path`: Remember last opened directory (0/1)
+- `show_album_cover`: Show album cover art in the lyrics panel (0/1)
+- `default_playback_speed`: Default playback speed (0.75, 1.0, 1.25, 1.5, 2.0, 3.0)
+- `remote_connections`: Saved remote server connections (SMB/SFTP/FTP/WebDAV)
 - Color theme configuration: Foreground and background colors for all UI elements
 
 The program automatically saves configuration, changes take effect immediately after modification.
@@ -494,7 +510,9 @@ All user data is stored in the `~/.config/ter-music/` directory:
 ├── history        # Playback history
 ├── favorites      # Favorites
 ├── dir_history    # Directory access history
-└── playlists/     # Custom playlists
+├── playlists/     # Custom playlists
+├── remote/        # Remote connection history
+└── album_cover_cache/  # Album cover image cache
 ```
 
 ### 5.10 Basic Usage Flow
@@ -580,6 +598,10 @@ Ter-Music adopts a modular design, main modules include:
 - **progress.c**: Playback progress tracking, progress operations such as seeking to specified time
 - **lyrics.c**: Lyrics loading, parsing, synchronized display
 - **menu_views.c**: Multi-view management, settings, history, favorites, playlist management
+- **remote.c**: Remote music playback support (SMB/SFTP/FTP/WebDAV protocols)
+- **image_loader.c**: Album cover image loading and processing (PNG/JPEG)
+- **braille_art.c**: Braille art rendering for album cover display in terminal
+- **media_session.c**: MPRIS D-Bus media session integration (optional)
 - **defs.h**: Global definitions, data structure declarations
 
 ## 7. License

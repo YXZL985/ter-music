@@ -6,7 +6,21 @@
 
 ### 1. build-rpm.sh - 构建 RPM 包
 将项目构建为标准的 Fedora RPM 包。
-**使用方法：**
+
+**容器构建模式**（推荐用于非 RHEL 系统）：
+```bash
+# 在 Rocky Linux 容器中构建（默认 EL9）
+./build-rpm.sh --container
+
+# 在指定 EL 版本的容器中构建
+./build-rpm.sh --container --el-version 8
+./build-rpm.sh --container --el-version 10
+
+# 构建静态链接 RPM，单包兼容 EL8/9/10（自动启用容器模式）
+./build-rpm.sh --static
+```
+
+**本地构建（仅在 RHEL/Fedora 系统上）：**
 ```bash
 # 使用默认版本号和架构构建
 ./build-rpm.sh
@@ -16,9 +30,6 @@
 
 # 指定目标架构
 ./build-rpm.sh -a arm64
-
-# 指定版本号和架构
-./build-rpm.sh -v 1.2.3 -a loong64
 
 # 生成 debuginfo 包（默认不生成）
 ./build-rpm.sh --with-debuginfo
@@ -284,11 +295,16 @@ sudo pacman -U ter-music-cn-*.pkg.tar.zst
 - `make`
 - `cmake`
 - `pkg-config`
-- `ffmpeg-free-devel`（提供 libavfilter）
+- `ffmpeg-free-devel`（提供 libavfilter，非静态构建时必需）
 - `pulseaudio-libs-devel`
 - `ncurses-devel`
 - `libpng-devel`
 - `libjpeg-turbo-devel`
+- `libcurl-devel`
+- Docker（容器构建模式时必需）
+
+> **静态构建（`--static`）**：FFmpeg 在 Docker 容器中从源码编译，无需 `ffmpeg-free-devel` 包。
+> 二进制文件静态链接 FFmpeg，动态链接其他系统库，单包兼容 RHEL 8/9/10。
 
 ### build-appimage.sh 依赖：
 - `squashfs-tools`
@@ -365,6 +381,9 @@ sudo apt install docker.io
 ```bash
 # 使用提供的脚本构建镜像（会自动构建 Dockerfile.cross-build）
 ./cross-build.sh -b
+
+# 构建指定 Dockerfile 的镜像
+./cross-build.sh -b -f scripts/cross-compile/Dockerfile.rpm --build-arg EL_VERSION=9
 ```
 
 **2. 在容器中运行交叉编译**
@@ -380,6 +399,12 @@ sudo apt install docker.io
 
 # 构建可移植包
 ./cross-build.sh -s build-portable.sh -a arm64
+
+# 使用指定 Dockerfile 和镜像名
+./cross-build.sh -s build-rpm.sh -f scripts/cross-compile/Dockerfile.rpm -n ter-music-rpm-el9
+
+# 传递构建参数给 docker build
+./cross-build.sh -s build-rpm.sh -f scripts/cross-compile/Dockerfile.rpm --build-arg EL_VERSION=10
 
 # 传递额外参数给构建脚本
 ./cross-build.sh -- --keep-temp
@@ -404,6 +429,22 @@ docker-compose -f docker-compose.cross.yml run --rm cross-build ./build-deb.sh -
 - ARM64 交叉编译工具链（gcc, g++, binutils）
 - ARM64 架构的开发库（libavcodec, libavformat, libswresample, libavutil, libavfilter, libpng, libjpeg, libpulse, ncurses）
 - 各种包格式构建工具（dpkg-dev, rpm, squashfs-tools 等）
+
+### Dockerfile.rpm — RHEL 容器构建
+
+用于在 Rocky Linux 容器中构建 RPM 包，确保依赖与目标 RHEL 平台一致。
+- 通过 `EL_VERSION` build arg 选择 EL8、EL9 或 EL10
+- 使用 USTC 镜像源加速国内构建
+- 搭配 `build-rpm.sh --container` 使用
+
+### Dockerfile.static — 静态链接构建
+
+基于 Rocky Linux 8（glibc 2.28，兼容最广），从源码编译 FFmpeg 7.1 静态库。
+- 仅含音频解码器，最小化配置（`--disable-everything --enable-decoder=...`）
+- 静态链接 FFmpeg，动态链接其他系统库（soname 在 EL 版本间稳定）
+- 生成的 RPM 单包兼容 RHEL 8/9/10，无 FFmpeg soname 依赖
+- 使用 USTC 镜像源加速国内构建
+- 搭配 `build-rpm.sh --static` 使用
 
 ### 方式二：在主机上直接交叉编译
 
@@ -516,8 +557,12 @@ file bin/ter-music
 ### RPM 包安装失败
 如果遇到依赖问题，请确保系统已安装所有必要的开发包：
 ```bash
-sudo dnf install ffmpeg-free-devel pulseaudio-libs-devel ncurses-devel
+sudo dnf install ffmpeg-free-devel pulseaudio-libs-devel ncurses-devel libcurl-devel
 ```
+
+**跨发行版构建的 RPM（在 Debian 上构建）**：如果在非 RHEL 系统上构建了 RPM，安装到 RHEL 时可能出现 FFmpeg soname 或 glibc 版本不匹配问题。解决方案：
+- 使用 `./build-rpm.sh --container` 在 Rocky Linux 容器中构建
+- 使用 `./build-rpm.sh --static` 构建静态链接 RPM，自动兼容 EL8/9/10
 
 ### AppImage 无法运行
 如果遇到 FUSE 相关错误，请尝试：

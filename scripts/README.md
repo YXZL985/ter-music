@@ -15,7 +15,9 @@ scripts/
 │   └── build-rpm.sh         # 构建 RPM 包
 └── cross-compile/             # 交叉编译相关
     ├── cross-build.sh        # 交叉编译包装脚本
-    ├── Dockerfile           # Docker 镜像定义
+    ├── Dockerfile           # Docker 镜像定义（Ubuntu + ARM64 交叉编译）
+    ├── Dockerfile.rpm       # Rocky Linux RPM 构建环境（支持 EL8/9/10）
+    ├── Dockerfile.static    # 静态链接 RPM 构建环境（Rocky Linux 8）
     └── docker-compose.yml   # Docker Compose 配置
 ```
 
@@ -132,11 +134,16 @@ packaging/
 - `-a, --arch ARCH` - 指定目标架构
 - `--with-debuginfo` - 生成 debuginfo 包
 - `-k, --keep-temp` - 保留临时文件
+- `--container` - 在 Rocky Linux 容器中构建 RPM（解决跨发行版兼容问题）
+- `--static` - 构建静态链接 RPM，单包兼容 EL8/9/10（自动启用 --container）
+- `--el-version VERSION` - 指定目标 EL 版本：8、9 或 10（默认 9，需配合 --container）
 
 **示例：**
 ```bash
 ./scripts/build/build-rpm.sh
 ./scripts/build/build-rpm.sh -v 1.2.3 -a loong64
+./scripts/build/build-rpm.sh --container --el-version 10
+./scripts/build/build-rpm.sh --static
 ```
 
 ## 交叉编译
@@ -154,6 +161,9 @@ packaging/
 - `-b, --build-image` - 重新构建 Docker 镜像
 - `-s, --script SCRIPT` - 指定构建脚本（默认 build-deb.sh）
 - `-a, --arch ARCH` - 指定目标架构（默认 arm64）
+- `-f, --dockerfile DOCKERFILE` - 指定 Dockerfile 路径（默认 scripts/cross-compile/Dockerfile）
+- `-n, --image-name NAME` - 指定 Docker 镜像名（默认 ter-music-cross）
+- `--build-arg KEY=VALUE` - 传递构建参数给 docker build
 - `-i, --interactive` - 进入交互式 shell
 - `--no-cache` - 构建镜像时不使用缓存
 
@@ -162,6 +172,7 @@ packaging/
 ./scripts/cross-compile/cross-build.sh
 ./scripts/cross-compile/cross-build.sh -a arm64
 ./scripts/cross-compile/cross-build.sh -s build-rpm.sh
+./scripts/cross-compile/cross-build.sh -s build-rpm.sh -f scripts/cross-compile/Dockerfile.rpm --build-arg EL_VERSION=9
 ./scripts/cross-compile/cross-build.sh -i
 ```
 
@@ -171,6 +182,20 @@ packaging/
 - 基本构建工具（gcc, cmake, make 等）
 - ARM64 交叉编译工具链
 - 各种打包工具（dpkg-dev, rpm-build, 等）
+
+### Dockerfile.rpm
+
+用于在 Rocky Linux 容器中构建 RPM 包，确保自动生成的 soname 依赖与目标 RHEL 平台一致。
+- 通过 `EL_VERSION` build arg 支持 EL8、EL9 和 EL10
+- 使用 USTC 镜像源加速国内构建
+
+### Dockerfile.static
+
+用于静态链接构建，基于 Rocky Linux 8（glibc 2.28，兼容范围最广）。
+- 从源码编译 FFmpeg 7.1（仅音频解码器）
+- 静态链接 FFmpeg，动态链接其他系统库
+- 生成的 RPM 无 FFmpeg soname 依赖，单包兼容 RHEL 8/9/10
+- 使用 USTC 镜像源加速国内构建
 
 ### docker-compose.yml
 
@@ -212,5 +237,5 @@ build/
 **常见依赖：**
 - cmake, make, gcc
 - pkg-config
-- 开发库：libavcodec-dev, libavformat-dev, libswresample-dev, libpulse-dev, libncurses-dev
+- 开发库：libavcodec-dev, libavformat-dev, libswresample-dev, libpulse-dev, libncurses-dev, libcurl4-openssl-dev
 - 打包工具：dpkg-dev, rpm-build, linglong-builder 等

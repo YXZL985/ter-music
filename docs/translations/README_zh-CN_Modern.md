@@ -15,11 +15,13 @@ Ter-Music是一款简洁的终端音乐播放器，专门为Linux系统开发。
 - 兼容LRC格式歌词，可精准跟随音频进度同步显示，分秒不差
 - 提供四种循环模式：顺序播放、单曲循环、列表循环、随机播放
 - 支持倍速播放，提供0.75x、1.0x、1.25x、1.5x、2.0x、3.0x六档速度调节，高效收听
+- 支持远程音乐播放，可通过SMB、SFTP、FTP、WebDAV协议播放远程服务器或NAS上的音乐
 - 支持歌单管理，可创建多个自定义歌单，灵活切换播放
 - 支持收藏喜欢的歌曲，方便快速查找播放
 - 自动记录播放历史，便于回顾听过的音乐
 - 保存最近访问的音乐目录，无需重复查找
 - 终端界面色彩可自定义，支持个性化设置
+- 支持专辑封面显示，可在终端中渲染显示封面图片（设置中可开关）
 - 纯键盘快捷键操作，响应迅速
 - 实时显示音频进度条，流畅丝滑，可任意跳转播放位置
 
@@ -43,6 +45,8 @@ Ter-Music是一款简洁的终端音乐播放器，专门为Linux系统开发。
 | 🔧 CMake构建 | 采用现代构建方式，跨系统兼容性好 |
 | 🔊 PulseAudio音频输出 | 稳定且低延迟的音频播放方案 |
 | ⏩ 倍速播放控制 | 六档速度调节（0.75x-3.0x），播放中可随时切换 |
+| 🌐 远程播放 | 支持SMB/SFTP/FTP/WebDAV远程音乐播放 |
+| 🎨 专辑封面 | 终端专辑封面显示，可在设置中开关 |
 
 ### 四 适用场景
 - 无图形界面的Linux系统、嵌入式设备，需要播放音乐但没有窗口界面的场景
@@ -92,6 +96,7 @@ Ter-Music是一款简洁的终端音乐播放器，专门为Linux系统开发。
 | `pulseaudio-libs-devel` | 10.0+ | PulseAudio音频输出 |
 | `ncurses-devel` | 6.0+ | 终端界面处理，支持宽字符 |
 | `pthread-devel` | 系统自带 | 多线程处理 |
+| `libcurl-devel` | 7.0+ | 远程音乐播放（SMB/SFTP/FTP/WebDAV） |
 | `cmake` | 3.10+ | 项目构建（编译时必需） |
 | `gcc` | 7.0+ | C语言编译器（编译时必需） |
 | `make` | - | 构建工具（编译时必需） |
@@ -100,15 +105,14 @@ Ter-Music是一款简洁的终端音乐播放器，专门为Linux系统开发。
 ### 二 Fedora / RHEL / CentOS 安装命令
 ```bash
 sudo dnf install cmake gcc make pkg-config
-sudo dnf install ffmpeg-free-devel libpng-devel libjpeg-turbo-devel pulseaudio-libs-devel ncurses-devel
+sudo dnf install ffmpeg-free-devel libpng-devel libjpeg-turbo-devel pulseaudio-libs-devel ncurses-devel libcurl-devel
 ```
 
 ### 三 Ubuntu / Debian / Linux Mint 安装命令
 ```bash
 sudo apt update
 sudo apt install cmake gcc make pkg-config
-sudo apt install libavcodec-dev libavformat-dev libswresample-dev libavutil-dev libavfilter-dev libpng-dev libjpeg-dev
-sudo apt install libpulse-dev libncursesw5-dev
+sudo apt install libavcodec-dev libavformat-dev libswresample-dev libavutil-dev libavfilter-dev libpng-dev libjpeg-dev libpulse-dev libncursesw5-dev libcurl4-openssl-dev
 ```
 
 **注意**：如果无法获取FFmpeg开发库，需先启用universe仓库：
@@ -148,7 +152,7 @@ makepkg -si
 **手动从源码构建：**
 ```bash
 sudo pacman -S cmake gcc make pkg-config
-sudo pacman -S ffmpeg libpng libjpeg pulseaudio ncurses
+sudo pacman -S ffmpeg libpng libjpeg pulseaudio ncurses libcurl
 ```
 
 ## 第四章 编译步骤
@@ -269,6 +273,12 @@ ter-music [OPTIONS]
 # 启动时打开我的音乐文件夹
 ter-music -o ~/Music
 
+# 打开远程FTP音乐目录
+ter-music ftp://user:pass@host/path/to/music
+
+# 打开远程WebDAV目录
+ter-music --open http://webdav-server/music
+
 # 显示帮助信息
 ter-music --help
 ```
@@ -295,7 +305,7 @@ Menu: 选项菜单
 
 - **左上方**：歌单区域，显示当前目录下的所有音频文件
 - **左下方**：控制栏，包含播放控制按钮和音频进度条
-- **右侧**：歌词显示区域，同步显示当前播放歌曲的歌词
+- **右侧**：歌词显示区域，同步显示当前播放歌曲的歌词；开启专辑封面后也在此显示点阵封面图
 - **底部**：选项菜单，包含设置、播放历史、收藏、关于、退出等选项
 
 ### 四 常用操作方法
@@ -420,6 +430,9 @@ Ter-Music支持倍速播放功能，可根据需要调整音频播放速度：
 - `default_startup_path`：默认启动目录
 - `auto_play_on_start`：启动时自动播放（0/1，0为关闭，1为开启）
 - `remember_last_path`：记住上次访问的目录（0/1）
+- `show_album_cover`：显示专辑封面（0/1）
+- `default_playback_speed`：默认播放速度（0.75、1.0、1.25、1.5、2.0、3.0）
+- `remote_connections`：保存的远程服务器连接（SMB/SFTP/FTP/WebDAV）
 - 颜色主题设置：所有界面元素的前景色、背景色
 
 播放器会自动保存配置，修改后立即生效。
@@ -433,7 +446,9 @@ Ter-Music支持倍速播放功能，可根据需要调整音频播放速度：
 ├── history        # 播放历史
 ├── favorites      # 收藏列表
 ├── dir_history    # 目录访问历史
-└── playlists/     # 自定义歌单
+├── playlists/     # 自定义歌单
+├── remote/        # 远程连接历史
+└── album_cover_cache/  # 专辑封面缓存
 ```
 
 ### 十 常用操作流程
@@ -506,6 +521,10 @@ Ter-Music支持倍速播放功能，可根据需要调整音频播放速度：
 - **progress.c**：播放进度追踪、进度跳转控制
 - **lyrics.c**：歌词加载、解析、同步显示逻辑
 - **menu_views.c**：各视图管理（设置、历史、收藏、歌单）
+- **remote.c**：远程音乐播放（SMB/SFTP/FTP/WebDAV协议）
+- **image_loader.c**：专辑封面图片加载处理（PNG/JPEG）
+- **braille_art.c**：盲文点阵渲染，在终端显示专辑封面
+- **media_session.c**：MPRIS D-Bus媒体会话集成（可选）
 - **defs.h**：全局常量、数据结构定义
 
 ## 第七章 开源协议
