@@ -1986,9 +1986,14 @@ void play_audio(int index) {
     pthread_mutex_unlock(&g_play_mutex);
     signal_playback_thread();
     
+    load_lyrics(lyrics_path);
+    render_lyrics();
+
+    update_album_cover_for_track(lyrics_path);
+
     Track track;
     get_track_metadata(index, &track);
-    
+
     char msg[64];
     snprintf(msg, sizeof(msg), "%s%s - %s",
         audio_text("正在播放：", "Playing: "),
@@ -1997,11 +2002,6 @@ void play_audio(int index) {
     add_history_entry(&track);
     render_playlist_content();
     request_ui_refresh(UI_DIRTY_CONTROLS);
-
-    load_lyrics(lyrics_path);
-    render_lyrics();
-
-    update_album_cover_for_track(lyrics_path);
 }
 
 /**

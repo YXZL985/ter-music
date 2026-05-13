@@ -605,6 +605,10 @@ static void render_visualizer_with_album_cover(void) {
 
     clear_visualizer_area();
 
+    if (g_app_config.show_album_cover) {
+        render_album_cover();
+    }
+
     render_wave_particle_visualizer(2, w - 4);
 }
 
