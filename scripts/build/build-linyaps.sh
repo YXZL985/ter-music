@@ -192,7 +192,8 @@ show_help() {
       sudo dpkg --add-architecture arm64
       sudo apt update
       sudo apt install libncurses-dev:arm64 libavcodec-dev:arm64 libavfilter-dev:arm64 \
-                       libavformat-dev:arm64 libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64
+                       libavformat-dev:arm64 libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64 \
+                       libcurl4-openssl-dev:arm64
 
 示例:
     $0                  使用自动检测版本和架构构建 Linyaps 包
@@ -417,6 +418,7 @@ buildext:
       - liblapack3
       - libpng-dev
       - libjpeg-dev
+      - libcurl4-openssl-dev
     depends:
       - libavformat60
       - libavcodec60
@@ -430,6 +432,7 @@ buildext:
       - libgfortran5
       - libpng16-16
       - libjpeg62-turbo
+      - libcurl4
 EOF
 
     log_info "linglong.yaml 已生成: ${project_root}/linglong.yaml"

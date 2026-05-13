@@ -29,6 +29,7 @@ RUN apt-get update && apt-get install -y \
     git \
     wget \
     curl \
+    libcurl4-openssl-dev \
     rsync \
     && rm -rf /var/lib/apt/lists/*
 
@@ -51,6 +52,7 @@ RUN dpkg --add-architecture arm64 && \
     libavfilter-dev:arm64 \
     libpng-dev:arm64 \
     libjpeg-dev:arm64 \
+    libcurl4-openssl-dev:arm64 \
     libpulse-dev:arm64 \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*

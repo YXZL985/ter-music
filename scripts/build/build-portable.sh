@@ -130,7 +130,7 @@ check_cross_compile_deps() {
     # 检查关键开发库是否存在
     local missing_libs=()
     if [ -d "$pkg_config_dir" ]; then
-        for lib in libpng libjpeg; do
+        for lib in libpng libjpeg libcurl; do
             if ! pkg-config --exists --variable pc_path pkg-config 2>/dev/null | grep -q "$arch_prefix"; then
                 :
             fi
@@ -209,7 +209,7 @@ show_help() {
       sudo apt update
       sudo apt install libncurses-dev:arm64 libavcodec-dev:arm64 libavfilter-dev:arm64 \
                        libavformat-dev:arm64 libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64 \
-                       libpng-dev:arm64 libjpeg-dev:arm64
+                       libpng-dev:arm64 libjpeg-dev:arm64 libcurl4-openssl-dev:arm64
 
 示例:
     $0                                          自动检测版本和架构，直接从源码构建

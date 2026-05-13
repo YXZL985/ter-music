@@ -11,8 +11,8 @@ pkgdesc="Terminal based music player"
 arch=('x86_64' 'i686')
 url="https://github.com/YXZL985/ter-music"
 license=('GPL')
-depends=('ffmpeg' 'ncurses' 'libpng' 'libjpeg' 'libao' 'libmad' 'libid3tag')
-makedepends=('cmake' 'make' 'gcc' 'git')
+depends=('ffmpeg' 'ncurses' 'libpng' 'libjpeg' 'libao' 'libmad' 'libid3tag' 'libcurl')
+makedepends=('cmake' 'make' 'gcc' 'git' 'pkg-config')
 source=("ter-music::git+https://github.com/YXZL985/ter-music.git#branch=master")
 sha256sums=('SKIP')
 # Note: Using SKIP for git source is acceptable as git provides its own integrity verification

@@ -185,7 +185,8 @@ show_help() {
       sudo dpkg --add-architecture arm64
       sudo apt update
       sudo apt install libncurses-dev:arm64 libavcodec-dev:arm64 libavfilter-dev:arm64 \
-                       libavformat-dev:arm64 libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64
+                       libavformat-dev:arm64 libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64 \
+                       libcurl4-openssl-dev:arm64
 
 示例:
     $0                  使用自动检测的版本号和架构构建 RPM
@@ -264,10 +265,11 @@ check_dependencies() {
             "libswresample-dev"
             "libncurses-dev"
             "libpulse-dev"
+            "libcurl4-openssl-dev"
             "libpng-dev"
             "libjpeg-dev"
         )
-        
+
         for lib in "${deb_dev_libs[@]}"; do
             if ! dpkg -l "$lib" 2>/dev/null | grep -q "^ii"; then
                 missing_deps+=("$lib")
@@ -281,6 +283,7 @@ check_dependencies() {
             "pulseaudio-libs-devel"
             "libpng-devel"
             "libjpeg-turbo-devel"
+            "libcurl-devel"
         )
 
         for lib in "${dev_libs[@]}"; do
@@ -477,6 +480,7 @@ Source0:        %{name}-%{version}.tar.gz
 # Target Architecture: ${target_arch}
 
 BuildRequires:  gcc, make, cmake, pkg-config
+BuildRequires:  pkgconfig(libcurl)
 BuildRequires:  pkgconfig(libavcodec) >= 4.0
 BuildRequires:  pkgconfig(libavformat) >= 4.0
 BuildRequires:  pkgconfig(libavutil) >= 4.0

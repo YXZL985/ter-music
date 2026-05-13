@@ -171,7 +171,8 @@ check_cross_compile_deps() {
         echo "  sudo dpkg --add-architecture arm64"
         echo "  sudo apt update"
         echo "  sudo apt install libncurses-dev:arm64 libavcodec-dev:arm64 libavfilter-dev:arm64 \\"
-        echo "                   libavformat-dev:arm64 libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64"
+        echo "                   libavformat-dev:arm64 libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64 \\"
+        echo "                   libcurl4-openssl-dev:arm64"
         echo ""
         echo "【风险提示】这些命令会添加 arm64 架构支持并可能卸载当前系统的"
         echo "            某些 amd64 软件包，可能导致系统不稳定！"
@@ -237,7 +238,8 @@ show_help() {
       sudo dpkg --add-architecture arm64
       sudo apt update
       sudo apt install libncurses-dev:arm64 libavcodec-dev:arm64 libavfilter-dev:arm64 \
-                       libavformat-dev:arm64 libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64
+                       libavformat-dev:arm64 libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64 \
+                       libcurl4-openssl-dev:arm64
 
 示例:
     $0                  使用自动检测的版本号和架构构建 DEB
@@ -314,8 +316,9 @@ check_dependencies() {
             "libjpeg-dev"
             "libncurses-dev"
             "libpulse-dev"
+            "libcurl4-openssl-dev"
         )
-        
+
         for lib in "${deb_dev_libs[@]}"; do
             if ! dpkg -l "$lib" 2>/dev/null | grep -q "^ii"; then
                 missing_deps+=("$lib")
@@ -531,7 +534,7 @@ Maintainer: Yanxi Bamboo Forest <maintainer@example.com>
 Build-Depends: debhelper (>= 10), cmake, gcc, make, pkg-config,
                libavcodec-dev, libavfilter-dev, libavformat-dev, libavutil-dev, libswresample-dev,
                libpng-dev, libjpeg-dev,
-               libpulse-dev, libncursesw5-dev | libncurses-dev
+               libpulse-dev, libcurl4-openssl-dev, libncursesw5-dev | libncurses-dev
 Standards-Version: 4.5.0
 Homepage: ${PROJECT_HOMEPAGE}
 
@@ -723,7 +726,7 @@ Description: A terminal-based music player with ncurses interface
   - Customizable color themes
   - Keyboard shortcuts
   - Real-time progress bar
-Depends: libavcodec60 | libavcodec59 | libavcodec58 | libavcodec-ffmpeg56 | libavcodec-extra, libavfilter9 | libavfilter8 | libavfilter7, libavformat60 | libavformat59 | libavformat58 | libavformat57, libavutil58 | libavutil57 | libavutil56 | libavutil55, libswresample4 | libswresample3 | libswresample2, libpng16-16 | libpng15-15, libjpeg62-turbo | libjpeg8, libpulse0 | libasound2, libncursesw6 | libncursesw5
+Depends: libavcodec60 | libavcodec59 | libavcodec58 | libavcodec-ffmpeg56 | libavcodec-extra, libavfilter9 | libavfilter8 | libavfilter7, libavformat60 | libavformat59 | libavformat58 | libavformat57, libavutil58 | libavutil57 | libavutil56 | libavutil55, libswresample4 | libswresample3 | libswresample2, libpng16-16 | libpng15-15, libjpeg62-turbo | libjpeg8, libpulse0 | libasound2, libncursesw6 | libncursesw5, libcurl4
 Section: sound
 Priority: optional
 Homepage: ${PROJECT_HOMEPAGE}
