@@ -1456,10 +1456,10 @@ void create_layout() {
     if (lyrics_width < 10) lyrics_width = 10;
     int main_width;
     if (g_app_config.show_lyrics_panel) {
-        main_width = max_x - lyrics_width;
+        main_width = max_x - lyrics_width - 1;
     } else {
         lyrics_width = 0;
-        main_width = max_x - 2;
+        main_width = max_x - 1;
     }
     if (main_width < 10) main_width = 10;
 
