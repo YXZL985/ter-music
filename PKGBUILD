@@ -4,7 +4,7 @@
 pkgname=ter-music-cn
 pkgver() {
   cd "$srcdir/ter-music"
-  git describe --long --tags | sed 's/\([^-]*-g\)/r\1/;s/-/./g' || echo "1.9.1"
+  git describe --long --tags | sed 's/\([^-]*-g\)/r\1/;s/-/./g' || echo "1.10.0"
 }
 pkgrel=1
 pkgdesc="Terminal based music player"
