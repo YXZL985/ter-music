@@ -12,7 +12,10 @@
 #include <locale.h>
 #include <pthread.h>
 #include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
+#include <libswscale/swscale.h>
 #include <libavutil/dict.h>
+#include <jpeglib.h>
 
 const char *audio_extensions[] = {
     ".mp3", ".MP3", ".flac", ".FLAC", ".wav", ".WAV", 
@@ -893,6 +896,160 @@ void cleanup_album_cover_cache(void) {
     pthread_mutex_unlock(&g_album_cover_mutex);
 }
 
+static int write_jpeg_file(const char *path, const unsigned char *rgb_data,
+                          int width, int height, int quality) {
+    FILE *fp = fopen(path, "wb");
+    if (!fp) return -1;
+
+    struct jpeg_compress_struct cinfo;
+    struct jpeg_error_mgr jerr;
+    cinfo.err = jpeg_std_error(&jerr);
+    jpeg_create_compress(&cinfo);
+    jpeg_stdio_dest(&cinfo, fp);
+
+    cinfo.image_width = width;
+    cinfo.image_height = height;
+    cinfo.input_components = 3;
+    cinfo.in_color_space = JCS_RGB;
+    jpeg_set_defaults(&cinfo);
+    jpeg_set_quality(&cinfo, quality, TRUE);
+    jpeg_start_compress(&cinfo, TRUE);
+
+    unsigned char *row = (unsigned char *)rgb_data;
+    int stride = width * 3;
+    for (int y = 0; y < height; y++) {
+        jpeg_write_scanlines(&cinfo, &row, 1);
+        row += stride;
+    }
+
+    jpeg_finish_compress(&cinfo);
+    jpeg_destroy_compress(&cinfo);
+    fclose(fp);
+    return 0;
+}
+
+static int decode_image_to_jpeg(const unsigned char *data, int size,
+                                const char *output_path) {
+    // 将原始数据写入临时文件，让 ffmpeg 自动探测真实格式（WebP/PNG/BMP/JPEG等）
+    char tmp_img[MAX_PATH_LEN];
+    snprintf(tmp_img, sizeof(tmp_img), "%sXXXXXX", ALBUM_COVER_TEMP_PREFIX);
+    int tmp_fd = mkstemp(tmp_img);
+    if (tmp_fd < 0) return -1;
+
+    int wrote = 0;
+    while (wrote < size) {
+        int n = write(tmp_fd, data + wrote, size - wrote);
+        if (n <= 0) { close(tmp_fd); unlink(tmp_img); return -1; }
+        wrote += n;
+    }
+    close(tmp_fd);
+
+    AVFormatContext *img_ctx = NULL;
+    int ret = -1;
+    if (avformat_open_input(&img_ctx, tmp_img, NULL, NULL) != 0) {
+        unlink(tmp_img);
+        return -1;
+    }
+    if (avformat_find_stream_info(img_ctx, NULL) < 0) {
+        avformat_close_input(&img_ctx);
+        unlink(tmp_img);
+        return -1;
+    }
+
+    int vstream = -1;
+    for (unsigned int i = 0; i < img_ctx->nb_streams; i++) {
+        if (img_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+            vstream = (int)i;
+            break;
+        }
+    }
+    if (vstream < 0) {
+        avformat_close_input(&img_ctx);
+        unlink(tmp_img);
+        return -1;
+    }
+
+    const AVCodec *codec = avcodec_find_decoder(
+        img_ctx->streams[vstream]->codecpar->codec_id);
+    if (!codec) {
+        avformat_close_input(&img_ctx);
+        unlink(tmp_img);
+        return -1;
+    }
+
+    AVCodecContext *codec_ctx = avcodec_alloc_context3(codec);
+    if (!codec_ctx) {
+        avformat_close_input(&img_ctx);
+        unlink(tmp_img);
+        return -1;
+    }
+    if (avcodec_parameters_to_context(codec_ctx,
+            img_ctx->streams[vstream]->codecpar) < 0) {
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&img_ctx);
+        unlink(tmp_img);
+        return -1;
+    }
+    if (avcodec_open2(codec_ctx, codec, NULL) < 0) {
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&img_ctx);
+        unlink(tmp_img);
+        return -1;
+    }
+
+    // 读取 packet 并解码
+    AVPacket *pkt = av_packet_alloc();
+    AVFrame *frame = av_frame_alloc();
+    if (!pkt || !frame) {
+        av_packet_free(&pkt);
+        av_frame_free(&frame);
+        avcodec_free_context(&codec_ctx);
+        avformat_close_input(&img_ctx);
+        unlink(tmp_img);
+        return -1;
+    }
+
+    while (av_read_frame(img_ctx, pkt) == 0) {
+        if (pkt->stream_index == vstream) {
+            if (avcodec_send_packet(codec_ctx, pkt) == 0) {
+                if (avcodec_receive_frame(codec_ctx, frame) == 0) {
+                    // 解码成功，转换为 RGB24
+                    struct SwsContext *sws = sws_getContext(
+                        frame->width, frame->height, frame->format,
+                        frame->width, frame->height, AV_PIX_FMT_RGB24,
+                        SWS_BILINEAR, NULL, NULL, NULL);
+                    if (sws) {
+                        unsigned char *rgb = malloc(
+                            frame->width * frame->height * 3);
+                        if (rgb) {
+                            uint8_t *dst_slice[1] = { rgb };
+                            int dst_stride[1] = { frame->width * 3 };
+                            sws_scale(sws, (const uint8_t **)frame->data,
+                                      frame->linesize, 0, frame->height,
+                                      dst_slice, dst_stride);
+                            if (write_jpeg_file(output_path, rgb,
+                                    frame->width, frame->height, 85) == 0) {
+                                ret = 0;
+                            }
+                            free(rgb);
+                        }
+                        sws_freeContext(sws);
+                    }
+                    break;
+                }
+            }
+        }
+        av_packet_unref(pkt);
+    }
+
+    av_packet_free(&pkt);
+    av_frame_free(&frame);
+    avcodec_free_context(&codec_ctx);
+    avformat_close_input(&img_ctx);
+    unlink(tmp_img);
+    return ret;
+}
+
 int extract_album_cover(const char *audio_path, char *output_path, size_t output_size) {
     if (!audio_path || !output_path || output_size == 0) {
         return -1;
@@ -917,14 +1074,15 @@ int extract_album_cover(const char *audio_path, char *output_path, size_t output
     }
 
     if (cover_stream_idx < 0) {
-        AVDictionaryEntry *entry = av_dict_get(fmt_ctx->metadata, "metadata_block_picture", NULL, 0);
-        if (!entry) {
-            entry = av_dict_get(fmt_ctx->metadata, "APIC", NULL, 0);
-        }
-        if (!entry) {
-            avformat_close_input(&fmt_ctx);
-            return -1;
-        }
+        avformat_close_input(&fmt_ctx);
+        return -1;
+    }
+
+    AVStream *stream = fmt_ctx->streams[cover_stream_idx];
+    AVPacket *pkt = &stream->attached_pic;
+    if (!pkt || pkt->size <= 0) {
+        avformat_close_input(&fmt_ctx);
+        return -1;
     }
 
     char temp_path[MAX_PATH_LEN];
@@ -938,19 +1096,20 @@ int extract_album_cover(const char *audio_path, char *output_path, size_t output
 
     int ret = -1;
 
-    if (cover_stream_idx >= 0) {
-        AVStream *stream = fmt_ctx->streams[cover_stream_idx];
-        AVPacket *pkt = &stream->attached_pic;
-
-        if (pkt && pkt->size > 0) {
-            FILE *fp = fopen(temp_path, "wb");
-            if (fp) {
-                size_t written = fwrite(pkt->data, 1, pkt->size, fp);
-                fclose(fp);
-                if (written == (size_t)pkt->size) {
-                    ret = 0;
-                }
+    // 情况1：数据本身是 JPEG，直接写入
+    if (pkt->data[0] == 0xFF && pkt->data[1] == 0xD8) {
+        FILE *fp = fopen(temp_path, "wb");
+        if (fp) {
+            size_t written = fwrite(pkt->data, 1, pkt->size, fp);
+            fclose(fp);
+            if (written == (size_t)pkt->size) {
+                ret = 0;
             }
+        }
+    } else {
+        // 情况2：其他格式（WebP/PNG/BMP等），解码后重编码为 JPEG
+        if (decode_image_to_jpeg(pkt->data, pkt->size, temp_path) == 0) {
+            ret = 0;
         }
     }
 

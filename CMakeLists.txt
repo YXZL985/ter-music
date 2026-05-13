@@ -16,6 +16,7 @@ pkg_check_modules(AVFORMAT REQUIRED libavformat)
 pkg_check_modules(SWRESAMPLE REQUIRED libswresample)
 pkg_check_modules(AVUTIL REQUIRED libavutil)
 pkg_check_modules(AVFILTER REQUIRED libavfilter)
+pkg_check_modules(SWSCALE REQUIRED libswscale)
 pkg_check_modules(PNG REQUIRED libpng)
 pkg_check_modules(JPEG REQUIRED libjpeg)
 pkg_check_modules(PULSE libpulse)
@@ -77,6 +78,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${SWRESAMPLE_INCLUDE_DIRS}
     ${AVUTIL_INCLUDE_DIRS}
     ${AVFILTER_INCLUDE_DIRS}
+    ${SWSCALE_INCLUDE_DIRS}
     ${AUDIO_BACKEND_INCLUDE_DIRS}
     ${PNG_INCLUDE_DIRS}
     ${JPEG_INCLUDE_DIRS}
@@ -93,6 +95,7 @@ target_link_libraries(${PROJECT_NAME}
     ${SWRESAMPLE_LIBRARIES}
     ${AVUTIL_LIBRARIES}
     ${AVFILTER_LIBRARIES}
+    ${SWSCALE_LIBRARIES}
     ${AUDIO_BACKEND_LIBRARIES}
     ${PNG_LIBRARIES}
     ${JPEG_LIBRARIES}
@@ -112,6 +115,7 @@ target_compile_options(${PROJECT_NAME} PRIVATE
     ${SWRESAMPLE_CFLAGS_OTHER}
     ${AVUTIL_CFLAGS_OTHER}
     ${AVFILTER_CFLAGS_OTHER}
+    ${SWSCALE_CFLAGS_OTHER}
     ${AUDIO_BACKEND_CFLAGS}
     ${PNG_CFLAGS_OTHER}
     ${JPEG_CFLAGS_OTHER}
