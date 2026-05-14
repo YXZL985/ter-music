@@ -206,9 +206,20 @@ def start_webdav():
             "default_to_digest": False,
             "preset_domain": {username: password},
         }
-        config["middleware_stack"] = ["WsgiDAVDebugFilter", "HttpAuthMiddleware", "WsgiDavApp"]
+        config["middleware_stack"] = [
+            "wsgidav.mw.debug_filter.WsgiDavDebugFilter",
+            "wsgidav.error_printer.ErrorPrinter",
+            "wsgidav.mw.cors.Cors",
+            "wsgidav.request_resolver.RequestResolver",
+            "wsgidav.http_authenticator.HTTPAuthenticator"
+        ]
     else:
-        config["middleware_stack"] = ["WsgiDAVDebugFilter", "WsgiDavApp"]
+        config["middleware_stack"] = [
+            "wsgidav.mw.debug_filter.WsgiDavDebugFilter",
+            "wsgidav.error_printer.ErrorPrinter",
+            "wsgidav.mw.cors.Cors",
+            "wsgidav.request_resolver.RequestResolver"
+        ]
         config["simple_dc"] = {
             "user_mapping": {"*": {"/": {"readonly": False}}},
         }
