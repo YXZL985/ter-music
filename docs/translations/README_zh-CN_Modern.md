@@ -247,7 +247,8 @@ rm -rf build
 - **Arch Linux包** - 适用于Arch Linux及其衍生发行版
 
 **测试服务器工具：**
-- **tools/start-server.py** - 交互式脚本，快速启动本地SMB/FTP/SFTP/WebDAV服务器，用于测试远程音乐播放功能。使用：`pip install -r tools/requirements.txt && python3 tools/start-server.py`
+- **tools/start-server.py** - 交互式脚本，快速启动本地SMB/FTP/SFTP/WebDAV服务器，用于测试远程音乐播放功能。
+  > 该脚本为 Python 脚本，建议在 Conda 环境中运行。配置：`conda create -n ter-music python=3 && conda activate ter-music && pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r tools/requirements.txt` 然后执行 `python3 tools/start-server.py`
 
 ## 第五章 使用方法
 ### 一 启动播放器

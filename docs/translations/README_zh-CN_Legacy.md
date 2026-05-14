@@ -247,7 +247,8 @@ rm -rf build
 - **Arch Linux包** - 宜于Arch Linux及其衍生之统
 
 **测试服器之具：**
-- **tools/start-server.py** - 交互相应之脚本，速启本地SMB/FTP/SFTP/WebDAV服器，以验远程播乐之功。用：`pip install -r tools/requirements.txt && python3 tools/start-server.py`
+- **tools/start-server.py** - 交互相应之脚本，速启本地SMB/FTP/SFTP/WebDAV服器，以验远程播乐之功。
+  > 此乃 Python 之策，宜在 Conda 玄境中行。先置：`conda create -n ter-music python=3 && conda activate ter-music && pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r tools/requirements.txt` 然后行 `python3 tools/start-server.py`
 
 ## 卷五 施用之法
 ### 一 启其器

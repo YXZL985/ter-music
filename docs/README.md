@@ -286,7 +286,8 @@ The following formats are supported:
 - **Arch Linux Package** - For Arch Linux and derivatives
 
 **Test Server Tools:**
-- **tools/start-server.py** - Interactive script to start local SMB/FTP/SFTP/WebDAV servers for testing remote playback feature. Usage: `pip install -r tools/requirements.txt && python3 tools/start-server.py`
+- **tools/start-server.py** - Interactive script to start local SMB/FTP/SFTP/WebDAV servers for testing remote playback feature.
+  > This Python script should be run in a Conda environment. Setup: `conda create -n ter-music python=3 && conda activate ter-music && pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r tools/requirements.txt` then `python3 tools/start-server.py`
 
 ## 5. Usage
 

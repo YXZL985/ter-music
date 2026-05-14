@@ -58,10 +58,28 @@ sudo dnf install build/rpm/x86_64/ter-music-*.x86_64.rpm
 
 ### 7. tools/start-server.py — 测试服务器工具
 启动本地 SMB/FTP/SFTP/WebDAV 服务器，用于测试远程音乐播放功能。
-**使用方法：**
+
+> **Python 环境要求**：该脚本为 Python 脚本，建议在 Conda 环境中运行，避免依赖冲突。
+
+**Conda 环境配置（首次使用）：**
 ```bash
+# 安装 Miniconda3（如尚未安装）
+# 请访问 https://docs.anaconda.com/miniconda/ 下载安装
+
+# 创建名为 ter-music 的虚拟环境并安装 Python
+conda create -n ter-music python=3
+
+# 激活虚拟环境
+conda activate ter-music
+
 # 安装依赖
-pip install -r tools/requirements.txt
+pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r tools/requirements.txt
+```
+
+**使用方法（已配置好环境后）：**
+```bash
+# 确保已激活 conda 环境
+conda activate ter-music
 
 # 启动交互式菜单
 python3 tools/start-server.py
