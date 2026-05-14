@@ -208,6 +208,7 @@ def start_webdav():
         }
         config["middleware_stack"] = ["WsgiDAVDebugFilter", "HttpAuthMiddleware", "WsgiDavApp"]
     else:
+        config["middleware_stack"] = ["WsgiDAVDebugFilter", "WsgiDavApp"]
         config["simple_dc"] = {
             "user_mapping": {"*": {"/": {"readonly": False}}},
         }
