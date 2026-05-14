@@ -122,6 +122,14 @@ def _get_local_ip():
 # ── FTP ───────────────────────────────────────────────────────────────────
 
 def start_ftp():
+    try:
+        from pyftpdlib.authorizers import DummyAuthorizer
+        from pyftpdlib.handlers import FTPHandler
+        from pyftpdlib.servers import FTPServer
+    except ImportError:
+        log_error("请安装 pyftpdlib: pip install pyftpdlib")
+        sys.exit(1)
+
     section("FTP 服务器配置")
 
     host = prompt("监听地址", "0.0.0.0")
@@ -140,14 +148,6 @@ def start_ftp():
                   {"匿名访问": "是" if anonymous else "否",
                    "测试命令": f"curl ftp://{host if host != '0.0.0.0' else 'localhost'}:{port}/"})
 
-    try:
-        from pyftpdlib.authorizers import DummyAuthorizer
-        from pyftpdlib.handlers import FTPHandler
-        from pyftpdlib.servers import FTPServer
-    except ImportError:
-        log_error("请安装 pyftpdlib: pip install pyftpdlib")
-        sys.exit(1)
-
     authorizer = DummyAuthorizer()
     if anonymous:
         authorizer.add_anonymous(share_dir, perm="elradfmw")
@@ -165,6 +165,14 @@ def start_ftp():
 # ── WebDAV ────────────────────────────────────────────────────────────────
 
 def start_webdav():
+    try:
+        from wsgidav.wsgidav_app import WsgiDAVApp
+        from wsgidav.fs_dav_provider import FilesystemProvider
+        from cheroot import wsgi as cheroot_wsgi
+    except ImportError:
+        log_error("请安装 wsgidav: pip install wsgidav")
+        sys.exit(1)
+
     section("WebDAV 服务器配置")
 
     host = prompt("监听地址", "0.0.0.0")
@@ -182,20 +190,12 @@ def start_webdav():
                   {"认证": f"{username}/******" if need_auth else "无",
                    "测试命令": f"curl http://{'localhost' if host=='0.0.0.0' else host}:{port}/"})
 
-    try:
-        from wsgidav.wsgidav_app import WsgiDAVApp
-        from wsgidav.fs_dav_provider import FilesystemProvider
-        from cheroot import wsgi as cheroot_wsgi
-    except ImportError:
-        log_error("请安装 wsgidav: pip install wsgidav")
-        sys.exit(1)
-
     config = {
         "host": host,
         "port": port,
         "provider_mapping": {"/": FilesystemProvider(share_dir)},
         "verbose": 1,
-        "enable_loggers": [],
+        "logging": {"enable_loggers": []},
     }
 
     if need_auth:
@@ -221,6 +221,13 @@ def start_webdav():
 # ── SFTP ──────────────────────────────────────────────────────────────────
 
 def start_sftp():
+    try:
+        import paramiko
+        from paramiko import RSAKey, ServerInterface, Transport, SFTPServerInterface, SFTPServer
+    except ImportError:
+        log_error("请安装 paramiko: pip install paramiko")
+        sys.exit(1)
+
     section("SFTP 服务器配置")
 
     host = prompt("监听地址", "0.0.0.0")
@@ -243,13 +250,6 @@ def start_sftp():
 
     print_summary("SFTP", host, port, share_dir,
                   {"用户名": username, "测试命令": f"sftp -P {port} {username}@{host if host != '0.0.0.0' else 'localhost'}:{share_dir}"})
-
-    try:
-        import paramiko
-        from paramiko import RSAKey, ServerInterface, Transport, SFTPServerInterface, SFTPServer
-    except ImportError:
-        log_error("请安装 paramiko: pip install paramiko")
-        sys.exit(1)
 
     host_key = RSAKey(filename=host_key_path)
 
@@ -403,6 +403,14 @@ def start_sftp():
 # ── SMB ───────────────────────────────────────────────────────────────────
 
 def start_smb():
+    try:
+        from impacket.smb import SMB
+        from impacket.smbconnection import SMBConnection
+        from impacket.smbserver import SimpleSMBServer
+    except ImportError:
+        log_error("请安装 impacket: pip install impacket")
+        sys.exit(1)
+
     section("SMB 服务器配置")
 
     log_warn("SMB 服务器需要 root 权限（绑定 445 端口或使用 impacket）")
@@ -420,14 +428,6 @@ def start_smb():
                   {"共享名": share_name,
                    "用户名": username or "(匿名)",
                    "测试命令": f"smbclient //{'localhost' if host=='0.0.0.0' else host}/{share_name} -U {username or '%'}"})
-
-    try:
-        from impacket.smb import SMB
-        from impacket.smbconnection import SMBConnection
-        from impacket.smbserver import SimpleSMBServer
-    except ImportError:
-        log_error("请安装 impacket: pip install impacket")
-        sys.exit(1)
 
     server = SimpleSMBServer(listenAddress=host, listenPort=port)
     server.setSMB2Support(True)
