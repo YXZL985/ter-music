@@ -207,6 +207,10 @@ def start_webdav():
             "preset_domain": {username: password},
         }
         config["middleware_stack"] = ["WsgiDAVDebugFilter", "HttpAuthMiddleware", "WsgiDavApp"]
+    else:
+        config["simple_dc"] = {
+            "user_mapping": {"*": {"/": {"readonly": False}}},
+        }
 
     app = WsgiDAVApp(config)
     server = cheroot_wsgi.Server((host, port), app)
