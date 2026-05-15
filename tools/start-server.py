@@ -596,12 +596,6 @@ def start_sftp():
         def canonicalize(self, path):
             return self._realpath(path)
 
-    class SFTPServer(Transport):
-        def start_server(self, event=None, server=None):
-            super().start_server(event, server)
-            self._sftp_interface = StubSFTPServer(self)
-            SFTPServer.set_subsystem_handler(self, "sftp", paramiko.SFTPServer, StubSFTPServer)
-
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((host, port))
@@ -611,15 +605,13 @@ def start_sftp():
         transport = Transport(conn)
         transport.add_server_key(host_key)
         server_iface = StubServer(username, password)
-        transport.start_server(server=server_iface)
+        sftp_iface = StubSFTPServer(server_iface)
+        transport.start_server(server=server_iface, channel=paramiko.Channel(0))
+        transport.set_subsystem_handler("sftp", paramiko.SFTPServer, sftp_iface)
         while transport.is_active():
             channel = transport.accept(10)
             if channel is None:
                 continue
-            try:
-                SFTPServer(transport).start_server()
-            except Exception:
-                pass
         transport.close()
 
     log_info(f"SFTP 服务器运行中，等待连接...")
@@ -650,10 +642,11 @@ def start_sftp_args(args):
         sys.exit(1)
     username = args.username
 
-    if not args.password:
-        password = getpass.getpass("  SFTP 密码: ") or "test"
-    else:
+    if args.password is not None:
         password = args.password
+    else:
+        # 后台模式下不提示输入密码，默认使用空密码
+        password = ""
 
     # 检查是否已存在主机密钥
     key_dir = os.path.expanduser("~/.ssh")
@@ -783,12 +776,6 @@ def start_sftp_args(args):
         def canonicalize(self, path):
             return self._realpath(path)
 
-    class SFTPServer(Transport):
-        def start_server(self, event=None, server=None):
-            super().start_server(event, server)
-            self._sftp_interface = StubSFTPServer(self)
-            SFTPServer.set_subsystem_handler(self, "sftp", paramiko.SFTPServer, StubSFTPServer)
-
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((host, port))
@@ -798,15 +785,13 @@ def start_sftp_args(args):
         transport = Transport(conn)
         transport.add_server_key(host_key)
         server_iface = StubServer(username, password)
-        transport.start_server(server=server_iface)
+        sftp_iface = StubSFTPServer(server_iface)
+        transport.start_server(server=server_iface, channel=paramiko.Channel(0))
+        transport.set_subsystem_handler("sftp", paramiko.SFTPServer, sftp_iface)
         while transport.is_active():
             channel = transport.accept(10)
             if channel is None:
                 continue
-            try:
-                SFTPServer(transport).start_server()
-            except Exception:
-                pass
         transport.close()
 
     log_info(f"SFTP 服务器运行中，等待连接...")
