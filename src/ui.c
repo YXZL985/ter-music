@@ -92,7 +92,7 @@ static int get_playlist_scroll_offset(void);
 static int handle_main_view_mouse_event(const MEVENT *event);
 int prompt_text_input(WINDOW *win, int row, int col, const char *prompt,
                       char *buffer, size_t buffer_size, int trim_whitespace,
-                      int password_mode);
+                      int password_mode, int prefill);
 
 enum {
     INPUT_ESCAPE_NONE = 0,
@@ -263,12 +263,14 @@ static int consume_input_escape_sequence(int *escape_state, wint_t ch) {
 
 int prompt_text_input(WINDOW *win, int row, int col, const char *prompt,
                       char *buffer, size_t buffer_size, int trim_whitespace,
-                      int password_mode) {
+                      int password_mode, int prefill) {
     if (!win || !prompt || !buffer || buffer_size == 0) {
         return -1;
     }
 
-    buffer[0] = '\0';
+    if (!prefill) {
+        buffer[0] = '\0';
+    }
     redraw_text_input(win, row, col, prompt, buffer, password_mode);
     flushinp();
 
@@ -2217,7 +2219,7 @@ static void prompt_folder_input(int append_mode) {
         : ui_text("输入目录路径：", "Folder path: ");
     char input_path[MAX_PATH_LEN];
     prompt_text_input(win_controls, 4, 2, folder_prompt,
-                      input_path, sizeof(input_path), 1, 0);
+                      input_path, sizeof(input_path), 1, 0, 0);
     flushinp();
     
     noecho();

@@ -33,7 +33,7 @@ extern void render_controls(void);
 extern void create_layout(void);
 extern int prompt_text_input(WINDOW *win, int row, int col, const char *prompt,
                              char *buffer, size_t buffer_size, int trim_whitespace,
-                             int password_mode);
+                             int password_mode, int prefill);
 
 ViewMode g_current_view = VIEW_MAIN;
 int g_menu_selected_idx = 0;
@@ -1860,6 +1860,8 @@ static RemoteDirEntry *g_remote_entries = NULL;
 static int g_remote_entry_count = 0;
 static int g_remote_entry_offset = 0;
 static char g_remote_current_path[1024] = "";
+static RemoteConnectionConfig g_remote_form_config;
+static int g_remote_form_editing_idx = -1;  // -1 = adding new, >=0 = editing existing
 
 static void render_remote_content(void);
 static void handle_remote_content_input(int ch);
@@ -2249,7 +2251,7 @@ static void edit_default_startup_path(void) {
     const char *path_prompt = menu_text("输入路径：", "Enter path: ");
     char input_path[MAX_PATH_LEN];
     prompt_text_input(stdscr, max_y - 2, menu_width + 2,
-                      path_prompt, input_path, sizeof(input_path), 1, 0);
+                      path_prompt, input_path, sizeof(input_path), 1, 0, 0);
 
     noecho();
     curs_set(0);
@@ -2513,143 +2515,201 @@ static void remote_load_playlist(void) {
     }
 }
 
-static void remote_start_add(void) {
-    noecho();
-    curs_set(1);
+/* ---------- Remote connection form (multi-field) ---------- */
 
-    RemoteConnectionConfig rc;
-    memset(&rc, 0, sizeof(rc));
-    rc.port = 0;
+static int remote_form_field_count(void) {
+    return (g_remote_form_config.protocol == REMOTE_PROTOCOL_SFTP) ? 8 : 7;
+}
 
+static void remote_form_field_label(int field_idx, char *buf, size_t size) {
+    switch (field_idx) {
+        case 0: snprintf(buf, size, "%s:", menu_text("名称", "Name")); break;
+        case 1: snprintf(buf, size, "%s:", menu_text("协议", "Protocol")); break;
+        case 2: snprintf(buf, size, "%s:", menu_text("主机", "Host")); break;
+        case 3: snprintf(buf, size, "%s:", menu_text("端口", "Port")); break;
+        case 4: snprintf(buf, size, "%s:", menu_text("用户名", "Username")); break;
+        case 5: snprintf(buf, size, "%s:", menu_text("密码", "Password")); break;
+        case 6:
+            if (g_remote_form_config.protocol == REMOTE_PROTOCOL_SFTP)
+                snprintf(buf, size, "%s:", menu_text("私钥", "Private Key"));
+            else
+                snprintf(buf, size, "%s:", menu_text("基础路径", "Base Path"));
+            break;
+        case 7: snprintf(buf, size, "%s:", menu_text("基础路径", "Base Path")); break;
+    }
+}
+
+static void remote_form_value_text(int field_idx, char *buf, size_t size) {
+    const RemoteConnectionConfig *rc = &g_remote_form_config;
+    buf[0] = '\0';
+    switch (field_idx) {
+        case 0: snprintf(buf, size, "%s", rc->name); break;
+        case 1: snprintf(buf, size, "%s", remote_protocol_name(rc->protocol)); break;
+        case 2: snprintf(buf, size, "%s", rc->host); break;
+        case 3: if (rc->port > 0) snprintf(buf, size, "%d", rc->port); break;
+        case 4: snprintf(buf, size, "%s", rc->username); break;
+        case 5:
+            if (rc->password[0]) {
+                int n = strlen(rc->password);
+                if (n > 50) n = 50;
+                memset(buf, '*', n);
+                buf[n] = '\0';
+            }
+            break;
+        case 6:
+            if (rc->protocol == REMOTE_PROTOCOL_SFTP)
+                snprintf(buf, size, "%s", rc->private_key_path);
+            else
+                snprintf(buf, size, "%s", rc->base_path);
+            break;
+        case 7: snprintf(buf, size, "%s", rc->base_path); break;
+    }
+}
+
+static void remote_form_edit_field(int field_idx) {
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
-    int menu_width = max_x / 4;
-    int input_row = max_y - 2;
+    int content_start_x = (max_x / 4) + 2;
+    int form_start_y = 4;
 
-    prompt_text_input(stdscr, input_row, menu_width + 2,
-                      menu_text("名称：", "Name: "),
-                      rc.name, sizeof(rc.name), 1, 0);
-    if (!rc.name[0]) { curs_set(0); noecho(); return; }
+    curs_set(1);
+    noecho();
 
-    char protocol_str[16] = "2";
-    prompt_text_input(stdscr, input_row, menu_width + 2,
-                      menu_text("协议(0:SMB 1:SFTP 2:FTP 3:WebDAV)：", "Protocol(0:SMB 1:SFTP 2:FTP 3:WebDAV): "),
-                      protocol_str, sizeof(protocol_str), 1, 0);
-    rc.protocol = atoi(protocol_str);
-    if (rc.protocol < 0) rc.protocol = 0;
-    if (rc.protocol > 3) rc.protocol = 3;
+    char label[32];
+    remote_form_field_label(field_idx, label, sizeof(label));
 
-    prompt_text_input(stdscr, input_row, menu_width + 2,
-                      menu_text("主机地址：", "Host: "),
-                      rc.host, sizeof(rc.host), 1, 0);
-    if (!rc.host[0]) { curs_set(0); noecho(); return; }
-
-    char port_str[16] = "";
-    prompt_text_input(stdscr, input_row, menu_width + 2,
-                      menu_text("端口(留空默认)：", "Port (default if empty): "),
-                      port_str, sizeof(port_str), 1, 0);
-    rc.port = port_str[0] ? (int)strtol(port_str, NULL, 10) : 0;
-
-    prompt_text_input(stdscr, input_row, menu_width + 2,
-                      menu_text("用户名(可选)：", "Username (optional): "),
-                      rc.username, sizeof(rc.username), 1, 0);
-
-    prompt_text_input(stdscr, input_row, menu_width + 2,
-                      menu_text("密码(可选)：", "Password (optional): "),
-                      rc.password, sizeof(rc.password), 1, 1);
-
-    if (rc.protocol == REMOTE_PROTOCOL_SFTP) {
-        prompt_text_input(stdscr, input_row, menu_width + 2,
-                          menu_text("私钥路径(可选)：", "Private key (optional): "),
-                          rc.private_key_path, sizeof(rc.private_key_path), 1, 0);
-    }
-
-    prompt_text_input(stdscr, input_row, menu_width + 2,
-                      menu_text("基础路径：", "Base path: "),
-                      rc.base_path, sizeof(rc.base_path), 1, 0);
-    if (!rc.base_path[0]) {
-        strncpy(rc.base_path, "/", sizeof(rc.base_path) - 1);
+    switch (field_idx) {
+        case 0:  // Name
+            prompt_text_input(stdscr, form_start_y + field_idx, content_start_x,
+                              label, g_remote_form_config.name,
+                              sizeof(g_remote_form_config.name), 1, 0, 1);
+            break;
+        case 1:  // Protocol (also cyclable via +/-)
+            {
+                char buf[8];
+                snprintf(buf, sizeof(buf), "%d", g_remote_form_config.protocol);
+                prompt_text_input(stdscr, form_start_y + field_idx, content_start_x,
+                                  label, buf, sizeof(buf), 1, 0, 1);
+                int val = atoi(buf);
+                if (val >= 0 && val <= 3) g_remote_form_config.protocol = val;
+            }
+            break;
+        case 2:  // Host
+            prompt_text_input(stdscr, form_start_y + field_idx, content_start_x,
+                              label, g_remote_form_config.host,
+                              sizeof(g_remote_form_config.host), 1, 0, 1);
+            break;
+        case 3:  // Port
+            {
+                char buf[16];
+                if (g_remote_form_config.port > 0)
+                    snprintf(buf, sizeof(buf), "%d", g_remote_form_config.port);
+                else
+                    buf[0] = '\0';
+                prompt_text_input(stdscr, form_start_y + field_idx, content_start_x,
+                                  label, buf, sizeof(buf), 1, 0, 1);
+                g_remote_form_config.port = buf[0] ? (int)strtol(buf, NULL, 10) : 0;
+            }
+            break;
+        case 4:  // Username
+            prompt_text_input(stdscr, form_start_y + field_idx, content_start_x,
+                              label, g_remote_form_config.username,
+                              sizeof(g_remote_form_config.username), 1, 0, 1);
+            break;
+        case 5:  // Password (masked)
+            prompt_text_input(stdscr, form_start_y + field_idx, content_start_x,
+                              label, g_remote_form_config.password,
+                              sizeof(g_remote_form_config.password), 1, 1, 1);
+            break;
+        case 6:  // Private Key (SFTP) or Base Path
+            if (g_remote_form_config.protocol == REMOTE_PROTOCOL_SFTP) {
+                prompt_text_input(stdscr, form_start_y + field_idx, content_start_x,
+                                  label, g_remote_form_config.private_key_path,
+                                  sizeof(g_remote_form_config.private_key_path), 1, 0, 1);
+            } else {
+                prompt_text_input(stdscr, form_start_y + field_idx, content_start_x,
+                                  label, g_remote_form_config.base_path,
+                                  sizeof(g_remote_form_config.base_path), 1, 0, 1);
+                if (!g_remote_form_config.base_path[0])
+                    strncpy(g_remote_form_config.base_path, "/",
+                            sizeof(g_remote_form_config.base_path) - 1);
+            }
+            break;
+        case 7:  // Base Path
+            prompt_text_input(stdscr, form_start_y + field_idx, content_start_x,
+                              label, g_remote_form_config.base_path,
+                              sizeof(g_remote_form_config.base_path), 1, 0, 1);
+            if (!g_remote_form_config.base_path[0])
+                strncpy(g_remote_form_config.base_path, "/",
+                        sizeof(g_remote_form_config.base_path) - 1);
+            break;
     }
 
     curs_set(0);
     noecho();
+}
 
-    if (g_app_config.remote_connection_count < MAX_REMOTE_CONNECTIONS) {
-        g_app_config.remote_connections[g_app_config.remote_connection_count++] = rc;
-        save_config();
-        show_status_message(menu_text("远程连接已添加", "Remote connection added"));
-    } else {
-        show_status_message(menu_text("远程连接已满", "Remote connections full"));
+static void remote_form_save(void) {
+    if (!g_remote_form_config.name[0]) {
+        show_status_message(menu_text("名称为必填项", "Name is required"));
+        rerender_remote_view();
+        return;
+    }
+    if (!g_remote_form_config.host[0]) {
+        show_status_message(menu_text("主机地址为必填项", "Host is required"));
+        rerender_remote_view();
+        return;
+    }
+    if (!g_remote_form_config.base_path[0]) {
+        strncpy(g_remote_form_config.base_path, "/",
+                sizeof(g_remote_form_config.base_path) - 1);
     }
 
+    if (g_remote_form_editing_idx >= 0) {
+        g_app_config.remote_connections[g_remote_form_editing_idx] = g_remote_form_config;
+    } else {
+        if (g_app_config.remote_connection_count >= MAX_REMOTE_CONNECTIONS) {
+            show_status_message(menu_text("远程连接已满", "Remote connections full"));
+            rerender_remote_view();
+            return;
+        }
+        g_app_config.remote_connections[g_app_config.remote_connection_count++] = g_remote_form_config;
+    }
+
+    save_config();
+    show_status_message(menu_text("连接已保存", "Connection saved"));
     g_remote_mode = 0;
-    g_remote_selected = g_app_config.remote_connection_count - 1;
+    g_remote_selected = g_remote_form_editing_idx >= 0
+        ? g_remote_form_editing_idx
+        : (g_app_config.remote_connection_count - 1);
+    g_remote_form_editing_idx = -1;
+    rerender_remote_view();
+}
+
+static void remote_form_cancel(void) {
+    g_remote_mode = 0;
+    g_remote_selected = g_remote_form_editing_idx >= 0
+        ? g_remote_form_editing_idx
+        : g_app_config.remote_connection_count;
+    g_remote_form_editing_idx = -1;
+    rerender_remote_view();
+}
+
+static void remote_start_add(void) {
+    memset(&g_remote_form_config, 0, sizeof(g_remote_form_config));
+    g_remote_form_config.protocol = REMOTE_PROTOCOL_FTP;
+    g_remote_form_editing_idx = -1;
+    g_remote_mode = 2;
+    g_remote_selected = 0;
     rerender_remote_view();
 }
 
 static void remote_start_edit(int conn_idx) {
     if (conn_idx < 0 || conn_idx >= g_app_config.remote_connection_count) return;
-    RemoteConnectionConfig *rc = &g_app_config.remote_connections[conn_idx];
-
-    noecho();
-    curs_set(1);
-
-    int max_y, max_x;
-    getmaxyx(stdscr, max_y, max_x);
-    int menu_width = max_x / 4;
-    int input_row = max_y - 2;
-
-    prompt_text_input(stdscr, input_row, menu_width + 2,
-                      menu_text("名称：", "Name: "),
-                      rc->name, sizeof(rc->name), 1, 0);
-    if (!rc->name[0]) { curs_set(0); noecho(); return; }
-
-    char protocol_str[16];
-    snprintf(protocol_str, sizeof(protocol_str), "%d", rc->protocol);
-    prompt_text_input(stdscr, input_row, menu_width + 2,
-                      menu_text("协议(0:SMB 1:SFTP 2:FTP 3:WebDAV)：", "Protocol(0:SMB 1:SFTP 2:FTP 3:WebDAV): "),
-                      protocol_str, sizeof(protocol_str), 1, 0);
-    rc->protocol = atoi(protocol_str);
-    if (rc->protocol < 0) rc->protocol = 0;
-    if (rc->protocol > 3) rc->protocol = 3;
-
-    prompt_text_input(stdscr, input_row, menu_width + 2,
-                      menu_text("主机地址：", "Host: "),
-                      rc->host, sizeof(rc->host), 1, 0);
-
-    char port_str[16];
-    snprintf(port_str, sizeof(port_str), "%d", rc->port);
-    prompt_text_input(stdscr, input_row, menu_width + 2,
-                      menu_text("端口(留空默认)：", "Port (default if empty): "),
-                      port_str, sizeof(port_str), 1, 0);
-    rc->port = port_str[0] ? (int)strtol(port_str, NULL, 10) : 0;
-
-    prompt_text_input(stdscr, input_row, menu_width + 2,
-                      menu_text("用户名(可选)：", "Username (optional): "),
-                      rc->username, sizeof(rc->username), 1, 0);
-
-    prompt_text_input(stdscr, input_row, menu_width + 2,
-                      menu_text("密码(可选)：", "Password (optional): "),
-                      rc->password, sizeof(rc->password), 1, 1);
-
-    if (rc->protocol == REMOTE_PROTOCOL_SFTP) {
-        prompt_text_input(stdscr, input_row, menu_width + 2,
-                          menu_text("私钥路径(可选)：", "Private key (optional): "),
-                          rc->private_key_path, sizeof(rc->private_key_path), 1, 0);
-    }
-
-    prompt_text_input(stdscr, input_row, menu_width + 2,
-                      menu_text("基础路径：", "Base path: "),
-                      rc->base_path, sizeof(rc->base_path), 1, 0);
-    if (!rc->base_path[0]) {
-        strncpy(rc->base_path, "/", sizeof(rc->base_path) - 1);
-    }
-
-    curs_set(0);
-    noecho();
-    save_config();
-    show_status_message(menu_text("连接已更新", "Connection updated"));
-    g_remote_mode = 0;
+    g_remote_form_config = g_app_config.remote_connections[conn_idx];
+    g_remote_form_editing_idx = conn_idx;
+    g_remote_mode = 2;
+    g_remote_selected = 0;
     rerender_remote_view();
 }
 
@@ -2734,6 +2794,34 @@ static void render_remote_content(void) {
             if (g_focus_area == FOCUS_CONTENT && g_remote_selected == i) attron(A_REVERSE);
             mvprintw(y++, content_start_x, "  %s", actions[i]);
             if (g_focus_area == FOCUS_CONTENT && g_remote_selected == i) attroff(A_REVERSE);
+        }
+
+    } else if (g_remote_mode == 2) {
+        int field_count = remote_form_field_count();
+        const char *title_fmt = g_remote_form_editing_idx >= 0
+            ? menu_text("编辑连接 (↑/↓ 选择 ENTER 编辑 +/- 切换协议 S 保存 ESC 取消)",
+                       "Edit Connection (Up/Down select Enter edit +/- Protocol S Save Esc Cancel)")
+            : menu_text("添加连接 (↑/↓ 选择 ENTER 编辑 +/- 切换协议 S 保存 ESC 取消)",
+                       "Add Connection (Up/Down select Enter edit +/- Protocol S Save Esc Cancel)");
+        mvprintw(y++, content_start_x, "%s", title_fmt);
+        y++;
+
+        char label[32], value[256];
+        for (int i = 0; i < field_count && y < max_y - 2; i++) {
+            remote_form_field_label(i, label, sizeof(label));
+            remote_form_value_text(i, value, sizeof(value));
+            move(y, content_start_x);
+            if (g_focus_area == FOCUS_CONTENT && g_remote_selected == i) attron(A_REVERSE);
+            printw("  %-14s %s", label, value);
+            clrtoeol();
+            if (g_focus_area == FOCUS_CONTENT && g_remote_selected == i) attroff(A_REVERSE);
+            y++;
+        }
+
+        if (y < max_y - 2) {
+            mvprintw(y, content_start_x, "%s",
+                     menu_text("↑/↓:选择  ENTER:编辑  +/-:协议  S:保存  ESC:取消",
+                               "Up/Down:navigate  Enter:edit  +/-:protocol  S:save  Esc:cancel"));
         }
 
     } else if (g_remote_mode == 3) {
@@ -2849,6 +2937,51 @@ static void handle_remote_content_input(int ch) {
             case KEY_LEFT:
             case 27:
                 remote_go_back();
+                break;
+        }
+    } else if (g_remote_mode == 2) {
+        int field_count = remote_form_field_count();
+        switch (ch) {
+            case KEY_UP:
+                g_remote_selected--;
+                if (g_remote_selected < 0) g_remote_selected = field_count - 1;
+                render_settings_content();
+                break;
+            case KEY_DOWN:
+                g_remote_selected++;
+                if (g_remote_selected >= field_count) g_remote_selected = 0;
+                render_settings_content();
+                break;
+            case 10:
+            case ' ':
+                remote_form_edit_field(g_remote_selected);
+                render_settings_content();
+                break;
+            case '+':
+            case '=':
+                if (g_remote_selected == 1) {
+                    g_remote_form_config.protocol = (g_remote_form_config.protocol + 1) % 4;
+                    if (g_remote_selected >= remote_form_field_count())
+                        g_remote_selected = remote_form_field_count() - 1;
+                    render_settings_content();
+                }
+                break;
+            case '-':
+            case '_':
+                if (g_remote_selected == 1) {
+                    g_remote_form_config.protocol = (g_remote_form_config.protocol + 3) % 4;
+                    if (g_remote_selected >= remote_form_field_count())
+                        g_remote_selected = remote_form_field_count() - 1;
+                    render_settings_content();
+                }
+                break;
+            case 's':
+            case 'S':
+                remote_form_save();
+                break;
+            case KEY_LEFT:
+            case 27:
+                remote_form_cancel();
                 break;
         }
     } else if (g_remote_mode == 3) {
@@ -3691,7 +3824,7 @@ static void handle_history_input(int ch) {
                     const char *rename_prompt = menu_text("输入新名称：", "New name: ");
                     char new_name[MAX_PLAYLIST_NAME_LEN];
                     prompt_text_input(stdscr, max_y - 2, menu_width + 2,
-                                      rename_prompt, new_name, sizeof(new_name), 1, 0);
+                                      rename_prompt, new_name, sizeof(new_name), 1, 0, 0);
 
                     noecho();
                     curs_set(0);
@@ -3805,7 +3938,7 @@ static void handle_playlist_input(int ch) {
                     const char *create_prompt = menu_text("输入歌单名称：", "Playlist name: ");
                     char name[MAX_PLAYLIST_NAME_LEN];
                     prompt_text_input(stdscr, max_y - 2, menu_width + 2,
-                                      create_prompt, name, sizeof(name), 1, 0);
+                                      create_prompt, name, sizeof(name), 1, 0, 0);
 
                     noecho();
                     curs_set(0);
