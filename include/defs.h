@@ -165,6 +165,7 @@ typedef struct {
     int port;
     char username[64];
     char password[256];
+    char private_key_path[MAX_PATH_LEN];
     char base_path[512];
 } RemoteConnectionConfig;
 

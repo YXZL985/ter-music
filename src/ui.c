@@ -91,7 +91,8 @@ static void seek_to_position_ms(uint64_t pos_ms);
 static int get_playlist_scroll_offset(void);
 static int handle_main_view_mouse_event(const MEVENT *event);
 int prompt_text_input(WINDOW *win, int row, int col, const char *prompt,
-                      char *buffer, size_t buffer_size, int trim_whitespace);
+                      char *buffer, size_t buffer_size, int trim_whitespace,
+                      int password_mode);
 
 enum {
     INPUT_ESCAPE_NONE = 0,
@@ -159,7 +160,8 @@ static void pop_last_utf8_char(char *buffer) {
     buffer[new_len] = '\0';
 }
 
-static void redraw_text_input(WINDOW *win, int row, int col, const char *prompt, const char *buffer) {
+static void redraw_text_input(WINDOW *win, int row, int col, const char *prompt,
+                              const char *buffer, int password_mode) {
     if (!win || !prompt || !buffer) {
         return;
     }
@@ -184,11 +186,22 @@ static void redraw_text_input(WINDOW *win, int row, int col, const char *prompt,
     char visible_input[MAX_PATH_LEN * 2];
     visible_input[0] = '\0';
 
-    int total_width = utf8_str_width(buffer);
+    const char *display_src = buffer;
+    char masked[MAX_PATH_LEN * 2];
+    if (password_mode) {
+        int blen = utf8_str_width(buffer);
+        for (int i = 0; i < blen && i < (int)sizeof(masked) - 1; i++) {
+            masked[i] = '*';
+        }
+        masked[blen < (int)sizeof(masked) ? blen : sizeof(masked) - 1] = '\0';
+        display_src = masked;
+    }
+
+    int total_width = utf8_str_width(display_src);
     if (total_width > input_width) {
-        utf8_str_substring(visible_input, buffer, total_width - input_width, input_width);
+        utf8_str_substring(visible_input, display_src, total_width - input_width, input_width);
     } else {
-        snprintf(visible_input, sizeof(visible_input), "%s", buffer);
+        snprintf(visible_input, sizeof(visible_input), "%s", display_src);
     }
 
     mvwprintw(win, row, col, "%s%s", prompt, visible_input);
@@ -249,13 +262,14 @@ static int consume_input_escape_sequence(int *escape_state, wint_t ch) {
 }
 
 int prompt_text_input(WINDOW *win, int row, int col, const char *prompt,
-                      char *buffer, size_t buffer_size, int trim_whitespace) {
+                      char *buffer, size_t buffer_size, int trim_whitespace,
+                      int password_mode) {
     if (!win || !prompt || !buffer || buffer_size == 0) {
         return -1;
     }
 
     buffer[0] = '\0';
-    redraw_text_input(win, row, col, prompt, buffer);
+    redraw_text_input(win, row, col, prompt, buffer, password_mode);
     flushinp();
 
     int escape_state = 0;
@@ -276,7 +290,7 @@ int prompt_text_input(WINDOW *win, int row, int col, const char *prompt,
             }
             if (wch == KEY_BACKSPACE) {
                 pop_last_utf8_char(buffer);
-                redraw_text_input(win, row, col, prompt, buffer);
+                redraw_text_input(win, row, col, prompt, buffer, password_mode);
             }
             continue;
         }
@@ -291,7 +305,7 @@ int prompt_text_input(WINDOW *win, int row, int col, const char *prompt,
 
         if (wch == 127 || wch == 8) {
             pop_last_utf8_char(buffer);
-            redraw_text_input(win, row, col, prompt, buffer);
+            redraw_text_input(win, row, col, prompt, buffer, password_mode);
             continue;
         }
 
@@ -314,7 +328,7 @@ int prompt_text_input(WINDOW *win, int row, int col, const char *prompt,
 
         memcpy(buffer + current_len, encoded, written);
         buffer[current_len + written] = '\0';
-        redraw_text_input(win, row, col, prompt, buffer);
+        redraw_text_input(win, row, col, prompt, buffer, password_mode);
     }
 
     if (trim_whitespace) {
@@ -2203,7 +2217,7 @@ static void prompt_folder_input(int append_mode) {
         : ui_text("输入目录路径：", "Folder path: ");
     char input_path[MAX_PATH_LEN];
     prompt_text_input(win_controls, 4, 2, folder_prompt,
-                      input_path, sizeof(input_path), 1);
+                      input_path, sizeof(input_path), 1, 0);
     flushinp();
     
     noecho();

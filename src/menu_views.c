@@ -32,7 +32,8 @@ extern void render_playlist_content(void);
 extern void render_controls(void);
 extern void create_layout(void);
 extern int prompt_text_input(WINDOW *win, int row, int col, const char *prompt,
-                             char *buffer, size_t buffer_size, int trim_whitespace);
+                             char *buffer, size_t buffer_size, int trim_whitespace,
+                             int password_mode);
 
 ViewMode g_current_view = VIEW_MAIN;
 int g_menu_selected_idx = 0;
@@ -732,6 +733,8 @@ void load_config(void) {
             extract_json_string(json, key, rc->username, sizeof(rc->username));
             snprintf(key, sizeof(key), "remote_%d_password", ri);
             extract_json_string(json, key, rc->password, sizeof(rc->password));
+            snprintf(key, sizeof(key), "remote_%d_private_key_path", ri);
+            extract_json_string(json, key, rc->private_key_path, sizeof(rc->private_key_path));
             snprintf(key, sizeof(key), "remote_%d_base_path", ri);
             extract_json_string(json, key, rc->base_path, sizeof(rc->base_path));
         }
@@ -802,6 +805,8 @@ void save_config(void) {
         fprintf(f, "  \"remote_%d_username\": \"%s\",\n", ri, escaped);
         escape_json_string(rc->password, escaped, sizeof(escaped));
         fprintf(f, "  \"remote_%d_password\": \"%s\",\n", ri, escaped);
+        escape_json_string(rc->private_key_path, escaped, sizeof(escaped));
+        fprintf(f, "  \"remote_%d_private_key_path\": \"%s\",\n", ri, escaped);
         escape_json_string(rc->base_path, escaped, sizeof(escaped));
         fprintf(f, "  \"remote_%d_base_path\": \"%s\"%s\n", ri, escaped,
                 ri < g_app_config.remote_connection_count - 1 ? "," : "");
@@ -2244,7 +2249,7 @@ static void edit_default_startup_path(void) {
     const char *path_prompt = menu_text("输入路径：", "Enter path: ");
     char input_path[MAX_PATH_LEN];
     prompt_text_input(stdscr, max_y - 2, menu_width + 2,
-                      path_prompt, input_path, sizeof(input_path), 1);
+                      path_prompt, input_path, sizeof(input_path), 1, 0);
 
     noecho();
     curs_set(0);
@@ -2523,39 +2528,45 @@ static void remote_start_add(void) {
 
     prompt_text_input(stdscr, input_row, menu_width + 2,
                       menu_text("名称：", "Name: "),
-                      rc.name, sizeof(rc.name), 1);
+                      rc.name, sizeof(rc.name), 1, 0);
     if (!rc.name[0]) { curs_set(0); noecho(); return; }
 
     char protocol_str[16] = "2";
     prompt_text_input(stdscr, input_row, menu_width + 2,
                       menu_text("协议(0:SMB 1:SFTP 2:FTP 3:WebDAV)：", "Protocol(0:SMB 1:SFTP 2:FTP 3:WebDAV): "),
-                      protocol_str, sizeof(protocol_str), 1);
+                      protocol_str, sizeof(protocol_str), 1, 0);
     rc.protocol = atoi(protocol_str);
     if (rc.protocol < 0) rc.protocol = 0;
     if (rc.protocol > 3) rc.protocol = 3;
 
     prompt_text_input(stdscr, input_row, menu_width + 2,
                       menu_text("主机地址：", "Host: "),
-                      rc.host, sizeof(rc.host), 1);
+                      rc.host, sizeof(rc.host), 1, 0);
     if (!rc.host[0]) { curs_set(0); noecho(); return; }
 
     char port_str[16] = "";
     prompt_text_input(stdscr, input_row, menu_width + 2,
                       menu_text("端口(留空默认)：", "Port (default if empty): "),
-                      port_str, sizeof(port_str), 1);
+                      port_str, sizeof(port_str), 1, 0);
     rc.port = port_str[0] ? (int)strtol(port_str, NULL, 10) : 0;
 
     prompt_text_input(stdscr, input_row, menu_width + 2,
                       menu_text("用户名(可选)：", "Username (optional): "),
-                      rc.username, sizeof(rc.username), 1);
+                      rc.username, sizeof(rc.username), 1, 0);
 
     prompt_text_input(stdscr, input_row, menu_width + 2,
                       menu_text("密码(可选)：", "Password (optional): "),
-                      rc.password, sizeof(rc.password), 1);
+                      rc.password, sizeof(rc.password), 1, 1);
+
+    if (rc.protocol == REMOTE_PROTOCOL_SFTP) {
+        prompt_text_input(stdscr, input_row, menu_width + 2,
+                          menu_text("私钥路径(可选)：", "Private key (optional): "),
+                          rc.private_key_path, sizeof(rc.private_key_path), 1, 0);
+    }
 
     prompt_text_input(stdscr, input_row, menu_width + 2,
                       menu_text("基础路径：", "Base path: "),
-                      rc.base_path, sizeof(rc.base_path), 1);
+                      rc.base_path, sizeof(rc.base_path), 1, 0);
     if (!rc.base_path[0]) {
         strncpy(rc.base_path, "/", sizeof(rc.base_path) - 1);
     }
@@ -2590,40 +2601,46 @@ static void remote_start_edit(int conn_idx) {
 
     prompt_text_input(stdscr, input_row, menu_width + 2,
                       menu_text("名称：", "Name: "),
-                      rc->name, sizeof(rc->name), 1);
+                      rc->name, sizeof(rc->name), 1, 0);
     if (!rc->name[0]) { curs_set(0); noecho(); return; }
 
     char protocol_str[16];
     snprintf(protocol_str, sizeof(protocol_str), "%d", rc->protocol);
     prompt_text_input(stdscr, input_row, menu_width + 2,
                       menu_text("协议(0:SMB 1:SFTP 2:FTP 3:WebDAV)：", "Protocol(0:SMB 1:SFTP 2:FTP 3:WebDAV): "),
-                      protocol_str, sizeof(protocol_str), 1);
+                      protocol_str, sizeof(protocol_str), 1, 0);
     rc->protocol = atoi(protocol_str);
     if (rc->protocol < 0) rc->protocol = 0;
     if (rc->protocol > 3) rc->protocol = 3;
 
     prompt_text_input(stdscr, input_row, menu_width + 2,
                       menu_text("主机地址：", "Host: "),
-                      rc->host, sizeof(rc->host), 1);
+                      rc->host, sizeof(rc->host), 1, 0);
 
     char port_str[16];
     snprintf(port_str, sizeof(port_str), "%d", rc->port);
     prompt_text_input(stdscr, input_row, menu_width + 2,
                       menu_text("端口(留空默认)：", "Port (default if empty): "),
-                      port_str, sizeof(port_str), 1);
+                      port_str, sizeof(port_str), 1, 0);
     rc->port = port_str[0] ? (int)strtol(port_str, NULL, 10) : 0;
 
     prompt_text_input(stdscr, input_row, menu_width + 2,
                       menu_text("用户名(可选)：", "Username (optional): "),
-                      rc->username, sizeof(rc->username), 1);
+                      rc->username, sizeof(rc->username), 1, 0);
 
     prompt_text_input(stdscr, input_row, menu_width + 2,
                       menu_text("密码(可选)：", "Password (optional): "),
-                      rc->password, sizeof(rc->password), 1);
+                      rc->password, sizeof(rc->password), 1, 1);
+
+    if (rc->protocol == REMOTE_PROTOCOL_SFTP) {
+        prompt_text_input(stdscr, input_row, menu_width + 2,
+                          menu_text("私钥路径(可选)：", "Private key (optional): "),
+                          rc->private_key_path, sizeof(rc->private_key_path), 1, 0);
+    }
 
     prompt_text_input(stdscr, input_row, menu_width + 2,
                       menu_text("基础路径：", "Base path: "),
-                      rc->base_path, sizeof(rc->base_path), 1);
+                      rc->base_path, sizeof(rc->base_path), 1, 0);
     if (!rc->base_path[0]) {
         strncpy(rc->base_path, "/", sizeof(rc->base_path) - 1);
     }
@@ -3674,7 +3691,7 @@ static void handle_history_input(int ch) {
                     const char *rename_prompt = menu_text("输入新名称：", "New name: ");
                     char new_name[MAX_PLAYLIST_NAME_LEN];
                     prompt_text_input(stdscr, max_y - 2, menu_width + 2,
-                                      rename_prompt, new_name, sizeof(new_name), 1);
+                                      rename_prompt, new_name, sizeof(new_name), 1, 0);
 
                     noecho();
                     curs_set(0);
@@ -3788,8 +3805,8 @@ static void handle_playlist_input(int ch) {
                     const char *create_prompt = menu_text("输入歌单名称：", "Playlist name: ");
                     char name[MAX_PLAYLIST_NAME_LEN];
                     prompt_text_input(stdscr, max_y - 2, menu_width + 2,
-                                      create_prompt, name, sizeof(name), 1);
-                    
+                                      create_prompt, name, sizeof(name), 1, 0);
+
                     noecho();
                     curs_set(0);
                     

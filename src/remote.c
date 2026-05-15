@@ -229,6 +229,11 @@ static CURL *create_curl_handle(const RemoteConnectionConfig *conn,
         curl_easy_setopt(curl, CURLOPT_PASSWORD, conn->password);
     }
 
+    if (conn->protocol == REMOTE_PROTOCOL_SFTP && conn->private_key_path[0]) {
+        curl_easy_setopt(curl, CURLOPT_SSH_PRIVATE_KEYFILE, conn->private_key_path);
+        curl_easy_setopt(curl, CURLOPT_SSH_AUTH_TYPES, CURLSSH_AUTH_PUBLICKEY);
+    }
+
     return curl;
 }
 
