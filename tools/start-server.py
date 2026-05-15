@@ -17,6 +17,10 @@ import threading
 import signal
 import socket
 import argparse
+import http.server
+import socketserver
+import urllib.parse
+from datetime import datetime
 
 # ── 样式 ──────────────────────────────────────────────────────────────────
 RESET = "\033[0m"
@@ -32,7 +36,7 @@ BANNER = f"""
 {BOLD}{BLUE}
   ╭──────────────────────────────────────────╮
   │       Ter-Music  测试服务器工具          │
-  │       SMB · FTP · SFTP · WebDAV          │
+  │       SMB · FTP · SFTP · WebDAV · HTTP   │
   ╰──────────────────────────────────────────╯
 {RESET}"""
 
@@ -912,6 +916,177 @@ def start_smb_args(args):
         server.stop()
 
 
+# ── HTTP (nginx 风格静态文件服务器) ──────────────────────────────────────
+
+class ThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
+class NginxStyleHTTPHandler(http.server.SimpleHTTPRequestHandler):
+    """生成 nginx 风格 autoindex 页面的 HTTP 文件服务处理器"""
+
+    def __init__(self, *args, directory=None, auth=None, **kwargs):
+        self._auth = auth
+        super().__init__(*args, directory=directory, **kwargs)
+
+    def do_GET(self):
+        if self._auth and not self._check_auth():
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="Ter-Music HTTP"')
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"Authentication required")
+            return
+        super().do_GET()
+
+    def do_HEAD(self):
+        if self._auth and not self._check_auth():
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="Ter-Music HTTP"')
+            self.end_headers()
+            return
+        super().do_HEAD()
+
+    def _check_auth(self):
+        auth_header = self.headers.get("Authorization", "")
+        if not auth_header.startswith("Basic "):
+            return False
+        import base64
+        try:
+            decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
+            user, _, passwd = decoded.partition(":")
+            return user == self._auth[0] and passwd == self._auth[1]
+        except Exception:
+            return False
+
+    def list_directory(self, path):
+        """生成 nginx 风格 autoindex HTML"""
+        try:
+            entries = sorted(os.listdir(path), key=str.lower)
+        except OSError:
+            self.send_error(404, "No permission to list directory")
+            return None
+
+        display_path = urllib.parse.unquote(self.path)
+        lines = []
+        lines.append("<!DOCTYPE html>")
+        lines.append("<html>")
+        lines.append("<head>")
+        lines.append(f"<title>Index of {display_path}</title>")
+        lines.append("<meta charset=\"utf-8\">")
+        lines.append("<style>")
+        lines.append("body{font-family:sans-serif;margin:2em}")
+        lines.append("a{text-decoration:none;color:#06c}")
+        lines.append("a:hover{text-decoration:underline}")
+        lines.append("pre{font-size:14px}")
+        lines.append("</style>")
+        lines.append("</head>")
+        lines.append("<body>")
+        lines.append(f"<h1>Index of {display_path}</h1>")
+        lines.append("<hr><pre>")
+
+        if self.path != "/":
+            lines.append(f'<a href="../">../</a>')
+
+        for name in entries:
+            full_path = os.path.join(path, name)
+            is_dir = os.path.isdir(full_path)
+            display_name = name + "/" if is_dir else name
+            href = urllib.parse.quote(name) + ("/" if is_dir else "")
+
+            # Get file info
+            try:
+                st = os.stat(full_path)
+                mtime = datetime.fromtimestamp(st.st_mtime).strftime("%d-%b-%Y %H:%M")
+                if is_dir:
+                    size = "  -"
+                else:
+                    size = st.st_size
+                    # Human-readable size
+                    for unit in ("", "K", "M", "G"):
+                        if size < 1024:
+                            break
+                        size /= 1024
+                    size = f"{size:>7.1f}{unit}" if isinstance(size, float) else f"{size:>7}"
+            except OSError:
+                mtime = "01-Jan-2000 00:00"
+                size = "  -"
+
+            line = f'<a href="{href}">{display_name}</a>'
+            # Pad to align columns (min 50 chars for name column)
+            pad = max(2, 50 - len(line))
+            lines.append(f"{line}{' ' * pad}{mtime} {size}")
+
+        lines.append("</pre><hr>")
+        lines.append("</body>")
+        lines.append("</html>")
+
+        encoded = "\n".join(lines).encode("utf-8", "surrogateescape")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        return self.wfile.write(encoded)
+
+
+def start_http():
+    """交互式启动 HTTP 文件服务器"""
+    section("HTTP 服务器配置")
+
+    host = prompt("监听地址", "0.0.0.0")
+    port = prompt_int("端口", 8088, 1, 65535)
+    share_dir = resolve_path(prompt("共享目录", os.path.expanduser("~/Music")))
+    need_auth = prompt_yesno("启用基本认证", False)
+
+    auth = None
+    if need_auth:
+        username = prompt("用户名", "user")
+        password = getpass.getpass("  密码: ") or "password"
+        auth = (username, password)
+
+    print_summary("HTTP", host, port, share_dir,
+                  {"认证": f"{auth[0]}/******" if auth else "无",
+                   "测试命令": f"curl http://{'localhost' if host=='0.0.0.0' else host}:{port}/"})
+
+    def make_handler(*args, **kwargs):
+        return NginxStyleHTTPHandler(*args, directory=share_dir, auth=auth, **kwargs)
+
+    server = ThreadingHTTPServer((host, port), make_handler)
+    log_info(f"HTTP 服务器运行中: http://{host}:{port}/")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        server.shutdown()
+
+
+def start_http_args(args):
+    """从参数启动 HTTP 文件服务器"""
+    host = args.host
+    port = args.port
+    share_dir = args.share_dir
+
+    auth = None
+    if args.username:
+        password = args.password or getpass.getpass("  密码: ")
+        auth = (args.username, password)
+
+    print_summary("HTTP", host, port, share_dir,
+                  {"认证": f"{auth[0]}/******" if auth else "无",
+                   "测试命令": f"curl http://{'localhost' if host=='0.0.0.0' else host}:{port}/"})
+
+    def make_handler(*args, **kwargs):
+        return NginxStyleHTTPHandler(*args, directory=share_dir, auth=auth, **kwargs)
+
+    server = ThreadingHTTPServer((host, port), make_handler)
+
+    log_info(f"HTTP 服务器运行中: http://{host}:{port}/")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        server.shutdown()
+
+
 # ── 主菜单 ────────────────────────────────────────────────────────────────
 
 def main():
@@ -935,6 +1110,7 @@ def main():
     print(f"    {BOLD}2{RESET})  WebDAV     (wsgidav)     — 端口 8080")
     print(f"    {BOLD}3{RESET})  SFTP       (paramiko)    — 端口 2222")
     print(f"    {BOLD}4{RESET})  SMB/CIFS   (impacket)    — 端口 445")
+    print(f"    {BOLD}5{RESET})  HTTP       (stdlib)      — 端口 8088")
     print(f"    {BOLD}0{RESET})  退出\n")
 
     choice = prompt("请输入编号", "1")
@@ -944,6 +1120,7 @@ def main():
         "2": ("WebDAV", start_webdav),
         "3": ("SFTP", start_sftp),
         "4": ("SMB/CIFS", start_smb),
+        "5": ("HTTP", start_http),
     }
 
     if choice == "0":
@@ -977,7 +1154,7 @@ def start_server_from_args(args):
     protocol = args.protocol.lower()
 
     # 设置默认端口
-    default_ports = {"ftp": 2121, "webdav": 8080, "sftp": 2222, "smb": 445}
+    default_ports = {"ftp": 2121, "webdav": 8080, "sftp": 2222, "smb": 445, "http": 8088}
     if args.port is None:
         args.port = default_ports.get(protocol, 0)
 
@@ -994,6 +1171,8 @@ def start_server_from_args(args):
         start_sftp_args(args)
     elif protocol == "smb":
         start_smb_args(args)
+    elif protocol == "http":
+        start_http_args(args)
     else:
         log_error(f"不支持的协议: {protocol}")
         sys.exit(1)
