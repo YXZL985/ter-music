@@ -155,7 +155,8 @@ typedef enum {
     REMOTE_PROTOCOL_SMB = 0,
     REMOTE_PROTOCOL_SFTP = 1,
     REMOTE_PROTOCOL_FTP = 2,
-    REMOTE_PROTOCOL_WEBDAV = 3
+    REMOTE_PROTOCOL_WEBDAV = 3,
+    REMOTE_PROTOCOL_HTTP = 4
 } RemoteProtocol;
 
 typedef struct {

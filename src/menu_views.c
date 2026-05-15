@@ -2591,7 +2591,7 @@ static void remote_form_edit_field(int field_idx) {
                 prompt_text_input(stdscr, form_start_y + field_idx, content_start_x,
                                   label, buf, sizeof(buf), 1, 0, 1);
                 int val = atoi(buf);
-                if (val >= 0 && val <= 3) g_remote_form_config.protocol = val;
+                if (val >= 0 && val <= 4) g_remote_form_config.protocol = val;
             }
             break;
         case 2:  // Host
@@ -2960,7 +2960,7 @@ static void handle_remote_content_input(int ch) {
             case '+':
             case '=':
                 if (g_remote_selected == 1) {
-                    g_remote_form_config.protocol = (g_remote_form_config.protocol + 1) % 4;
+                    g_remote_form_config.protocol = (g_remote_form_config.protocol + 1) % 5;
                     if (g_remote_selected >= remote_form_field_count())
                         g_remote_selected = remote_form_field_count() - 1;
                     render_settings_content();
@@ -2969,7 +2969,7 @@ static void handle_remote_content_input(int ch) {
             case '-':
             case '_':
                 if (g_remote_selected == 1) {
-                    g_remote_form_config.protocol = (g_remote_form_config.protocol + 3) % 4;
+                    g_remote_form_config.protocol = (g_remote_form_config.protocol + 4) % 5;
                     if (g_remote_selected >= remote_form_field_count())
                         g_remote_selected = remote_form_field_count() - 1;
                     render_settings_content();

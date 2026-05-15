@@ -40,7 +40,8 @@ static const char *protocol_scheme(int protocol) {
         case REMOTE_PROTOCOL_SMB:    return "smb";
         case REMOTE_PROTOCOL_SFTP:   return "sftp";
         case REMOTE_PROTOCOL_FTP:    return "ftp";
-        case REMOTE_PROTOCOL_WEBDAV: return "http";
+        case REMOTE_PROTOCOL_WEBDAV:
+        case REMOTE_PROTOCOL_HTTP:   return "http";
         default:                     return "ftp";
     }
 }
@@ -50,7 +51,8 @@ static int default_port(int protocol) {
         case REMOTE_PROTOCOL_SMB:    return 445;
         case REMOTE_PROTOCOL_SFTP:   return 22;
         case REMOTE_PROTOCOL_FTP:    return 21;
-        case REMOTE_PROTOCOL_WEBDAV: return 80;
+        case REMOTE_PROTOCOL_WEBDAV:
+        case REMOTE_PROTOCOL_HTTP:   return 80;
         default:                     return 21;
     }
 }
@@ -72,9 +74,9 @@ int remote_parse_url(const char *url, RemoteConnectionConfig *conn) {
     else if (scheme_len == 3 && strncmp(url, "smb", 3) == 0)
         conn->protocol = REMOTE_PROTOCOL_SMB;
     else if (scheme_len == 4 && strncmp(url, "http", 4) == 0)
-        conn->protocol = REMOTE_PROTOCOL_WEBDAV;
+        conn->protocol = REMOTE_PROTOCOL_HTTP;
     else if (scheme_len == 5 && strncmp(url, "https", 5) == 0) {
-        conn->protocol = REMOTE_PROTOCOL_WEBDAV;
+        conn->protocol = REMOTE_PROTOCOL_HTTP;
         conn->port = 443;
     }
     else
@@ -165,7 +167,7 @@ void remote_build_url(const RemoteConnectionConfig *conn,
         snprintf(creds, sizeof(creds), "%s:%s@", conn->username, conn->password);
     }
 
-    if (conn->protocol == REMOTE_PROTOCOL_WEBDAV) {
+    if (conn->protocol == REMOTE_PROTOCOL_WEBDAV || conn->protocol == REMOTE_PROTOCOL_HTTP) {
         int use_https = (port == 443);
         const char *http_scheme = use_https ? "https" : "http";
 
@@ -422,6 +424,92 @@ static int parse_webdav_listing(const char *data, size_t len,
     return 0;
 }
 
+/* ---------- HTML autoindex parser (nginx, Apache, python http.server) ---------- */
+
+static int parse_html_listing(const char *data, size_t len,
+                               RemoteDirEntry **out, int *out_count) {
+    int cap = 64;
+    int count = 0;
+    *out = malloc(sizeof(RemoteDirEntry) * cap);
+    if (!*out) return -1;
+
+    const char *p = data;
+    while (p && *p && (size_t)(p - data) < len) {
+        // Find next <a href="
+        const char *href_start = strstr(p, "<a href=\"");
+        if (!href_start) break;
+
+        href_start += 9; // skip past '<a href="'
+        const char *href_end = strchr(href_start, '"');
+        if (!href_end) break;
+
+        size_t href_len = href_end - href_start;
+        if (href_len == 0 || href_len >= 1024) { p = href_end + 1; continue; }
+
+        char href[1024];
+        strncpy(href, href_start, href_len);
+        href[href_len] = '\0';
+
+        // Skip parent directory and self links
+        if (strcmp(href, "../") == 0 || strcmp(href, "./") == 0 ||
+            strcmp(href, "..") == 0) {
+            p = href_end + 1;
+            continue;
+        }
+        // Skip query strings and anchor links
+        if (strchr(href, '?') || strchr(href, '#')) {
+            p = href_end + 1;
+            continue;
+        }
+
+        // Find the display name: >text</a>
+        const char *close_tag = strstr(href_end, "</a>");
+        if (!close_tag) break;
+
+        // Find the '>' that precedes the text
+        const char *gt = href_end + 1;
+        while (gt < close_tag && *gt != '>') gt++;
+        if (gt >= close_tag) { p = close_tag + 4; continue; }
+
+        const char *text_start = gt + 1;
+        const char *text_end = close_tag;
+        size_t text_len = text_end - text_start;
+
+        // Skip if no visible text
+        if (text_len == 0 || text_len >= 256) { p = close_tag + 4; continue; }
+
+        char fname[256];
+        strncpy(fname, text_start, text_len);
+        fname[text_len] = '\0';
+
+        // trim trailing whitespace
+        size_t flen = strlen(fname);
+        while (flen > 0 && (fname[flen-1] == ' ' || fname[flen-1] == '\r' || fname[flen-1] == '\n'))
+            fname[--flen] = '\0';
+
+        // Determine if directory: href ends with '/'
+        int is_dir = (href_len > 0 && href[href_len - 1] == '/');
+
+        if (fname[0]) {
+            if (count >= cap) {
+                cap *= 2;
+                RemoteDirEntry *tmp = realloc(*out, sizeof(RemoteDirEntry) * cap);
+                if (!tmp) break;
+                *out = tmp;
+            }
+            strncpy((*out)[count].name, fname, sizeof((*out)[count].name) - 1);
+            (*out)[count].name[sizeof((*out)[count].name) - 1] = '\0';
+            (*out)[count].is_dir = is_dir;
+            count++;
+        }
+
+        p = close_tag + 4;
+    }
+
+    *out_count = count;
+    return (count > 0 || *out) ? 0 : -1;
+}
+
 int remote_list_directory(const RemoteConnectionConfig *conn,
                           const char *subpath,
                           RemoteDirEntry **out_entries,
@@ -507,6 +595,36 @@ int remote_list_directory(const RemoteConnectionConfig *conn,
             // Users will see dir entries too, which is fine for browsing
         }
 
+        free(buf.data);
+        return ret;
+
+    } else if (conn->protocol == REMOTE_PROTOCOL_HTTP) {
+        // Plain HTTP GET for nginx/Apache autoindex
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, NULL);
+        res = curl_easy_perform(curl);
+
+        if (res != CURLE_OK) {
+            remote_set_error(curl_easy_strerror(res));
+            curl_easy_cleanup(curl);
+            free(buf.data);
+            return -1;
+        }
+
+        // Check HTTP response code
+        long http_code = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+        if (http_code >= 400) {
+            curl_easy_cleanup(curl);
+            free(buf.data);
+            remote_set_error(http_code == 401 ? "Authentication failed" :
+                             http_code == 403 ? "Forbidden" :
+                             http_code == 404 ? "Not found" : "HTTP error");
+            return -1;
+        }
+        curl_easy_cleanup(curl);
+
+        int ret = parse_html_listing(buf.data, buf.len, out_entries, out_count);
         free(buf.data);
         return ret;
 
@@ -625,6 +743,7 @@ const char *remote_protocol_name(int protocol) {
         case REMOTE_PROTOCOL_SFTP:   return "SFTP";
         case REMOTE_PROTOCOL_FTP:    return "FTP";
         case REMOTE_PROTOCOL_WEBDAV: return "WebDAV";
+        case REMOTE_PROTOCOL_HTTP:   return "HTTP";
         default:                     return "?";
     }
 }
