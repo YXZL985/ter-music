@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Ter-Music 测试服务器工具 — 交互式启动 SMB/FTP/SFTP/WebDAV 服务
+端闱乐部 微服务启动程式 — 交互式启动 SMB/FTP/SFTP/WebDAV/HTTP 服务
 
 用法:
     python3 tools/start-server.py                           # 交互式启动
@@ -34,10 +34,10 @@ CYAN = "\033[36m"
 
 BANNER = f"""
 {BOLD}{BLUE}
-  ╭──────────────────────────────────────────╮
-  │       Ter-Music  测试服务器工具          │
-  │       SMB · FTP · SFTP · WebDAV · HTTP   │
-  ╰──────────────────────────────────────────╯
+  ╭──────────────────────────────────────────────╮
+  │        端闱乐部  微服务启动程式              │
+  │    SMB · FTP · SFTP · WebDAV · HTTP          │
+  ╰──────────────────────────────────────────────╯
 {RESET}"""
 
 
@@ -97,7 +97,7 @@ def parse_args():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(
         prog="start-server.py",
-        description="Ter-Music 测试服务器工具 - 启动 SMB/FTP/SFTP/WebDAV 服务",
+        description="端闱乐部 微服务启动程式 - 启动 SMB/FTP/SFTP/WebDAV/HTTP 服务",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
@@ -1094,7 +1094,7 @@ def main():
 
     # 显示版本
     if args.version:
-        print(f"{BOLD}Ter-Music 测试服务器工具 v1.0.0{RESET}")
+        print(f"{BOLD}端闱乐部 微服务启动程式 v1.0.0{RESET}")
         print(f"Python: {sys.version}")
         sys.exit(0)
 
