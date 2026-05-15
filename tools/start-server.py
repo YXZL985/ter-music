@@ -504,6 +504,9 @@ def start_sftp():
         def check_channel_request(self, kind, chanid):
             return paramiko.OPEN_SUCCEEDED if kind == "session" else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
 
+        def check_subsystem_request(self, channel, name):
+            return paramiko.OPEN_SUCCEEDED if name == "sftp" else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+
     class StubSFTPServer(SFTPServerInterface):
         def __init__(self, server, *args, **kwargs):
             super().__init__(server, *args, **kwargs)
@@ -606,7 +609,7 @@ def start_sftp():
         transport.add_server_key(host_key)
         server_iface = StubServer(username, password)
         sftp_iface = StubSFTPServer(server_iface)
-        transport.start_server(server=server_iface, channel=paramiko.Channel(0))
+        transport.start_server(server=server_iface)
         transport.set_subsystem_handler("sftp", paramiko.SFTPServer, sftp_iface)
         while transport.is_active():
             channel = transport.accept(10)
@@ -684,6 +687,9 @@ def start_sftp_args(args):
         def check_channel_request(self, kind, chanid):
             return paramiko.OPEN_SUCCEEDED if kind == "session" else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
 
+        def check_subsystem_request(self, channel, name):
+            return paramiko.OPEN_SUCCEEDED if name == "sftp" else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+
     class StubSFTPServer(SFTPServerInterface):
         def __init__(self, server, *args, **kwargs):
             super().__init__(server, *args, **kwargs)
@@ -786,7 +792,7 @@ def start_sftp_args(args):
         transport.add_server_key(host_key)
         server_iface = StubServer(username, password)
         sftp_iface = StubSFTPServer(server_iface)
-        transport.start_server(server=server_iface, channel=paramiko.Channel(0))
+        transport.start_server(server=server_iface)
         transport.set_subsystem_handler("sftp", paramiko.SFTPServer, sftp_iface)
         while transport.is_active():
             channel = transport.accept(10)
