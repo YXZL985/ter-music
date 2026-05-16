@@ -165,6 +165,11 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--sftp-authorized-keys",
+        help="SFTP 公钥认证文件路径 (authorized_keys 格式)"
+    )
+
+    parser.add_argument(
         "--anonymous",
         action="store_true",
         help="允许匿名访问 (FTP/WebDAV)"
@@ -477,6 +482,15 @@ def start_sftp():
     share_dir = resolve_path(prompt("共享目录", os.path.expanduser("~/Music")))
     username = prompt("用户名", "test")
     password = getpass.getpass("  SFTP 密码: ") or "test"
+    auth_keys_path = prompt("公钥认证文件路径 (authorized_keys，留空仅密码)", "")
+    auth_keys = None
+    if auth_keys_path:
+        auth_keys_path = resolve_path(auth_keys_path)
+        if os.path.exists(auth_keys_path):
+            auth_keys = auth_keys_path
+            log_step(f"已加载公钥认证文件: {auth_keys_path}")
+        else:
+            log_warning(f"公钥文件不存在: {auth_keys_path}")
 
     # 检查是否已存在主机密钥
     key_dir = os.path.expanduser("~/.ssh")
@@ -496,9 +510,23 @@ def start_sftp():
     host_key = RSAKey(filename=host_key_path)
 
     class StubServer(ServerInterface):
-        def __init__(self, username, password):
+        def __init__(self, username, password, authorized_keys=None):
             self._username = username
             self._password = password
+            self._authorized_keys = authorized_keys
+            self._allowed_keys = []
+            if authorized_keys and os.path.exists(authorized_keys):
+                from paramiko import RSAKey as PK_RSAKey
+                with open(authorized_keys) as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith('#'):
+                            continue
+                        try:
+                            k = PK_RSAKey(data=line.encode())
+                            self._allowed_keys.append(k)
+                        except Exception:
+                            pass
 
         def check_auth_password(self, user, pwd):
             return (paramiko.AUTH_SUCCESSFUL
@@ -506,9 +534,14 @@ def start_sftp():
                     else paramiko.AUTH_FAILED)
 
         def check_auth_publickey(self, key):
+            for k in self._allowed_keys:
+                if key == k:
+                    return paramiko.AUTH_SUCCESSFUL
             return paramiko.AUTH_FAILED
 
         def get_allowed_auths(self, username):
+            if self._allowed_keys:
+                return "password,publickey"
             return "password"
 
         def check_channel_request(self, kind, chanid):
@@ -617,7 +650,7 @@ def start_sftp():
     def handle_conn(conn, addr):
         transport = Transport(conn)
         transport.add_server_key(host_key)
-        server_iface = StubServer(username, password)
+        server_iface = StubServer(username, password, auth_keys)
         sftp_iface = StubSFTPServer(server_iface)
         transport.start_server(server=server_iface)
         transport.set_subsystem_handler("sftp", paramiko.SFTPServer, sftp_iface)
@@ -661,6 +694,15 @@ def start_sftp_args(args):
         # 后台模式下不提示输入密码，默认使用空密码
         password = ""
 
+    auth_keys = None
+    if getattr(args, 'sftp_authorized_keys', None):
+        keys_path = resolve_path(args.sftp_authorized_keys)
+        if os.path.exists(keys_path):
+            auth_keys = keys_path
+            log_step(f"已加载公钥认证文件: {keys_path}")
+        else:
+            log_warning(f"公钥文件不存在: {keys_path}")
+
     # 检查是否已存在主机密钥
     key_dir = os.path.expanduser("~/.ssh")
     os.makedirs(key_dir, exist_ok=True)
@@ -679,9 +721,23 @@ def start_sftp_args(args):
     host_key = RSAKey(filename=host_key_path)
 
     class StubServer(ServerInterface):
-        def __init__(self, username, password):
+        def __init__(self, username, password, authorized_keys=None):
             self._username = username
             self._password = password
+            self._authorized_keys = authorized_keys
+            self._allowed_keys = []
+            if authorized_keys and os.path.exists(authorized_keys):
+                from paramiko import RSAKey as PK_RSAKey
+                with open(authorized_keys) as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith('#'):
+                            continue
+                        try:
+                            k = PK_RSAKey(data=line.encode())
+                            self._allowed_keys.append(k)
+                        except Exception:
+                            pass
 
         def check_auth_password(self, user, pwd):
             return (paramiko.AUTH_SUCCESSFUL
@@ -689,9 +745,14 @@ def start_sftp_args(args):
                     else paramiko.AUTH_FAILED)
 
         def check_auth_publickey(self, key):
+            for k in self._allowed_keys:
+                if key == k:
+                    return paramiko.AUTH_SUCCESSFUL
             return paramiko.AUTH_FAILED
 
         def get_allowed_auths(self, username):
+            if self._allowed_keys:
+                return "password,publickey"
             return "password"
 
         def check_channel_request(self, kind, chanid):
@@ -800,7 +861,7 @@ def start_sftp_args(args):
     def handle_conn(conn, addr):
         transport = Transport(conn)
         transport.add_server_key(host_key)
-        server_iface = StubServer(username, password)
+        server_iface = StubServer(username, password, auth_keys)
         sftp_iface = StubSFTPServer(server_iface)
         transport.start_server(server=server_iface)
         transport.set_subsystem_handler("sftp", paramiko.SFTPServer, sftp_iface)
