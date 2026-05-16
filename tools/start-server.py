@@ -115,13 +115,19 @@ def parse_args():
 
   # 参数方式启动 SMB
   python3 tools/start-server.py --protocol smb --port 445 --share-name Music --username user --password pass
+
+  # 参数方式启动 HTTP
+  python3 tools/start-server.py --protocol http --port 8088 --share-dir ~/Music
+
+  # 参数方式启动 HTTP（带基本认证）
+  python3 tools/start-server.py --protocol http --port 8088 --username user --password pass
         """
     )
 
     parser.add_argument(
         "--protocol", "-p",
-        choices=["ftp", "webdav", "sftp", "smb"],
-        help="协议类型: ftp, webdav, sftp, smb"
+        choices=["ftp", "webdav", "sftp", "smb", "http"],
+        help="协议类型: ftp, webdav, sftp, smb, http"
     )
 
     parser.add_argument(
