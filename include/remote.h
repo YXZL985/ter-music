@@ -40,4 +40,12 @@ int remote_parse_url(const char *url, RemoteConnectionConfig *conn);
 // Error reporting – returns last error message (empty string if none)
 const char *remote_strerror(void);
 
+// Download a remote URL into a malloc'd buffer (caller must free).
+// Returns 0 on success, -1 on error.
+int remote_fetch_to_buffer(const char *url, unsigned char **data, size_t *size);
+
+// Download a remote URL directly to a local file.
+// Returns 0 on success, -1 on error (partial file is cleaned up).
+int remote_fetch_to_file(const char *url, const char *dest_path);
+
 #endif

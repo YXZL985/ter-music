@@ -1,5 +1,6 @@
 #include "../include/lyrics.h"
 #include "../include/defs.h"
+#include "../include/remote.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -616,18 +617,9 @@ static int convert_text_to_utf8(const unsigned char *input,
     return 0;
 }
 
-static int load_lyrics_text_utf8(const char *path, char **out_text) {
-    if (!path || !out_text) {
-        return -1;
-    }
-
+static int process_lyrics_buffer(unsigned char *raw_data, size_t raw_size, char **out_text) {
+    if (!raw_data || !out_text) return -1;
     *out_text = NULL;
-
-    unsigned char *raw_data = NULL;
-    size_t raw_size = 0;
-    if (read_file_bytes(path, &raw_data, &raw_size) != 0) {
-        return -1;
-    }
 
     if (raw_size == 0) {
         free(raw_data);
@@ -684,6 +676,22 @@ static int load_lyrics_text_utf8(const char *path, char **out_text) {
     int rc = duplicate_text_bytes(raw_data, raw_size, 0, out_text);
     free(raw_data);
     return rc;
+}
+
+static int load_lyrics_text_utf8(const char *path, char **out_text) {
+    if (!path || !out_text) {
+        return -1;
+    }
+
+    *out_text = NULL;
+
+    unsigned char *raw_data = NULL;
+    size_t raw_size = 0;
+    if (read_file_bytes(path, &raw_data, &raw_size) != 0) {
+        return -1;
+    }
+
+    return process_lyrics_buffer(raw_data, raw_size, out_text);
 }
 
 static void sanitize_ascii_lyric(char *dest, size_t dest_size, const char *src) {
@@ -950,7 +958,17 @@ void load_lyrics(const char *audio_path) {
     }
     
     char *lyrics_text = NULL;
-    if (load_lyrics_text_utf8(lrc_path, &lyrics_text) != 0 || !lyrics_text) {
+    if (remote_is_remote_path(lrc_path)) {
+        unsigned char *raw_data = NULL;
+        size_t raw_size = 0;
+        if (remote_fetch_to_buffer(lrc_path, &raw_data, &raw_size) == 0) {
+            process_lyrics_buffer(raw_data, raw_size, &lyrics_text);
+        }
+        if (!lyrics_text) {
+            reset_loaded_lyrics();
+            return;
+        }
+    } else if (load_lyrics_text_utf8(lrc_path, &lyrics_text) != 0 || !lyrics_text) {
         reset_loaded_lyrics();
         return;
     }

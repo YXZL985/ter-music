@@ -2469,6 +2469,9 @@ static void remote_refresh_entries(void) {
     g_remote_entry_count = 0;
     g_remote_entry_offset = 0;
 
+    show_status_message(menu_text("正在连接...", "Connecting..."));
+    refresh();
+
     const RemoteConnectionConfig *conn = &g_app_config.remote_connections[g_remote_selected_conn];
     int ret = remote_list_directory(conn, g_remote_current_path, &g_remote_entries, &g_remote_entry_count);
     if (ret < 0) {

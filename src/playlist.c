@@ -537,6 +537,11 @@ void get_audio_metadata(const char *path, char *title, char *artist, char *album
 
     fill_metadata_from_filename(path, title, artist, album);
 
+    // 远程 URL 不通过 FFmpeg 打开（会阻塞主线程且无超时）
+    if (remote_is_remote_path(path)) {
+        return;
+    }
+
     AVFormatContext *fmt_ctx = NULL;
     if (avformat_open_input(&fmt_ctx, path, NULL, NULL) != 0) {
         return;
@@ -1102,6 +1107,11 @@ static int decode_image_to_jpeg(const unsigned char *data, int size,
 
 int extract_album_cover(const char *audio_path, char *output_path, size_t output_size) {
     if (!audio_path || !output_path || output_size == 0) {
+        return -1;
+    }
+
+    // 远程 URL 的封面无法在不阻塞的情况下提取
+    if (remote_is_remote_path(audio_path)) {
         return -1;
     }
 

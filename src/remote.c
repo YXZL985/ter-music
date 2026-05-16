@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <curl/curl.h>
 
 /* ---------- error reporting ---------- */
@@ -746,4 +747,90 @@ const char *remote_protocol_name(int protocol) {
         case REMOTE_PROTOCOL_HTTP:   return "HTTP";
         default:                     return "?";
     }
+}
+
+/* ---------- remote file fetching ---------- */
+
+int remote_fetch_to_buffer(const char *url, unsigned char **data, size_t *size) {
+    if (!url || !data || !size) return -1;
+
+    *data = NULL;
+    *size = 0;
+
+    CURL *curl = curl_easy_init();
+    if (!curl) return -1;
+
+    struct write_buf buf = {0};
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+
+    CURLcode res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+        curl_easy_cleanup(curl);
+        free(buf.data);
+        return -1;
+    }
+
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+    curl_easy_cleanup(curl);
+
+    if (http_code >= 400) {
+        free(buf.data);
+        return -1;
+    }
+
+    *data = (unsigned char *)buf.data;
+    *size = buf.len;
+    return 0;
+}
+
+/* ---------- write-to-file callback ---------- */
+
+struct write_file_ctx {
+    FILE *fp;
+};
+
+static size_t write_file_cb(void *ptr, size_t size, size_t nmemb, void *userdata) {
+    struct write_file_ctx *ctx = (struct write_file_ctx *)userdata;
+    return fwrite(ptr, size, nmemb, ctx->fp);
+}
+
+int remote_fetch_to_file(const char *url, const char *dest_path) {
+    if (!url || !dest_path) return -1;
+
+    CURL *curl = curl_easy_init();
+    if (!curl) return -1;
+
+    FILE *fp = fopen(dest_path, "wb");
+    if (!fp) {
+        curl_easy_cleanup(curl);
+        return -1;
+    }
+
+    struct write_file_ctx ctx = { .fp = fp };
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_file_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 30L);
+
+    CURLcode res = curl_easy_perform(curl);
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+    fclose(fp);
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK || http_code >= 400) {
+        unlink(dest_path);
+        return -1;
+    }
+
+    return 0;
 }
