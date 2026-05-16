@@ -57,7 +57,7 @@ sudo dnf install build/rpm/x86_64/ter-music-*.x86_64.rpm
 ```
 
 ### 7. tools/start-server.py — 测试服务器工具
-启动本地 SMB/FTP/SFTP/WebDAV 服务器，用于测试远程音乐播放功能。
+启动本地 SMB/FTP/SFTP/WebDAV/HTTP 服务器，用于测试远程音乐播放功能。
 
 > **Python 环境要求**：该脚本为 Python 脚本，建议在 Conda 环境中运行，避免依赖冲突。
 
@@ -84,7 +84,7 @@ conda activate ter-music
 # 启动交互式菜单
 python3 tools/start-server.py
 ```
-按提示选择协议、配置端口和共享目录即可启动。支持匿名访问（FTP/SMB）和密码认证（SFTP/WebDAV）。
+按提示选择协议、配置端口和共享目录即可启动。支持匿名访问（FTP/SMB/HTTP）、密码认证（SFTP/WebDAV）和公钥认证（SFTP）。
 
 ### 2. build-appimage.sh - 构建 AppImage 包
 直接从源码构建 AppImage 格式（也可从 RPM 转换，需要 FUSE 支持）。

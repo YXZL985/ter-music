@@ -15,7 +15,7 @@ Ter-Music是一款简洁的终端音乐播放器，专门为Linux系统开发。
 - 兼容LRC格式歌词，可精准跟随音频进度同步显示，分秒不差
 - 提供四种循环模式：顺序播放、单曲循环、列表循环、随机播放
 - 支持倍速播放，提供0.75x、1.0x、1.25x、1.5x、2.0x、3.0x六档速度调节，高效收听
-- 支持远程音乐播放，可通过SMB、SFTP、FTP、WebDAV协议播放远程服务器或NAS上的音乐
+- 支持远程音乐播放，可通过SMB、SFTP、FTP、WebDAV、HTTP协议播放远程服务器或NAS上的音乐
 - 支持歌单管理，可创建多个自定义歌单，灵活切换播放
 - 支持收藏喜欢的歌曲，方便快速查找播放
 - 自动记录播放历史，便于回顾听过的音乐
@@ -45,7 +45,7 @@ Ter-Music是一款简洁的终端音乐播放器，专门为Linux系统开发。
 | 🔧 CMake构建 | 采用现代构建方式，跨系统兼容性好 |
 | 🔊 PulseAudio音频输出 | 稳定且低延迟的音频播放方案 |
 | ⏩ 倍速播放控制 | 六档速度调节（0.75x-3.0x），播放中可随时切换 |
-| 🌐 远程播放 | 支持SMB/SFTP/FTP/WebDAV远程音乐播放 |
+| 🌐 远程播放 | 支持SMB/SFTP/FTP/WebDAV/HTTP远程音乐播放 |
 | 🎨 专辑封面 | 终端专辑封面显示，可在设置中开关 |
 
 ### 四 适用场景
@@ -247,8 +247,9 @@ rm -rf build
 - **Arch Linux包** - 适用于Arch Linux及其衍生发行版
 
 **测试服务器工具：**
-- **tools/start-server.py** - 交互式脚本，快速启动本地SMB/FTP/SFTP/WebDAV服务器，用于测试远程音乐播放功能。
+- **tools/start-server.py** - 交互式脚本，快速启动本地SMB/FTP/SFTP/WebDAV/HTTP服务器，用于测试远程音乐播放功能。
   > 该脚本为 Python 脚本，建议在 Conda 环境中运行。配置：`conda create -n ter-music python=3 && conda activate ter-music && pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r tools/requirements.txt` 然后执行 `python3 tools/start-server.py`
+  > 同时也支持CLI模式：`python3 tools/start-server.py --protocol http --port 8080 --path /music/share` 或 `python3 tools/start-server.py --protocol sftp --port 2222 --username test --sftp-authorized-keys ~/.ssh/authorized_keys`
 
 ## 第五章 使用方法
 ### 一 启动播放器

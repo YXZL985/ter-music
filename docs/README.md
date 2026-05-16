@@ -16,7 +16,7 @@ Ter-Music is a lightweight, terminal-based command-line music player designed fo
 
 **Key Features:**
 
-- 🌐 **Remote Music Playback**: Supports SMB, SFTP, FTP, WebDAV protocols for playing music from remote servers and NAS devices
+- 🌐 **Remote Music Playback**: Supports SMB, SFTP, FTP, WebDAV, HTTP protocols for playing music from remote servers and NAS devices
 - 🎵 **Supports Multiple Audio Formats**: MP3, WAV, FLAC, OGG, M4A, AAC, WMA, APE, OPUS and other popular formats
 - 📝 **LRC Lyrics Synchronization**: Automatically loads and synchronizes lyrics, highlights current line with playback progress
 - 🎶 **Multiple Playback Modes**: Sequential, single repeat, list repeat, shuffle
@@ -286,8 +286,9 @@ The following formats are supported:
 - **Arch Linux Package** - For Arch Linux and derivatives
 
 **Test Server Tools:**
-- **tools/start-server.py** - Interactive script to start local SMB/FTP/SFTP/WebDAV servers for testing remote playback feature.
+- **tools/start-server.py** - Interactive script to start local SMB/FTP/SFTP/WebDAV/HTTP servers for testing remote playback feature.
   > This Python script should be run in a Conda environment. Setup: `conda create -n ter-music python=3 && conda activate ter-music && pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r tools/requirements.txt` then `python3 tools/start-server.py`
+  > **CLI mode also available:** `python3 tools/start-server.py --protocol http --port 8080 --path /music/share` or `python3 tools/start-server.py --protocol sftp --port 2222 --username test --sftp-authorized-keys ~/.ssh/authorized_keys`
 
 ## 5. Usage
 
