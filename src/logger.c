@@ -6,15 +6,18 @@
 #include <time.h>
 #include <pthread.h>
 
-#define LOG_FILE_PATH "./ter-music-debug.log"
-
 static FILE *g_log_file = NULL;
 static int g_log_enabled = 0;
 static pthread_mutex_t g_log_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 void logger_init(void) {
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    char path[256];
+    strftime(path, sizeof(path), "./ter-music-debug-%Y-%m-%d-%H%M%S.log", t);
+
     pthread_mutex_lock(&g_log_mutex);
-    g_log_file = fopen(LOG_FILE_PATH, "a");
+    g_log_file = fopen(path, "a");
     if (g_log_file) {
         setvbuf(g_log_file, NULL, _IONBF, 0);
         g_log_enabled = 1;
