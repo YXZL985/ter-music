@@ -88,6 +88,7 @@ add_executable(${PROJECT_NAME}
     src/braille_art.c
     src/image_loader.c
     src/remote.c
+    src/logger.c
 )
 
 # 包含头文件目录

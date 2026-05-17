@@ -10,6 +10,7 @@
 static char g_remote_errbuf[256];
 
 void remote_set_error(const char *msg) {
+    log_debug("remote", "Error set: %s", msg ? msg : "(null)");
     strncpy(g_remote_errbuf, msg ? msg : "", sizeof(g_remote_errbuf) - 1);
     g_remote_errbuf[sizeof(g_remote_errbuf) - 1] = '\0';
 }
@@ -21,10 +22,12 @@ const char *remote_strerror(void) {
 /* ---------- lifecycle ---------- */
 
 void remote_init(void) {
+    log_info("remote", "Initializing remote subsystem (libcurl)");
     curl_global_init(CURL_GLOBAL_ALL);
 }
 
 void remote_cleanup(void) {
+    log_info("remote", "Remote subsystem cleaned up");
     curl_global_cleanup();
 }
 
@@ -65,7 +68,10 @@ int remote_parse_url(const char *url, RemoteConnectionConfig *conn) {
     memset(conn, 0, sizeof(*conn));
 
     const char *scheme_end = strstr(url, "://");
-    if (!scheme_end) return -1;
+    if (!scheme_end) {
+        log_debug("remote", "URL parse failed (no scheme): %s", url);
+        return -1;
+    }
 
     size_t scheme_len = scheme_end - url;
     if (scheme_len == 3 && strncmp(url, "ftp", 3) == 0)
@@ -150,6 +156,8 @@ int remote_parse_url(const char *url, RemoteConnectionConfig *conn) {
     }
 
     snprintf(conn->name, sizeof(conn->name), "%.64s", host_part);
+    log_debug("remote", "URL parsed: protocol=%d host=%s port=%d base='%s'",
+              conn->protocol, conn->host, conn->port, conn->base_path);
     return 0;
 }
 
@@ -519,8 +527,13 @@ int remote_list_directory(const RemoteConnectionConfig *conn,
     char url[2048];
     remote_build_url(conn, subpath, url, sizeof(url));
 
+    log_info("remote", "Listing directory: protocol=%d url='%s'", conn->protocol, url);
+
     CURL *curl = create_curl_handle(conn, url);
-    if (!curl) return -1;
+    if (!curl) {
+        log_error("remote", "Failed to create curl handle for listing url='%s'", url);
+        return -1;
+    }
 
     struct write_buf buf = {0};
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
@@ -727,6 +740,7 @@ int remote_list_directory(const RemoteConnectionConfig *conn,
 
         *out_count = count;
         free(buf.data);
+        log_info("remote", "Listed %d entries from directory", count);
         return 0;
     }
 }
@@ -803,11 +817,17 @@ static size_t write_file_cb(void *ptr, size_t size, size_t nmemb, void *userdata
 int remote_fetch_to_file(const char *url, const char *dest_path) {
     if (!url || !dest_path) return -1;
 
+    log_info("remote", "Fetching remote file: '%s' -> '%s'", url, dest_path);
+
     CURL *curl = curl_easy_init();
-    if (!curl) return -1;
+    if (!curl) {
+        log_error("remote", "Failed to create curl handle for fetch: '%s'", url);
+        return -1;
+    }
 
     FILE *fp = fopen(dest_path, "wb");
     if (!fp) {
+        log_error("remote", "Failed to open dest file '%s' for writing", dest_path);
         curl_easy_cleanup(curl);
         return -1;
     }
@@ -828,9 +848,11 @@ int remote_fetch_to_file(const char *url, const char *dest_path) {
     curl_easy_cleanup(curl);
 
     if (res != CURLE_OK || http_code >= 400) {
+        log_error("remote", "Fetch failed: url='%s' curl=%d http=%ld", url, res, http_code);
         unlink(dest_path);
         return -1;
     }
 
+    log_info("remote", "Fetch complete: '%s' -> '%s'", url, dest_path);
     return 0;
 }

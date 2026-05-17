@@ -596,8 +596,10 @@ void apply_color_theme(void) {
 }
 
 void load_config(void) {
+    log_info("menu_views", "Loading config from '%s'", config_file);
     FILE *f = fopen(config_file, "r");
     if (!f) {
+        log_debug("menu_views", "Config file not found, using defaults");
         init_default_config();
         return;
     }
@@ -744,6 +746,7 @@ void load_config(void) {
 }
 
 void save_config(void) {
+    log_debug("menu_views", "Saving config to '%s'", config_file);
     FILE *f = fopen(config_file, "w");
     if (!f) return;
     
@@ -1103,6 +1106,7 @@ void save_dir_history(void) {
 
 void add_dir_history_entry(const char *path) {
     if (!path || strlen(path) == 0) return;
+    log_debug("menu_views", "add_dir_history_entry('%s')", path);
     
     for (int i = 0; i < g_dir_history.count; i++) {
         if (strcmp(g_dir_history.entries[i].path, path) == 0) {
@@ -1128,6 +1132,7 @@ void add_dir_history_entry(const char *path) {
 }
 
 void clear_dir_history(void) {
+    log_info("menu_views", "Directory history cleared");
     g_dir_history.count = 0;
     save_dir_history();
 }
@@ -1285,8 +1290,11 @@ void save_all_playlists(void) {
 void save_temp_playlist(void) {
     int snapshot_count = playlist_count();
     if (!playlist_is_loaded() || snapshot_count == 0) {
+        log_debug("menu_views", "save_temp_playlist: nothing to save (loaded=%d count=%d)",
+                  playlist_is_loaded(), snapshot_count);
         return;
     }
+    log_debug("menu_views", "Saving temp playlist (%d tracks)", snapshot_count);
 
     char folder_path[MAX_PATH_LEN];
     playlist_copy_folder_path(folder_path, sizeof(folder_path));
@@ -1330,6 +1338,7 @@ void save_temp_playlist(void) {
 }
 
 void cleanup_temp_playlist(void) {
+    log_debug("menu_views", "Cleaning up temp playlist file");
     if (temp_playlist_file[0] != '\0') {
         unlink(temp_playlist_file);
     }
@@ -1547,8 +1556,10 @@ static int load_temp_playlist_legacy_json(void) {
 }
 
 int load_temp_playlist(void) {
+    log_info("menu_views", "Loading temp playlist from '%s'", temp_playlist_file);
     FILE *f = fopen(temp_playlist_file, "r");
     if (!f) {
+        log_debug("menu_views", "No temp playlist file found");
         return 0;
     }
 
@@ -1726,11 +1737,12 @@ void show_status_message(const char *msg) {
 }
 
 void init_menu_views(void) {
+    log_info("menu_views", "Initializing menu views");
     g_current_view = VIEW_MAIN;
     g_menu_selected_idx = 0;
     g_content_selected_idx = 0;
     g_focus_area = FOCUS_SIDEBAR;
-    
+
     init_all_persistent_data();
 }
 
@@ -1790,6 +1802,7 @@ void render_menu_sidebar(int selected_idx, const char **items, int item_count) {
 
 void add_history_entry(Track *track) {
     if (!track || g_play_history.count >= MAX_HISTORY_COUNT) return;
+    log_debug("menu_views", "add_history_entry: '%s' - '%s'", track->title, track->artist);
     
     if (g_play_history.count > 0) {
         memmove(&g_play_history.entries[1], &g_play_history.entries[0], 
@@ -3410,6 +3423,7 @@ void render_info_content(void) {
 }
 
 void switch_to_view(ViewMode view) {
+    log_info("menu_views", "View switched: %d -> %d", g_current_view, view);
     g_current_view = view;
     g_menu_selected_idx = 0;
     g_content_selected_idx = 0;
@@ -3522,6 +3536,7 @@ void toggle_ui_language(void) {
 }
 
 void handle_function_keys(int fkey) {
+    log_debug("menu_views", "Function key F%d pressed", fkey - KEY_F(0));
     switch(fkey) {
         case KEY_F(1):
             exit_current_view();

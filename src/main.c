@@ -20,7 +20,11 @@ extern void cleanup();
 extern int load_playlist(const char *path);
 extern void prompt_open_folder();
 
+int g_debug_enabled = 0;
+
 void crash_handler(int sig) {
+    log_error("main", "Fatal signal %d received! Performing emergency shutdown", sig);
+    logger_shutdown();
     endwin();
     cleanup_temp_playlist();
     fprintf(stderr, "致命错误：收到信号 %d\n", sig);
@@ -203,6 +207,7 @@ static void print_usage(const char *prog_name) {
     printf("用法：%s [选项]\n\n", prog_name);
     printf("选项：\n");
     printf("  -o, --open <path>    启动时打开指定音乐目录、音频文件或远程URL\n");
+    printf("  -d, --debug          启用调试日志（输出到 ter-music-debug.log）\n");
     printf("  -h, --help           显示帮助信息\n");
     printf("\n");
     printf("远程 URL 示例：\n");
@@ -225,13 +230,17 @@ int main(int argc, char *argv[]) {
     struct option long_options[] = {
         {"open", required_argument, 0, 'o'},
         {"help", no_argument, 0, 'h'},
+        {"debug", no_argument, 0, 'd'},
         {0, 0, 0, 0}
     };
-    
-    while ((opt = getopt_long(argc, argv, "o:h", long_options, NULL)) != -1) {
+
+    while ((opt = getopt_long(argc, argv, "o:hd", long_options, NULL)) != -1) {
         switch (opt) {
             case 'o':
                 open_path = optarg;
+                break;
+            case 'd':
+                g_debug_enabled = 1;
                 break;
             case 'h':
                 print_usage(argv[0]);
@@ -246,6 +255,12 @@ int main(int argc, char *argv[]) {
         open_path = argv[optind];
     }
 
+    if (g_debug_enabled) {
+        logger_init();
+        log_info("main", "=== ter-music %s debug session started ===", APP_VERSION);
+        log_info("main", "Debug logging enabled via --debug flag");
+    }
+
     if (!isatty(STDOUT_FILENO)) {
         fprintf(stderr, "错误：ter-music 需要在终端里直接运行。\n");
         fprintf(stderr, "请不要把它通过管道重定向到其他命令。\n");
@@ -253,7 +268,8 @@ int main(int argc, char *argv[]) {
     }
     
     init_ncurses();
-    
+    log_info("main", "ncurses initialized, terminal size: %dx%d", COLS, LINES);
+
     init_menu_views();
     set_volume_percent(g_app_config.volume_percent);
     
@@ -263,6 +279,7 @@ int main(int argc, char *argv[]) {
     
     init_ffmpeg();
     remote_init();
+    log_info("main", "Subsystems initialized");
 
     init_audio_device();
     media_session_init();
@@ -279,6 +296,7 @@ int main(int argc, char *argv[]) {
 
     int temp_loaded = load_temp_playlist();
     if (temp_loaded > 0) {
+        log_info("main", "Restored temp playlist from previous session");
         loaded = 1;
         playlist_copy_folder_path(final_path, sizeof(final_path));
 
@@ -290,14 +308,17 @@ int main(int argc, char *argv[]) {
             }
         }
     }
-    
+
     if (open_path && strlen(open_path) > 0) {
-        // Check if it's a remote URL
+        log_info("main", "Processing --open path: %s", open_path);
         if (remote_is_remote_path(open_path)) {
             RemoteConnectionConfig rconn;
             if (remote_parse_url(open_path, &rconn) == 0) {
+                log_info("main", "Remote URL parsed: protocol=%d host=%s port=%d",
+                         rconn.protocol, rconn.host, rconn.port);
                 int count = load_remote_playlist(&rconn, rconn.base_path);
                 if (count > 0) {
+                    log_info("main", "Remote playlist loaded: %d tracks from %s", count, open_path);
                     loaded = 1;
                     snprintf(final_path, sizeof(final_path), "%s", open_path);
                 } else {
@@ -321,6 +342,7 @@ int main(int argc, char *argv[]) {
                     used_fallback = 1;
                 }
             } else {
+                log_warn("main", "Failed to parse remote URL: %s", open_path);
                 mvprintw(2, 2, "%s",
                          use_english_ui()
                              ? "Warning: invalid remote URL"
@@ -333,6 +355,7 @@ int main(int argc, char *argv[]) {
                 used_fallback = 1;
             }
         } else {
+        log_info("main", "Loading local path from --open: %s", open_path);
         char expanded_path[MAX_PATH_LEN];
         expand_user_path(open_path, expanded_path, sizeof(expanded_path));
 
@@ -340,9 +363,11 @@ int main(int argc, char *argv[]) {
         if (stat(expanded_path, &s) == 0) {
             if (S_ISREG(s.st_mode) || S_ISDIR(s.st_mode)) {
                 if (load_startup_playlist(expanded_path, final_path, sizeof(final_path))) {
+                    log_info("main", "Local path loaded: '%s', final_path='%s'", expanded_path, final_path);
                     loaded = 1;
                 } else {
-                    const char *error_msg = S_ISREG(s.st_mode) 
+                    log_warn("main", "Failed to load local path: '%s'", expanded_path);
+                    const char *error_msg = S_ISREG(s.st_mode)
                         ? (use_english_ui() ? "Warning: cannot open audio file" : "警告：无法打开音频文件")
                         : (use_english_ui() ? "Warning: the selected folder has no playable audio files" : "警告：指定目录中没有可播放的音频文件");
                     
@@ -378,18 +403,24 @@ int main(int argc, char *argv[]) {
     if (!loaded && !open_path && g_app_config.resume_last_playback &&
         g_app_config.last_played_folder_path[0] != '\0') {
         attempted_resume_load = 1;
+        log_info("main", "Attempting resume load from: '%s'", g_app_config.last_played_folder_path);
         if (load_startup_playlist(g_app_config.last_played_folder_path, final_path, sizeof(final_path))) {
+            log_info("main", "Resume path loaded: '%s'", g_app_config.last_played_folder_path);
             loaded = 1;
+        } else {
+            log_warn("main", "Resume path not found: '%s'", g_app_config.last_played_folder_path);
         }
     }
 
     if (!loaded) {
         char current_dir[MAX_PATH_LEN];
         char auto_found_path[MAX_PATH_LEN];
+        log_info("main", "No playlist loaded, trying auto-detect in current directory");
 
         if (getcwd(current_dir, sizeof(current_dir)) &&
             find_audio_directory_recursive(current_dir, auto_found_path, sizeof(auto_found_path), 0) &&
             load_startup_playlist(auto_found_path, final_path, sizeof(final_path))) {
+            log_info("main", "Auto-detected music folder: '%s'", auto_found_path);
             loaded = 1;
 
             if (used_fallback) {
@@ -403,7 +434,9 @@ int main(int argc, char *argv[]) {
     }
     
     if (!loaded && g_app_config.default_startup_path[0] != '\0') {
+        log_info("main", "Trying default startup path: '%s'", g_app_config.default_startup_path);
         if (load_startup_playlist(g_app_config.default_startup_path, final_path, sizeof(final_path))) {
+            log_info("main", "Loaded from default path: '%s'", g_app_config.default_startup_path);
             loaded = 1;
 
             if (used_fallback) {
@@ -416,7 +449,9 @@ int main(int argc, char *argv[]) {
     }
     
     if (!loaded && g_app_config.remember_last_path && g_app_config.last_opened_path[0] != '\0') {
+        log_info("main", "Trying last opened path: '%s'", g_app_config.last_opened_path);
         if (load_startup_playlist(g_app_config.last_opened_path, final_path, sizeof(final_path))) {
+            log_info("main", "Loaded from last opened path");
             loaded = 1;
         }
     }
@@ -431,13 +466,19 @@ int main(int argc, char *argv[]) {
 
         if (g_app_config.resume_last_playback &&
             strcmp(final_path, g_app_config.last_played_folder_path) == 0) {
+            log_info("main", "Attempting to resume playback session");
             resumed_playback = restore_saved_playback_session();
-            if (!resumed_playback) {
+            if (resumed_playback) {
+                log_info("main", "Playback session restored: track idx=%d pos=%d",
+                         g_current_play_index, g_app_config.last_played_position);
+            } else {
+                log_info("main", "Resume playback failed, clearing saved session");
                 clear_saved_playback_session();
             }
         }
 
         if (!resumed_playback && g_app_config.auto_play_on_start && playlist_count() > 0) {
+            log_info("main", "Auto-playing first track (auto_play_on_start)");
             play_audio(0);
         }
         if (attempted_resume_load &&
@@ -449,12 +490,17 @@ int main(int argc, char *argv[]) {
         clear_saved_playback_session();
     }
     
+    log_info("main", "Starting event loop");
     run_event_loop();
-    
+
+    log_info("main", "Event loop exited, beginning shutdown");
     save_temp_playlist();
     cleanup();
     cleanup_temp_playlist();
-    
+
+    log_info("main", "ter-music exited cleanly");
+    logger_shutdown();
+
     printf("%s\n", use_english_ui() ? "ter-music exited cleanly." : "ter-music 已正常退出。");
     return 0;
 }

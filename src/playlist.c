@@ -335,6 +335,7 @@ static void clear_metadata_cache_locked(Playlist *playlist) {
 }
 
 void reset_playlist_state(void) {
+    log_info("playlist", "Resetting playlist state");
     playlist_lock();
     memset(&g_playlist, 0, sizeof(g_playlist));
     playlist_unlock();
@@ -631,16 +632,19 @@ int load_playlist(const char *path) {
     if (!path || path[0] == '\0') {
         return -1;
     }
-    
+    log_info("playlist", "load_playlist(path='%s') called", path);
+
     struct stat s;
     if (stat(path, &s) != 0) {
+        log_warn("playlist", "stat() failed for path='%s'", path);
         return -1;
     }
-    
+
     if (S_ISREG(s.st_mode)) {
+        log_debug("playlist", "Loading single file: '%s'", path);
         return load_single_file(path);
     }
-    
+
     if (!S_ISDIR(s.st_mode)) {
         return -1;
     }
@@ -668,10 +672,12 @@ int load_playlist(const char *path) {
 
     int total = next->count;
     free(next);
+    log_info("playlist", "load_playlist: loaded %d tracks from '%s'", total, path);
     return total;
 }
 
 int append_playlist(const char *path) {
+    log_info("playlist", "append_playlist(path='%s') called", path);
     Playlist *next = calloc(1, sizeof(*next));
     if (!next) {
         return -1;
@@ -716,14 +722,17 @@ int append_playlist(const char *path) {
     }
 
     free(next);
+    log_info("playlist", "append_playlist: added %d new tracks (total=%d)", added, playlist_count());
     return added;
 }
 
 int load_remote_playlist(const RemoteConnectionConfig *conn, const char *subpath) {
+    log_info("playlist", "load_remote_playlist(protocol=%d, subpath='%s') called", conn->protocol, subpath);
     RemoteDirEntry *entries = NULL;
     int entry_count = 0;
 
     if (remote_list_directory(conn, subpath, &entries, &entry_count) < 0) {
+        log_warn("playlist", "remote_list_directory failed");
         return -1;
     }
 
@@ -765,10 +774,12 @@ int load_remote_playlist(const RemoteConnectionConfig *conn, const char *subpath
 
     int total = next->count;
     free(next);
+    log_info("playlist", "Remote playlist: loaded %d tracks", total);
     return total;
 }
 
 void clear_metadata_cache(void) {
+    log_debug("playlist", "Clearing metadata cache");
     playlist_lock();
     clear_metadata_cache_locked(&g_playlist);
     playlist_unlock();
@@ -818,6 +829,7 @@ int get_track_metadata(int index, Track *out) {
 
     CachedTrack *cached = find_in_cache_locked(index);
     if (cached) {
+        log_debug("playlist", "Cache hit for index=%d ('%s')", index, cached->title);
         strncpy(out->path, g_playlist.tracks[index], MAX_PATH_LEN - 1);
         out->path[MAX_PATH_LEN - 1] = '\0';
         strncpy(out->title, cached->title, MAX_META_LEN - 1);
@@ -1110,8 +1122,11 @@ int extract_album_cover(const char *audio_path, char *output_path, size_t output
         return -1;
     }
 
+    log_debug("playlist", "extract_album_cover('%s')", audio_path);
+
     // 远程 URL 的封面无法在不阻塞的情况下提取
     if (remote_is_remote_path(audio_path)) {
+        log_debug("playlist", "Skipping cover extract for remote path");
         return -1;
     }
 
@@ -1177,7 +1192,9 @@ int extract_album_cover(const char *audio_path, char *output_path, size_t output
 
     if (ret == 0) {
         snprintf(output_path, output_size, "%s", temp_path);
+        log_info("playlist", "Album cover extracted: '%s' -> '%s'", audio_path, temp_path);
     } else {
+        log_debug("playlist", "No album cover found in '%s'", audio_path);
         unlink(temp_path);
     }
 

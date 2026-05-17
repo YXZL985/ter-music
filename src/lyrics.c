@@ -943,6 +943,7 @@ void load_lyrics(const char *audio_path) {
     if (!audio_path) {
         return;
     }
+    log_debug("lyrics", "load_lyrics(path='%s') called", audio_path);
     
     // 构造 LRC 文件路径
     char lrc_path[MAX_PATH_LEN];
@@ -969,6 +970,7 @@ void load_lyrics(const char *audio_path) {
             return;
         }
     } else if (load_lyrics_text_utf8(lrc_path, &lyrics_text) != 0 || !lyrics_text) {
+        log_debug("lyrics", "No LRC file found for '%s'", lrc_path);
         reset_loaded_lyrics();
         return;
     }
@@ -1008,10 +1010,11 @@ void load_lyrics(const char *audio_path) {
     
     // 如果没有解析到任何歌词
     if (count == 0) {
+        log_debug("lyrics", "No lyrics content in '%s'", lrc_path);
         reset_loaded_lyrics();
         return;
     }
-    
+
     // 锁定并更新全局歌词数据
     pthread_mutex_lock(&g_lyrics.lock);
     g_lyrics.count = count;
@@ -1021,9 +1024,12 @@ void load_lyrics(const char *audio_path) {
     g_lyrics.highlight_count = 0;
     g_lyrics.cursor_index = -1;
     pthread_mutex_unlock(&g_lyrics.lock);
+
+    log_info("lyrics", "Loaded %d lyric lines from '%s'", count, lrc_path);
 }
 
 void clear_lyrics(void) {
+    log_debug("lyrics", "clear_lyrics() called");
     pthread_mutex_lock(&g_lyrics.lock);
     g_lyrics.count = 0;
     g_lyrics.current_index = -1;

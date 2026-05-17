@@ -1227,6 +1227,7 @@ void process_pending_ui_refresh(void) {
  * 设置本地化、终端模式和颜色对
  */
 void init_ncurses() {
+    log_info("ui", "Initializing ncurses");
     ensure_utf8_locale();
     g_ascii_fallback_ui = terminal_needs_ascii_fallback();
 
@@ -1444,6 +1445,7 @@ int utf8_backspace(char *buffer, int pos, WINDOW *win) {
  * 设置播放列表、控制栏和歌词窗口的大小和位置
  */
 void create_layout() {
+    log_debug("ui", "create_layout() called");
     // 初始化视图状态（仅在第一次调用时）
     static int initialized = 0;
     if (!initialized) {
@@ -2180,6 +2182,9 @@ void update_progress_bar() {
  * 在控制栏底部显示临时消息
  */
 void update_controls_status(const char *msg) {
+    if (msg && msg[0]) {
+        log_debug("ui", "Controls status: %s", msg);
+    }
     pthread_mutex_lock(&g_ui_request_mutex);
     snprintf(g_controls_status_message, sizeof(g_controls_status_message), "%s", msg ? msg : "");
     g_controls_status_time = time(NULL);
@@ -2293,6 +2298,7 @@ static void prompt_folder_input(int append_mode) {
 }
 
 void prompt_open_folder() {
+    log_info("ui", "Opening folder prompt triggered");
     prompt_folder_input(0);
 }
 
@@ -2427,6 +2433,8 @@ static void perform_search(const char *query) {
         g_search_state.active = 0;
     }
 
+    log_info("ui", "Search '%s': %d results out of %d tracks", query, g_search_state.result_count, playlist_total);
+
     render_playlist_content();
 
     char msg[64];
@@ -2443,7 +2451,8 @@ static void perform_search(const char *query) {
  */
 void run_event_loop() {
     int ch;
-    
+    log_info("ui", "Event loop started");
+
     // 初始渲染
     render_playlist_content();
     render_controls(); // 初始绘制控件
@@ -2524,6 +2533,7 @@ void run_event_loop() {
         if (ch == KEY_MOUSE) {
             MEVENT event;
             if (getmouse(&event) == OK) {
+                log_debug("ui", "Mouse event at (%d,%d)", event.x, event.y);
                 if (handle_menu_hint_bar_click(&event)) {
                     continue;
                 }
@@ -2536,11 +2546,13 @@ void run_event_loop() {
         
         // 处理功能键（F1-F8）
         if (ch >= KEY_F(1) && ch <= KEY_F(8)) {
+            log_debug("ui", "Function key F%d pressed", ch - KEY_F(0));
             handle_function_keys(ch);
             continue;
         }
         
         if (ch == 'q' || ch == 'Q') {
+            log_info("ui", "Event loop exiting on 'q' key");
             break;
         }
 
@@ -2895,6 +2907,7 @@ void run_event_loop() {
  * 释放窗口并结束ncurses模式
  */
 void cleanup() {
+    log_info("ui", "cleanup() called");
     persist_playback_session_state();
     stop_audio();
     wait_for_playback_thread_shutdown();

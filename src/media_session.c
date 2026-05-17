@@ -829,6 +829,7 @@ static int request_bus_name(char *dest, size_t dest_size) {
 }
 
 void media_session_init(void) {
+    log_info("media_session", "Initializing media session (MPRIS/D-Bus)");
     DBusError error;
 
     memset(&g_media_session, 0, sizeof(g_media_session));
@@ -836,33 +837,39 @@ void media_session_init(void) {
     dbus_error_init(&error);
     g_media_session.connection = dbus_bus_get(DBUS_BUS_SESSION, &error);
     if (dbus_error_is_set(&error)) {
+        log_warn("media_session", "D-Bus connection failed: %s", error.message);
         dbus_error_free(&error);
         return;
     }
     if (!g_media_session.connection) {
+        log_warn("media_session", "D-Bus connection is NULL");
         return;
     }
 
     dbus_connection_set_exit_on_disconnect(g_media_session.connection, FALSE);
 
     if (!request_bus_name(g_media_session.bus_name, sizeof(g_media_session.bus_name))) {
+        log_warn("media_session", "Failed to acquire D-Bus bus name");
         dbus_connection_unref(g_media_session.connection);
         memset(&g_media_session, 0, sizeof(g_media_session));
         return;
     }
 
     g_media_session.active = 1;
+    log_info("media_session", "D-Bus initialized, bus='%s'", g_media_session.bus_name);
     emit_properties_changed(MPRIS_ROOT_INTERFACE, NULL);
     sync_player_state();
 }
 
 void media_session_shutdown(void) {
+    log_info("media_session", "Shutting down media session");
     if (!g_media_session.connection) {
         memset(&g_media_session, 0, sizeof(g_media_session));
         return;
     }
 
     if (g_media_session.active && g_media_session.bus_name[0] != '\0') {
+        log_debug("media_session", "Releasing D-Bus name: '%s'", g_media_session.bus_name);
         DBusError error;
         dbus_error_init(&error);
         dbus_bus_release_name(g_media_session.connection, g_media_session.bus_name, &error);
@@ -879,6 +886,8 @@ void media_session_notify_seek(uint64_t position_ms) {
     if (!g_media_session.active || !g_media_session.connection || !current_track_is_available()) {
         return;
     }
+
+    log_debug("media_session", "Notifying seek: position=%llu ms", (unsigned long long)position_ms);
 
     DBusMessage *signal = dbus_message_new_signal(MPRIS_OBJECT_PATH,
                                                   MPRIS_PLAYER_INTERFACE,
@@ -899,6 +908,7 @@ void media_session_tick(void) {
         return;
     }
     if (!dbus_connection_get_is_connected(g_media_session.connection)) {
+        log_warn("media_session", "D-Bus connection lost, shutting down");
         media_session_shutdown();
         return;
     }
@@ -943,6 +953,7 @@ void media_session_tick(void) {
 #else
 
 void media_session_init(void) {
+    log_debug("media_session", "D-Bus not available, media session stubs used");
 }
 
 void media_session_tick(void) {

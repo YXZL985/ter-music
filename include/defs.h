@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <pthread.h>
 #include "progress.h"
+#include "logger.h"
 #include <time.h>
 
 #define APP_NAME "ter-music"
@@ -300,6 +301,7 @@ void apply_color_theme(void);
 
 extern int g_rainbow_mode_enabled;
 extern ColorTheme g_saved_theme;
+extern int g_debug_enabled;
 extern int g_konami_input_pos;
 extern uint64_t g_konami_last_time;
 extern int g_rainbow_color_offset;

@@ -1141,33 +1141,39 @@ static void audio_backend_resume_stream(void) {
  * 初始化FFmpeg库
  */
 void init_ffmpeg() {
+    log_info("audio", "Initializing FFmpeg");
     avformat_network_init();
     // 禁用FFmpeg日志输出，避免干扰UI
     av_log_set_level(AV_LOG_QUIET);
     // 设置自定义日志回调，完全禁止任何输出
     av_log_set_callback(ffmpeg_log_callback);
+    log_debug("audio", "FFmpeg initialized, log suppressed");
 }
 
 void init_audio_device() {
+    log_info("audio", "Initializing audio device");
 #if defined(HAVE_PULSE)
     pa_ml = pa_mainloop_new();
     if (!pa_ml) {
+        log_warn("audio", "Failed to create PulseAudio mainloop");
         printf("%s\n", audio_text("警告：无法创建 PulseAudio 主循环", "Warning: cannot create PulseAudio mainloop"));
         return;
     }
-    
+
     pa_ctx = pa_context_new(pa_mainloop_get_api(pa_ml), APP_NAME);
     if (!pa_ctx) {
+        log_warn("audio", "Failed to create PulseAudio context");
         printf("%s\n", audio_text("警告：无法创建 PulseAudio 上下文", "Warning: cannot create PulseAudio context"));
         pa_mainloop_free(pa_ml);
         pa_ml = NULL;
         return;
     }
-    
+
     pa_context_connect(pa_ctx, NULL, PA_CONTEXT_NOFLAGS, NULL);
     while (pa_context_get_state(pa_ctx) != PA_CONTEXT_READY) {
         if (pa_context_get_state(pa_ctx) == PA_CONTEXT_FAILED ||
             pa_context_get_state(pa_ctx) == PA_CONTEXT_TERMINATED) {
+            log_warn("audio", "Failed to connect to PulseAudio server");
             printf("%s\n", audio_text("警告：无法连接 PulseAudio 服务", "Warning: cannot connect PulseAudio"));
             pa_context_unref(pa_ctx);
             pa_mainloop_free(pa_ml);
@@ -1178,11 +1184,13 @@ void init_audio_device() {
         }
         pa_mainloop_iterate(pa_ml, 1, NULL);
     }
-    
+
     pa_connected = 1;
+    log_info("audio", "PulseAudio connected successfully");
     printf("%s\n", audio_text("已连接到 PulseAudio 服务", "Connected to PulseAudio"));
 #else
     alsa_ready = 1;
+    log_info("audio", "ALSA backend ready, device='default'");
     printf("%s\n", audio_text("当前使用 ALSA 音频后端", "Using ALSA backend"));
 #endif
 }
@@ -1199,6 +1207,7 @@ int get_volume_percent(void) {
 
 void set_volume_percent(int volume) {
     int clamped = clamp_volume_percent(volume);
+    int old_volume = g_volume_percent;
     int changed = 0;
 
     pthread_mutex_lock(&g_volume_mutex);
@@ -1210,6 +1219,7 @@ void set_volume_percent(int volume) {
     pthread_mutex_unlock(&g_volume_mutex);
 
     if (changed) {
+        log_info("audio", "Volume changed: %d%% -> %d%%", old_volume, clamped);
         g_app_config.volume_percent = clamped;
         save_config();
 
@@ -1253,7 +1263,9 @@ const char *get_loop_mode_str() {
  * 按顺序切换：Off -> Single -> List -> Random -> Off
  */
 void toggle_loop_mode() {
+    LoopMode old_mode = g_loop_mode;
     g_loop_mode = (g_loop_mode + 1) % 4;
+    log_info("audio", "Loop mode changed: %d -> %d (%s)", old_mode, g_loop_mode, get_loop_mode_str());
     // 不再调用update_controls_status，避免阻塞
     render_controls();
 }
@@ -1264,8 +1276,10 @@ void toggle_loop_mode() {
  * 切换倍速后重启播放以应用新的 atempo 滤镜
  */
 void toggle_playback_speed(void) {
+    float old_speed = g_playback_speed;
     g_speed_index = (g_speed_index + 1) % g_speed_count;
     g_playback_speed = g_speed_ratios[g_speed_index];
+    log_info("audio", "Playback speed changed: %.2fx -> %.2fx", old_speed, g_playback_speed);
     g_app_config.default_playback_speed = g_playback_speed;
     save_config();
     char msg[64];
@@ -1344,10 +1358,12 @@ void process_pending_playback_action(void) {
 
 void cleanup_playback_cache(void) {
     if (g_cached_audio_path[0]) {
+        log_debug("audio", "Cleaning up cached audio: %s", g_cached_audio_path);
         unlink(g_cached_audio_path);
         g_cached_audio_path[0] = '\0';
     }
     if (g_cached_lyrics_path[0]) {
+        log_debug("audio", "Cleaning up cached lyrics: %s", g_cached_lyrics_path);
         unlink(g_cached_lyrics_path);
         g_cached_lyrics_path[0] = '\0';
     }
@@ -1616,7 +1632,9 @@ void *play_audio_thread(void *arg) {
     int reached_end_of_stream = 0;
     int followup_index = -1;
     free(arg);
-    
+
+    log_info("audio", "Playback thread started for index=%d", index);
+
     pthread_mutex_lock(&g_play_mutex);
     int thread_running = g_play_thread_running;
     pthread_mutex_unlock(&g_play_mutex);
@@ -1631,12 +1649,14 @@ void *play_audio_thread(void *arg) {
     }
 
     if (!valid_index || !thread_running) {
+        log_warn("audio", "Playback thread: invalid index=%d or thread not running", index);
         pthread_mutex_lock(&g_play_mutex);
         g_play_thread_running = 0;
         g_play_thread_finished = 1;
         pthread_mutex_unlock(&g_play_mutex);
         return NULL;
     }
+    log_debug("audio", "Playback thread file_path='%s'", file_path);
 
     AVFormatContext *fmt_ctx = NULL;
     AVCodecContext *codec_ctx = NULL;
@@ -1659,11 +1679,13 @@ void *play_audio_thread(void *arg) {
     memset(&pcm_queue, 0, sizeof(pcm_queue));
 
     if (avformat_open_input(&fmt_ctx, file_path, NULL, NULL) != 0) {
+        log_error("audio", "avformat_open_input failed for '%s' (index=%d)", file_path, index);
         update_controls_status(audio_text("无法打开音频文件", "Cannot open audio file"));
         goto cleanup;
     }
-    
+
     if (avformat_find_stream_info(fmt_ctx, NULL) < 0) {
+        log_error("audio", "avformat_find_stream_info failed for '%s'", file_path);
         update_controls_status(audio_text("无法读取音频流信息", "Cannot read stream info"));
         goto cleanup;
     }
@@ -1710,6 +1732,7 @@ void *play_audio_thread(void *arg) {
     }
     
     if (audio_stream_index == -1) {
+        log_error("audio", "No audio stream found in '%s'", file_path);
         update_controls_status(audio_text("未找到音频流", "No audio stream found"));
         goto cleanup;
     }
@@ -1718,6 +1741,7 @@ void *play_audio_thread(void *arg) {
     AVCodecParameters *codec_par = fmt_ctx->streams[audio_stream_index]->codecpar;
     const AVCodec *codec = avcodec_find_decoder(codec_par->codec_id);
     if (!codec) {
+        log_error("audio", "Unsupported codec in '%s' (codec_id=%d)", file_path, codec_par->codec_id);
         update_controls_status(audio_text("当前编解码器不受支持", "Unsupported codec"));
         goto cleanup;
     }
@@ -1746,6 +1770,10 @@ void *play_audio_thread(void *arg) {
     output_channels = (input_channels == 1) ? 1 : 2;
     // 使用原始采样率，倍速通过 atempo 滤镜实现
     output_sample_rate = codec_ctx->sample_rate > 0 ? codec_ctx->sample_rate : 44100;
+    log_debug("audio", "Audio stream: rate=%d, channels=%d, codec=%s, duration=%ds",
+              output_sample_rate, output_channels,
+              codec ? codec->name : "unknown",
+              g_total_duration);
     prefill_target_frames = (output_sample_rate * get_pcm_prefill_target_ms(output_sample_rate) + 999) / 1000;
     
     // 检查是否需要重采样（输出格式不是 S16 或通道数需要转换）
@@ -1919,6 +1947,15 @@ cleanup:
         }
     }
 
+    if (reached_end_of_stream && followup_index >= 0) {
+        log_info("audio", "End of stream for index=%d, scheduling follow-up index=%d (loop=%d)",
+                 index, followup_index, g_loop_mode);
+    } else if (reached_end_of_stream) {
+        log_info("audio", "End of stream for index=%d, no follow-up (loop=%d)", index, g_loop_mode);
+    } else if (playback_error) {
+        log_warn("audio", "Playback error for index=%d, stopping thread", index);
+    }
+
     g_play_thread_running = 0;
     g_play_thread_finished = 1;
     g_play_state = PLAY_STATE_STOPPED;
@@ -1934,6 +1971,9 @@ cleanup:
         request_ui_refresh(UI_DIRTY_LYRICS);
     }
     request_ui_refresh(UI_DIRTY_PLAYLIST | UI_DIRTY_CONTROLS);
+
+    log_debug("audio", "Playback thread exiting for index=%d (eos=%d, err=%d)",
+              index, reached_end_of_stream, playback_error);
     return NULL;
 }
 
@@ -1944,8 +1984,10 @@ cleanup:
 void play_audio(int index) {
     char track_path[MAX_PATH_LEN];
     if (playlist_get_track_path(index, track_path, sizeof(track_path)) != 0) {
+        log_warn("audio", "play_audio(%d): invalid track index", index);
         return;
     }
+    log_info("audio", "play_audio(index=%d) track='%s'", index, track_path);
 
     reap_finished_playback_thread();
 
@@ -1956,11 +1998,13 @@ void play_audio(int index) {
     int is_speed_change_restart = (g_initial_seek_position > 0);
 
     if (!is_speed_change_restart && g_play_state == PLAY_STATE_PLAYING && g_current_play_index == index) {
+        log_debug("audio", "Skipping play: same index=%d already playing", index);
         pthread_mutex_unlock(&g_play_mutex);
         return;
     }
 
     if (g_play_thread_active) {
+        log_debug("audio", "Pending play_audio(%d) - thread already active, scheduling switch", index);
         g_selected_index = index;
         g_pending_playback_index = index;
         g_play_thread_running = 0;
@@ -2055,6 +2099,7 @@ void play_audio(int index) {
     *index_ptr = index;
 
     if (pthread_create(&g_play_thread, NULL, play_audio_thread, index_ptr) != 0) {
+        log_error("audio", "Failed to create playback thread for index=%d", index);
         free(index_ptr);
         pthread_mutex_lock(&g_play_mutex);
         g_play_thread_active = 0;
@@ -2086,6 +2131,7 @@ void play_audio(int index) {
         track.title, track.artist);
     update_controls_status(msg);
     add_history_entry(&track);
+    log_info("audio", "Now playing: '%s' - '%s' (idx=%d)", track.title, track.artist, index);
     render_playlist_content();
     request_ui_refresh(UI_DIRTY_CONTROLS);
 }
@@ -2095,8 +2141,9 @@ void play_audio(int index) {
  * 仅在播放状态下有效
  */
 void pause_audio() {
+    log_debug("audio", "pause_audio() called");
     pthread_mutex_lock(&g_play_mutex);
-    
+
     // 二次验证：确保仍在播放状态且播放线程运行中
     if (g_play_state != PLAY_STATE_PLAYING || !g_play_thread_running) {
         pthread_mutex_unlock(&g_play_mutex);
@@ -2127,8 +2174,9 @@ void pause_audio() {
  * 仅在暂停状态下有效
  */
 void resume_audio() {
+    log_debug("audio", "resume_audio() called");
     pthread_mutex_lock(&g_play_mutex);
-    
+
     // 二次验证：确保仍在暂停状态且播放线程运行中
     if (g_play_state != PLAY_STATE_PAUSED || !g_play_thread_running) {
         pthread_mutex_unlock(&g_play_mutex);
@@ -2161,6 +2209,7 @@ void resume_audio() {
  * 停止播放线程并重置播放状态
  */
 void stop_audio() {
+    log_debug("audio", "stop_audio() called");
     reap_finished_playback_thread();
 
     pthread_mutex_lock(&g_play_mutex);
@@ -2186,6 +2235,7 @@ void stop_audio() {
  * 根据当前循环模式决定下一曲的选择逻辑
  */
 void next_track() {
+    log_debug("audio", "next_track() called, loop=%d, current_idx=%d", g_loop_mode, g_current_play_index);
     int playlist_total = playlist_count();
     if (playlist_total == 0) {
         return;
@@ -2214,6 +2264,7 @@ void next_track() {
  * 根据当前循环模式决定上一曲的选择逻辑
  */
 void prev_track() {
+    log_debug("audio", "prev_track() called, loop=%d, current_idx=%d", g_loop_mode, g_current_play_index);
     int playlist_total = playlist_count();
     if (playlist_total == 0) {
         return;
@@ -2242,6 +2293,7 @@ void prev_track() {
  * 通过停止当前播放线程再重新启动，确保从目标位置准确开始播放
  */
 void seek_audio(double position) {
+    log_debug("audio", "seek_audio(pos=%.1f) called, total=%d", position, g_total_duration);
     reap_finished_playback_thread();
 
     // 参数校验
