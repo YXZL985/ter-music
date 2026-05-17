@@ -829,7 +829,6 @@ int get_track_metadata(int index, Track *out) {
 
     CachedTrack *cached = find_in_cache_locked(index);
     if (cached) {
-        log_debug("playlist", "Cache hit for index=%d ('%s')", index, cached->title);
         strncpy(out->path, g_playlist.tracks[index], MAX_PATH_LEN - 1);
         out->path[MAX_PATH_LEN - 1] = '\0';
         strncpy(out->title, cached->title, MAX_META_LEN - 1);
