@@ -12,10 +12,12 @@
 
 import os
 import sys
+import errno
 import getpass
 import threading
 import signal
 import socket
+import subprocess
 import argparse
 import http.server
 import socketserver
@@ -187,12 +189,91 @@ def parse_args():
         help="显示版本信息"
     )
 
+    parser.add_argument(
+        "--force", "-f",
+        action="store_true",
+        help="强制启动，自动释放已占用的端口"
+    )
+
     return parser.parse_args()
 
 
 def resolve_path(p):
     """将 ~ 和相对路径转为绝对路径"""
     return os.path.abspath(os.path.expanduser(p))
+
+
+def check_port(host, port):
+    """检查端口是否可用，返回 True 表示可用"""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind((host, port))
+        return True
+    except OSError as e:
+        if e.errno == errno.EADDRINUSE:
+            return False
+        raise
+    finally:
+        s.close()
+
+
+def kill_process_on_port(port):
+    """查找并杀死占用指定端口的进程，返回是否成功"""
+    import time
+    # Try lsof first
+    try:
+        result = subprocess.run(
+            ["lsof", "-ti", f":{port}"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            pids = result.stdout.strip().split()
+            for pid in pids:
+                try:
+                    pid_num = int(pid)
+                    os.kill(pid_num, signal.SIGTERM)
+                    log_info(f"已终止进程 {pid_num}（端口 {port}）")
+                except (ValueError, OSError):
+                    pass
+            time.sleep(0.5)
+            return True
+    except (subprocess.SubprocessError, FileNotFoundError):
+        pass
+
+    # Fallback: try reading /proc/net/tcp
+    try:
+        with open("/proc/net/tcp") as f:
+            for line in f.readlines()[1:]:
+                parts = line.strip().split()
+                if len(parts) < 10:
+                    continue
+                local_addr = parts[1]
+                addr_parts = local_addr.split(":")
+                if len(addr_parts) == 2:
+                    port_hex = addr_parts[1]
+                    if int(port_hex, 16) == port:
+                        pid_inode = parts[9]
+                        # Try to find the PID from inode
+                        for proc_dir in os.listdir("/proc"):
+                            if not proc_dir.isdigit():
+                                continue
+                            try:
+                                fd_dir = f"/proc/{proc_dir}/fd"
+                                if os.path.isdir(fd_dir):
+                                    for fd in os.listdir(fd_dir):
+                                        link = os.readlink(f"{fd_dir}/{fd}")
+                                        if f"socket:[{pid_inode}]" in link:
+                                            os.kill(int(proc_dir), signal.SIGTERM)
+                                            log_info(f"已终止进程 {proc_dir}（端口 {port}）")
+                                            time.sleep(0.5)
+                                            return True
+                            except (OSError, ValueError):
+                                pass
+    except (OSError, FileNotFoundError):
+        pass
+
+    return False
 
 
 def print_summary(proto, host, port, share_dir, extra=None):
@@ -883,6 +964,49 @@ def start_sftp_args(args):
 
 # ── SMB ───────────────────────────────────────────────────────────────────
 
+def _ensure_smb_port(host, port, force=False):
+    """检查 SMB 端口，force 时自动释放"""
+    if check_port(host, port):
+        return True
+    if force:
+        log_warn(f"端口 {port} 已被占用，尝试强制释放...")
+        if kill_process_on_port(port):
+            if not check_port(host, port):
+                log_error(f"无法释放端口 {port}")
+                sys.exit(1)
+        else:
+            log_error(f"无法释放端口 {port}，请手动终止占用进程")
+            sys.exit(1)
+    else:
+        try:
+            result = subprocess.run(
+                ["lsof", "-ti", f":{port}"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                log_error(f"端口 {port} 已被进程 PID={result.stdout.strip()} 占用")
+                log_info(f"使用 --force 参数自动释放端口")
+            else:
+                log_error(f"端口 {port} 已被占用")
+        except (subprocess.SubprocessError, FileNotFoundError):
+            log_error(f"端口 {port} 已被占用")
+        sys.exit(1)
+    return True
+
+
+def _set_smb_reuseaddr():
+    """在 impacket SMB 服务器类上设置 SO_REUSEADDR 以便快速重启"""
+    try:
+        import socket
+        from impacket import smbserver as impacket_smbserver
+        for name in dir(impacket_smbserver):
+            obj = getattr(impacket_smbserver, name)
+            if isinstance(obj, type) and hasattr(obj, 'allow_reuse_address'):
+                setattr(obj, 'allow_reuse_address', True)
+    except ImportError:
+        pass
+
+
 def start_smb():
     try:
         from impacket.smb import SMB
@@ -910,6 +1034,9 @@ def start_smb():
                    "用户名": username or "(匿名)",
                    "测试命令": f"smbclient //{'localhost' if host=='0.0.0.0' else host}/{share_name} -U {username or '%'}"})
 
+    # Set SO_REUSEADDR on the impacket server class to allow quick restart
+    _set_smb_reuseaddr()
+
     server = SimpleSMBServer(listenAddress=host, listenPort=port)
     server.setSMB2Support(True)
     server.addShare(share_name, share_dir)
@@ -928,6 +1055,12 @@ def start_smb():
         server.start()
     except PermissionError:
         log_error("端口 445 需要 root 权限，尝试使用较高端口或 sudo 运行")
+        sys.exit(1)
+    except OSError as e:
+        if e.errno == errno.EADDRINUSE:
+            log_error(f"端口 {port} 已被占用，请先关闭占用程序或换一个端口")
+        else:
+            log_error(f"启动 SMB 服务器失败: {e}")
         sys.exit(1)
     except KeyboardInterrupt:
         server.stop()
@@ -955,6 +1088,12 @@ def start_smb_args(args):
     if username and not password:
         password = getpass.getpass("  密码: ")
 
+    # 检查端口是否可用，--force 时自动释放
+    _ensure_smb_port(host, port, args.force)
+
+    # Set SO_REUSEADDR on the impacket server class to allow quick restart
+    _set_smb_reuseaddr()
+
     print_summary("SMB", host, port, share_dir,
                   {"共享名": share_name,
                    "用户名": username or "(匿名)",
@@ -978,6 +1117,12 @@ def start_smb_args(args):
         server.start()
     except PermissionError:
         log_error("端口 445 需要 root 权限，尝试使用较高端口或 sudo 运行")
+        sys.exit(1)
+    except OSError as e:
+        if e.errno == errno.EADDRINUSE:
+            log_error(f"端口 {port} 已被占用，使用 --force 参数自动释放")
+        else:
+            log_error(f"启动 SMB 服务器失败: {e}")
         sys.exit(1)
     except KeyboardInterrupt:
         server.stop()
