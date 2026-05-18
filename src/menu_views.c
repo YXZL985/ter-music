@@ -2518,8 +2518,10 @@ static void remote_load_playlist(void) {
     if (g_remote_selected_conn < 0) return;
     const RemoteConnectionConfig *conn = &g_app_config.remote_connections[g_remote_selected_conn];
 
+    stop_audio();
     int count = load_remote_playlist(conn, g_remote_current_path);
     if (count > 0) {
+        g_selected_index = 0;
         char msg[128];
         snprintf(msg, sizeof(msg), "%s: %s (%d %s)",
                  menu_text("已加载", "Loaded"), conn->name, count,
