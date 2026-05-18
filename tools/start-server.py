@@ -1043,7 +1043,6 @@ def start_smb():
 
     if username and password:
         server.addCredential(username, password, lmhash="", nthash="")
-        server.setAccountFile(os.devnull)
     else:
         server.setAnonymousAccess()
 
@@ -1105,7 +1104,6 @@ def start_smb_args(args):
 
     if username and password:
         server.addCredential(username, password, lmhash="", nthash="")
-        server.setAccountFile(os.devnull)
     else:
         server.setAnonymousAccess()
 
