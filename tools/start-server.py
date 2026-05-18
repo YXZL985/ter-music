@@ -1042,7 +1042,7 @@ def start_smb():
     server.addShare(share_name, share_dir)
 
     if username and password:
-        server.addCredential(username, password)
+        server.addCredential(username, password, lmhash="", nthash="")
         server.setAccountFile(os.devnull)
     else:
         server.setAnonymousAccess()
@@ -1104,7 +1104,7 @@ def start_smb_args(args):
     server.addShare(share_name, share_dir)
 
     if username and password:
-        server.addCredential(username, password)
+        server.addCredential(username, password, lmhash="", nthash="")
         server.setAccountFile(os.devnull)
     else:
         server.setAnonymousAccess()
