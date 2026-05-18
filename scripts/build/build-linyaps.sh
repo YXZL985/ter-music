@@ -390,7 +390,7 @@ build: |
   make -j\$(nproc)
   make install
   mkdir -p \${PREFIX}/lib
-  for dep in libblas.so.3 liblapack.so.3; do
+  for dep in libblas.so.3 liblapack.so.3 libmpg123.so.0; do
     dep_path=\$(find /usr/lib /lib \\( -type f -o -type l \\) -name "\${dep}" 2>/dev/null | head -n 1)
     if [ -z "\${dep_path}" ]; then
       echo "required runtime library not found: \${dep}" >&2
@@ -433,6 +433,18 @@ buildext:
       - libpng16-16
       - libjpeg62-turbo
       - libcurl4
+      - libswscale7
+      - libmpg123-0
+      - libvorbis0a
+      - libvorbisenc2
+      - libvorbisfile3
+      - libopus0
+      - libtheora0
+      - libx264-160
+      - libx265-199
+      - libvpx7
+      - libzstd1
+      - liblzma5
 EOF
 
     log_info "linglong.yaml 已生成: ${project_root}/linglong.yaml"
