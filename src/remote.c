@@ -280,12 +280,21 @@ static int parse_ftp_listing(const char *data, size_t len,
         // MLSD format: "type=dir;size=123;modify=...; /path/name"
         if (strstr(line, "type=") != NULL) {
             if (strstr(line, "type=dir")) is_dir = 1;
+            if (strstr(line, "type=OS.unix=symlink") || strstr(line, "type=OS.unix=slink")) {
+                p = end + 1;
+                continue;
+            }
             const char *semi = strrchr(line, ';');
             const char *name_start = semi ? semi + 1 : line;
             while (*name_start == ' ') name_start++;
             strncpy(fname, name_start, sizeof(fname) - 1);
         } else if (line[0] == '-' || line[0] == 'd' || line[0] == 'l') {
             // UNIX ls -l format: "permissions links owner group size month day HH:MM name"
+            if (line[0] == 'l') {
+                // Symlink — skip this entry
+                p = end + 1;
+                continue;
+            }
             is_dir = (line[0] == 'd');
             // Skip the first 8 space-delimited fields (perms, links, owner, group,
             // size, month, day, time/year) — then everything remaining is the filename.
@@ -711,6 +720,10 @@ int remote_list_directory(const RemoteConnectionConfig *conn,
                 } else {
                     strncpy(fname, line, sizeof(fname) - 1);
                 }
+            } else if (line_len > 10 && line[0] == 'l') {
+                // SFTP symlink — skip this entry (don't add to listing)
+                p = end + 1;
+                continue;
             } else {
                 // SMB or other simple format
                 strncpy(fname, line, sizeof(fname) - 1);
