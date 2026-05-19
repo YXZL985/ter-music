@@ -437,6 +437,9 @@ def start_webdav():
         config["nt_dc"] = {
             "preset_domain": {username: password},
         }
+        config["simple_dc"] = {
+            "user_mapping": {"*": {"/": {"readonly": False}}},
+        }
         config["middleware_stack"] = [
             "wsgidav.mw.debug_filter.WsgiDavDebugFilter",
             "wsgidav.error_printer.ErrorPrinter",
@@ -521,6 +524,9 @@ def start_webdav_args(args):
         }
         config["nt_dc"] = {
             "preset_domain": {username: password},
+        }
+        config["simple_dc"] = {
+            "user_mapping": {"*": {"/": {"readonly": False}}},
         }
         config["middleware_stack"] = [
             "wsgidav.mw.debug_filter.WsgiDavDebugFilter",
