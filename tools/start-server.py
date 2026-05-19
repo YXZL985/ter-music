@@ -440,18 +440,22 @@ def start_webdav():
         config["simple_dc"] = {
             "user_mapping": {"*": {"/": {"readonly": False}}},
         }
+        config["dir_browser"] = {"enabled": True}
         config["middleware_stack"] = [
             "wsgidav.mw.debug_filter.WsgiDavDebugFilter",
             "wsgidav.error_printer.ErrorPrinter",
             "wsgidav.mw.cors.Cors",
+            "wsgidav.mw.dir_browser.WsgiDavDirBrowser",
             "wsgidav.request_resolver.RequestResolver",
             "wsgidav.http_authenticator.HTTPAuthenticator"
         ]
     else:
+        config["dir_browser"] = {"enabled": True}
         config["middleware_stack"] = [
             "wsgidav.mw.debug_filter.WsgiDavDebugFilter",
             "wsgidav.error_printer.ErrorPrinter",
             "wsgidav.mw.cors.Cors",
+            "wsgidav.mw.dir_browser.WsgiDavDirBrowser",
             "wsgidav.request_resolver.RequestResolver"
         ]
         config["simple_dc"] = {
@@ -528,18 +532,22 @@ def start_webdav_args(args):
         config["simple_dc"] = {
             "user_mapping": {"*": {"/": {"readonly": False}}},
         }
+        config["dir_browser"] = {"enabled": True}
         config["middleware_stack"] = [
             "wsgidav.mw.debug_filter.WsgiDavDebugFilter",
             "wsgidav.error_printer.ErrorPrinter",
             "wsgidav.mw.cors.Cors",
+            "wsgidav.mw.dir_browser.WsgiDavDirBrowser",
             "wsgidav.request_resolver.RequestResolver",
             "wsgidav.http_authenticator.HTTPAuthenticator"
         ]
     else:
+        config["dir_browser"] = {"enabled": True}
         config["middleware_stack"] = [
             "wsgidav.mw.debug_filter.WsgiDavDebugFilter",
             "wsgidav.error_printer.ErrorPrinter",
             "wsgidav.mw.cors.Cors",
+            "wsgidav.mw.dir_browser.WsgiDavDirBrowser",
             "wsgidav.request_resolver.RequestResolver"
         ]
         config["simple_dc"] = {
