@@ -433,6 +433,8 @@ def start_webdav():
             "accept_basic": True,
             "accept_digest": False,
             "default_to_digest": False,
+        }
+        config["nt_dc"] = {
             "preset_domain": {username: password},
         }
         config["middleware_stack"] = [
@@ -516,6 +518,8 @@ def start_webdav_args(args):
             "accept_basic": True,
             "accept_digest": False,
             "default_to_digest": False,
+        }
+        config["nt_dc"] = {
             "preset_domain": {username: password},
         }
         config["middleware_stack"] = [
