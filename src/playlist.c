@@ -433,6 +433,13 @@ static void fill_metadata_from_filename(const char *path, char *title, char *art
     const char *fname = strrchr(path, '/');
     fname = fname ? fname + 1 : path;
 
+    // Decode percent-encoding for remote URLs (e.g. "%E8%B8%8F" -> "踏浪")
+    char decoded_fname[MAX_META_LEN];
+    if (remote_is_remote_path(path)) {
+        remote_url_decode(fname, decoded_fname, sizeof(decoded_fname));
+        fname = decoded_fname;
+    }
+
     char temp_title[MAX_META_LEN];
     utf8_str_truncate(temp_title, fname, MAX_META_LEN - 1);
     char *dot = strrchr(temp_title, '.');
@@ -743,16 +750,18 @@ int load_remote_playlist(const RemoteConnectionConfig *conn, const char *subpath
     }
 
     // Build the base URL for this remote directory
-    char base_url[2048];
+    char base_url[4096];
     remote_build_url(conn, subpath, base_url, sizeof(base_url));
 
     int added = 0;
     for (int i = 0; i < entry_count && next->count < MAX_TRACKS; i++) {
         if (!is_audio_file(entries[i].name)) continue;
 
-        // Construct full URL: base_url + "/" + filename
-        char track_url[2048];
-        snprintf(track_url, sizeof(track_url), "%s/%s", base_url, entries[i].name);
+        // Construct full URL: base_url + "/" + encoded filename
+        char encoded_name[768];
+        remote_encode_url_path(entries[i].name, encoded_name, sizeof(encoded_name));
+        char track_url[4096];
+        snprintf(track_url, sizeof(track_url), "%s/%s", base_url, encoded_name);
 
         strncpy(next->tracks[next->count], track_url, MAX_PATH_LEN - 1);
         next->tracks[next->count][MAX_PATH_LEN - 1] = '\0';

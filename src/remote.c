@@ -147,9 +147,12 @@ int remote_parse_url(const char *url, RemoteConnectionConfig *conn) {
     if (port_str && *port_str) conn->port = atoi(port_str);
     if (conn->port <= 0) conn->port = default_port(conn->protocol);
 
-    // Store path as base_path
+    // Store path as base_path (URL-decoded, since consumers like
+    // smbclient expect raw characters rather than percent-encoding)
     if (path_buf[0]) {
-        strncpy(conn->base_path, path_buf, sizeof(conn->base_path) - 1);
+        char decoded_path[sizeof(conn->base_path)];
+        remote_url_decode(path_buf, decoded_path, sizeof(decoded_path));
+        strncpy(conn->base_path, decoded_path, sizeof(conn->base_path) - 1);
     } else {
         conn->base_path[0] = '/';
         conn->base_path[1] = '\0';
@@ -159,6 +162,43 @@ int remote_parse_url(const char *url, RemoteConnectionConfig *conn) {
     log_debug("remote", "URL parsed: protocol=%d host=%s port=%d base='%s'",
               conn->protocol, conn->host, conn->port, conn->base_path);
     return 0;
+}
+
+void remote_encode_url_path(const char *in, char *out, size_t out_size) {
+    static const char hex[] = "0123456789ABCDEF";
+    size_t j = 0;
+    if (!in) { out[0] = '\0'; return; }
+    for (const char *p = in; *p && j < out_size - 1; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c == '/' || c == '-' || c == '_' || c == '.' || c == '~' ||
+            (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+            out[j++] = c;
+        } else if (j + 3 <= out_size - 1) {
+            out[j++] = '%';
+            out[j++] = hex[c >> 4];
+            out[j++] = hex[c & 0xf];
+        } else {
+            break;
+        }
+    }
+    out[j] = '\0';
+}
+
+void remote_url_decode(const char *in, char *out, size_t out_size) {
+    size_t j = 0;
+    if (!in) { out[0] = '\0'; return; }
+    for (const char *p = in; *p && j < out_size - 1; p++) {
+        if (*p == '%' && p[1] && p[2]) {
+            char hex[3] = {p[1], p[2], 0};
+            out[j++] = (char)strtol(hex, NULL, 16);
+            p += 2;
+        } else if (*p == '+') {
+            out[j++] = ' ';
+        } else {
+            out[j++] = *p;
+        }
+    }
+    out[j] = '\0';
 }
 
 void remote_build_url(const RemoteConnectionConfig *conn,
@@ -171,9 +211,17 @@ void remote_build_url(const RemoteConnectionConfig *conn,
     // strip leading slash from subpath for proper concatenation
     while (*subpath == '/') subpath++;
 
-    char creds[128] = "";
+    // Percent-encode the subpath so libcurl accepts non-ASCII chars
+    char encoded[4096];
+    remote_encode_url_path(subpath, encoded, sizeof(encoded));
+
+    char creds[1024] = "";
     if (conn->username[0]) {
-        snprintf(creds, sizeof(creds), "%s:%s@", conn->username, conn->password);
+        char encoded_user[192];
+        char encoded_pass[768];
+        remote_encode_url_path(conn->username, encoded_user, sizeof(encoded_user));
+        remote_encode_url_path(conn->password, encoded_pass, sizeof(encoded_pass));
+        snprintf(creds, sizeof(creds), "%s:%s@", encoded_user, encoded_pass);
     }
 
     if (conn->protocol == REMOTE_PROTOCOL_WEBDAV || conn->protocol == REMOTE_PROTOCOL_HTTP) {
@@ -182,18 +230,18 @@ void remote_build_url(const RemoteConnectionConfig *conn,
 
         if (need_port) {
             snprintf(url, url_size, "%s://%s%s:%d/%s",
-                     http_scheme, creds, conn->host, port, subpath);
+                     http_scheme, creds, conn->host, port, encoded);
         } else {
             snprintf(url, url_size, "%s://%s%s/%s",
-                     http_scheme, creds, conn->host, subpath);
+                     http_scheme, creds, conn->host, encoded);
         }
     } else {
         if (need_port) {
             snprintf(url, url_size, "%s://%s%s:%d/%s",
-                     scheme, creds, conn->host, port, subpath);
+                     scheme, creds, conn->host, port, encoded);
         } else {
             snprintf(url, url_size, "%s://%s%s/%s",
-                     scheme, creds, conn->host, subpath);
+                     scheme, creds, conn->host, encoded);
         }
     }
 }
@@ -528,12 +576,155 @@ static int parse_html_listing(const char *data, size_t len,
     return (count > 0 || *out) ? 0 : -1;
 }
 
+/* ---------- smbclient-based SMB support ----------
+ *
+ * libcurl's SMB protocol implementation is incompatible with many Samba
+ * servers (SMB protocol negotiation fails after TCP connect succeeds).
+ * We use smbclient via subprocess for all SMB operations instead.
+ */
+
+static int smb_list_via_client(const RemoteConnectionConfig *conn,
+                                const char *subpath,
+                                RemoteDirEntry **out_entries,
+                                int *out_count) {
+    char cmd[4096];
+
+    // conn->base_path is the share name (e.g. "音乐"), possibly with a
+    // leading '/' when parsed from a URL. Strip for smbclient use.
+    const char *share = conn->base_path;
+    while (*share == '/') share++;
+
+    // subpath includes the share name as a prefix (e.g. "音乐" or "音乐/subdir").
+    // Strip the prefix to get the relative path within the share.
+    const char *rel_path = ".";
+    if (subpath && subpath[0]) {
+        size_t base_len = strlen(conn->base_path);
+        if (strncmp(subpath, conn->base_path, base_len) == 0) {
+            rel_path = subpath + base_len;
+            while (*rel_path == '/') rel_path++;
+        }
+        if (!rel_path[0]) rel_path = ".";
+    }
+
+    if (strcmp(rel_path, ".") != 0) {
+        snprintf(cmd, sizeof(cmd),
+                 "smbclient '//%s/%s' -U '%s%%%s' -c 'cd \"%s\"; ls' </dev/null 2>/dev/null",
+                 conn->host, share, conn->username,
+                 conn->password, rel_path);
+    } else {
+        snprintf(cmd, sizeof(cmd),
+                 "smbclient '//%s/%s' -U '%s%%%s' -c ls </dev/null 2>/dev/null",
+                 conn->host, share, conn->username,
+                 conn->password);
+    }
+
+    FILE *fp = popen(cmd, "r");
+    if (!fp) {
+        remote_set_error("smbclient not found or not executable");
+        *out_entries = NULL;
+        *out_count = 0;
+        return -1;
+    }
+
+    char line[2048];
+    int cap = 64;
+    int count = 0;
+    *out_entries = malloc(sizeof(RemoteDirEntry) * cap);
+    if (!*out_entries) { pclose(fp); return -1; }
+
+    while (fgets(line, sizeof(line), fp)) {
+        size_t len = strlen(line);
+        while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r'
+               || line[len-1] == ' '))
+            line[--len] = '\0';
+
+        if (len < 10) continue;
+
+        // Skip summary line (contains "blocks")
+        if (strstr(line, "blocks")) continue;
+
+        // Parse: filename<spaces>D/N<spaces>size<spaces>date
+        // Find the type field: a single letter (D/N/A/H/S/R) surrounded
+        // by spaces, followed by %8d (right-padded size field).
+        int is_dir = 0;
+        char fname[256] = "";
+        int found = 0;
+
+        for (size_t i = 3; i + 8 < len; i++) {
+            if (line[i-1] != ' ' ||
+                !(line[i] == 'D' || line[i] == 'N' || line[i] == 'A' ||
+                  line[i] == 'H' || line[i] == 'S' || line[i] == 'R') ||
+                line[i+1] != ' ')
+                continue;
+
+            // After type char comes %8d (right-padded size field),
+            // e.g. " 3917305" or "    1195" or "       0".
+            // Verify at least one digit exists in the next 8 chars.
+            int has_size = 0;
+            for (size_t j = i + 1; j <= i + 8 && j < len && !has_size; j++) {
+                if (line[j] >= '0' && line[j] <= '9') has_size = 1;
+            }
+            if (!has_size) continue;
+
+            // Extract filename (trim leading and trailing spaces)
+            const char *fn_start = line;
+            while (*fn_start == ' ') fn_start++;
+
+            size_t fn_end = i - 1;
+            while (fn_end > 0 && (fn_start < line + fn_end)
+                   && line[fn_end-1] == ' ')
+                fn_end--;
+
+            size_t fn_len = (line + fn_end) - fn_start;
+            if (fn_len == 0) continue;
+            if (fn_len >= sizeof(fname)) fn_len = sizeof(fname) - 1;
+            memcpy(fname, fn_start, fn_len);
+            fname[fn_len] = '\0';
+
+            if (strcmp(fname, ".") == 0 || strcmp(fname, "..") == 0)
+                break;
+
+            is_dir = (line[i] == 'D');
+            found = 1;
+            break;
+        }
+
+    if (!found || !fname[0]) continue;
+
+        if (count >= cap) {
+            cap *= 2;
+            RemoteDirEntry *tmp = realloc(*out_entries,
+                                          sizeof(RemoteDirEntry) * cap);
+            if (!tmp) break;
+            *out_entries = tmp;
+        }
+        strncpy((*out_entries)[count].name, fname,
+                sizeof((*out_entries)[count].name) - 1);
+        (*out_entries)[count].name[sizeof((*out_entries)[count].name) - 1] = '\0';
+        (*out_entries)[count].is_dir = is_dir;
+        count++;
+    }
+
+    int status = pclose(fp);
+
+    if (count == 0 && status != 0) {
+        free(*out_entries);
+        *out_entries = NULL;
+        *out_count = 0;
+        remote_set_error("smbclient failed - check credentials and server");
+        return -1;
+    }
+
+    *out_count = count;
+    return 0;
+}
+
 int remote_list_directory(const RemoteConnectionConfig *conn,
                           const char *subpath,
                           RemoteDirEntry **out_entries,
                           int *out_count) {
     g_remote_errbuf[0] = '\0';  // clear previous error
-    char url[2048];
+    char url[4096];
     remote_build_url(conn, subpath, url, sizeof(url));
 
     log_info("remote", "Listing directory: protocol=%d url='%s'", conn->protocol, url);
@@ -651,8 +842,14 @@ int remote_list_directory(const RemoteConnectionConfig *conn,
         free(buf.data);
         return ret;
 
+    } else if (conn->protocol == REMOTE_PROTOCOL_SMB) {
+        // SMB – libcurl's SMB implementation is incompatible with many
+        // Samba servers, so we use smbclient via subprocess instead.
+        curl_easy_cleanup(curl);
+        free(buf.data);
+        return smb_list_via_client(conn, subpath, out_entries, out_count);
     } else {
-        // SMB and SFTP – libcurl returns raw listing lines
+        // SFTP – libcurl returns raw listing lines
         curl_easy_setopt(curl, CURLOPT_URL, url);
         res = curl_easy_perform(curl);
 
@@ -667,7 +864,6 @@ int remote_list_directory(const RemoteConnectionConfig *conn,
         // Parse: for SFTP, lines look like:
         // "drwxr-xr-x 3 user group 4096 Jan 1 00:00 dirname"
         // "-rw-r--r-- 1 user group 1234 Jan 1 00:00 filename.mp3"
-        // For SMB, lines may be just filenames
         int cap = 64;
         int count = 0;
         *out_entries = malloc(sizeof(RemoteDirEntry) * cap);
@@ -725,7 +921,7 @@ int remote_list_directory(const RemoteConnectionConfig *conn,
                 p = end + 1;
                 continue;
             } else {
-                // SMB or other simple format
+                // Fallback: treat whole line as filename
                 strncpy(fname, line, sizeof(fname) - 1);
             }
 
@@ -778,11 +974,42 @@ const char *remote_protocol_name(int protocol) {
 
 /* ---------- remote file fetching ---------- */
 
+static int smb_fetch_to_file(const char *url, const char *dest_path);
+
 int remote_fetch_to_buffer(const char *url, unsigned char **data, size_t *size) {
     if (!url || !data || !size) return -1;
 
     *data = NULL;
     *size = 0;
+
+    // SMB URLs need smbclient — download to temp file then read it.
+    if (strncmp(url, "smb://", 6) == 0) {
+        char tmp_path[] = "/tmp/ter-music-smb-XXXXXX";
+        int fd = mkstemp(tmp_path);
+        if (fd < 0) return -1;
+        close(fd);
+
+        int ret = smb_fetch_to_file(url, tmp_path);
+        if (ret != 0) {
+            unlink(tmp_path);
+            return -1;
+        }
+
+        FILE *fp = fopen(tmp_path, "rb");
+        if (!fp) { unlink(tmp_path); return -1; }
+        fseek(fp, 0, SEEK_END);
+        long fsize = ftell(fp);
+        if (fsize < 0) { fclose(fp); unlink(tmp_path); return -1; }
+        rewind(fp);
+
+        *data = malloc((size_t)fsize + 1);
+        if (!*data) { fclose(fp); unlink(tmp_path); return -1; }
+        *size = fread(*data, 1, (size_t)fsize, fp);
+        (*data)[*size] = '\0';
+        fclose(fp);
+        unlink(tmp_path);
+        return 0;
+    }
 
     CURL *curl = curl_easy_init();
     if (!curl) return -1;
@@ -827,8 +1054,93 @@ static size_t write_file_cb(void *ptr, size_t size, size_t nmemb, void *userdata
     return fwrite(ptr, size, nmemb, ctx->fp);
 }
 
+static int smb_fetch_to_file(const char *url, const char *dest_path) {
+    // Parse the SMB URL to extract connection details
+    RemoteConnectionConfig conn;
+    if (remote_parse_url(url, &conn) != 0) {
+        remote_set_error("Failed to parse SMB URL");
+        return -1;
+    }
+
+    // URL-decode the path portion
+    char decoded[MAX_PATH_LEN];
+    remote_url_decode(conn.base_path, decoded, sizeof(decoded));
+
+    // Split decoded path into share name and file path
+    // Format: "/share_name/file_path" or "/share_name/dir/file.mp3"
+    char share[256] = "";
+    char file_path[1024] = "";
+    const char *p = decoded;
+    while (*p == '/') p++;
+
+    const char *slash = strchr(p, '/');
+    if (slash) {
+        size_t share_len = slash - p;
+        if (share_len >= sizeof(share)) share_len = sizeof(share) - 1;
+        memcpy(share, p, share_len);
+        share[share_len] = '\0';
+        strncpy(file_path, slash + 1, sizeof(file_path) - 1);
+    } else {
+        strncpy(share, p, sizeof(share) - 1);
+        file_path[0] = '\0';
+    }
+
+    if (!share[0] || !file_path[0]) {
+        remote_set_error("SMB URL missing share or file path");
+        return -1;
+    }
+
+    // Split file_path into directory part and filename
+    char dir_part[1024] = "";
+    char file_part[256] = "";
+    const char *last_slash = strrchr(file_path, '/');
+    if (last_slash) {
+        size_t dir_len = last_slash - file_path;
+        memcpy(dir_part, file_path, dir_len);
+        dir_part[dir_len] = '\0';
+        strncpy(file_part, last_slash + 1, sizeof(file_part) - 1);
+    } else {
+        strncpy(file_part, file_path, sizeof(file_part) - 1);
+    }
+
+    if (!file_part[0]) {
+        remote_set_error("SMB URL missing file name");
+        return -1;
+    }
+
+    // Build smbclient command
+    char cmd[4096];
+    if (dir_part[0]) {
+        snprintf(cmd, sizeof(cmd),
+                 "smbclient '//%s/%s' -U '%s%%%s' -c 'cd \"%s\"; get \"%s\" \"%s\"' </dev/null 2>/dev/null",
+                 conn.host, share, conn.username, conn.password,
+                 dir_part, file_part, dest_path);
+    } else {
+        snprintf(cmd, sizeof(cmd),
+                 "smbclient '//%s/%s' -U '%s%%%s' -c 'get \"%s\" \"%s\"' </dev/null 2>/dev/null",
+                 conn.host, share, conn.username, conn.password,
+                 file_part, dest_path);
+    }
+
+    log_debug("remote", "smbclient fetch: '%s'", cmd);
+
+    int ret = system(cmd);
+    if (ret != 0 || access(dest_path, F_OK) != 0) {
+        remote_set_error("smbclient download failed");
+        return -1;
+    }
+
+    return 0;
+}
+
 int remote_fetch_to_file(const char *url, const char *dest_path) {
     if (!url || !dest_path) return -1;
+
+    // SMB URLs need smbclient — libcurl's SMB implementation is
+    // incompatible with many Samba servers.
+    if (strncmp(url, "smb://", 6) == 0) {
+        return smb_fetch_to_file(url, dest_path);
+    }
 
     log_info("remote", "Fetching remote file: '%s' -> '%s'", url, dest_path);
 

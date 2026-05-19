@@ -22,6 +22,12 @@ void remote_build_url(const RemoteConnectionConfig *conn,
                       const char *subpath,
                       char *url, size_t url_size);
 
+// Percent-encode non-ASCII and URL-special characters in a path.
+// Preserves '/' for path structure.  Output buffer must be at least
+// available_input_len * 3 + 1 bytes for correct encoding of all inputs.
+void remote_encode_url_path(const char *in, char *out, size_t out_size);
+void remote_url_decode(const char *in, char *out, size_t out_size);
+
 // Directory listing – returns number of entries, or -1 on error.
 // Call remote_free_entries() when done.
 int remote_list_directory(const RemoteConnectionConfig *conn,
