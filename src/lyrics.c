@@ -923,19 +923,34 @@ static void render_lyric_line(int row, const char *text, int is_highlighted, int
         utf8_str_truncate(display_text, display_src, max_width);
     }
     
+    // 计算对齐偏移（仅在非滚动模式下生效）
+    int align_offset = 0;
+    if (!use_scrolling && g_app_config.lyrics_alignment != 0) {
+        int display_width = utf8_str_width(display_text);
+        int padding = max_width - display_width;
+        if (padding > 0) {
+            if (g_app_config.lyrics_alignment == 1) {         // 居中
+                align_offset = padding / 2;
+            } else if (g_app_config.lyrics_alignment == 2) {  // 居右
+                align_offset = padding;
+            }
+        }
+    }
+
     // 应用高亮并显示
     if (is_highlighted) {
         wattron(win_lyrics, A_REVERSE);
         if (show_marker) {
-            mvwprintw(win_lyrics, row, 2, "> %s", display_text);
+            mvwprintw(win_lyrics, row, 2, ">");
+            mvwprintw(win_lyrics, row, 4 + align_offset, "%s", display_text);
         } else {
             // 第二行高亮，不显示标记，缩进对齐
-            mvwprintw(win_lyrics, row, 3, "%s", display_text);
+            mvwprintw(win_lyrics, row, 3 + align_offset, "%s", display_text);
         }
         wattroff(win_lyrics, A_REVERSE);
     } else {
         // 普通行，使用默认颜色对
-        mvwprintw(win_lyrics, row, 3, "%s", display_text);
+        mvwprintw(win_lyrics, row, 3 + align_offset, "%s", display_text);
     }
 }
 

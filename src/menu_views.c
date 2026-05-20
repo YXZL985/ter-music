@@ -581,6 +581,7 @@ void init_default_config(void) {
     g_app_config.default_loop_mode = LOOP_OFF;
     g_app_config.default_playback_speed = 1.0f;
     g_app_config.show_album_cover = 1;
+    g_app_config.lyrics_alignment = 0;
     g_app_config.config_version = 0;
     g_app_config.remote_connection_count = 0;
     memset(g_app_config.remote_connections, 0, sizeof(g_app_config.remote_connections));
@@ -692,6 +693,12 @@ void load_config(void) {
     }
     if (strstr(json, "\"show_album_cover\"")) {
         g_app_config.show_album_cover = (int)extract_json_int(json, "show_album_cover");
+    }
+    if (strstr(json, "\"lyrics_alignment\"")) {
+        g_app_config.lyrics_alignment = (int)extract_json_int(json, "lyrics_alignment");
+        if (g_app_config.lyrics_alignment < 0 || g_app_config.lyrics_alignment > 2) {
+            g_app_config.lyrics_alignment = 0;
+        }
     }
     g_playback_speed = g_app_config.default_playback_speed;
 
@@ -812,6 +819,7 @@ void save_config(void) {
     fprintf(f, "  \"default_loop_mode\": %d,\n", g_app_config.default_loop_mode);
     fprintf(f, "  \"default_playback_speed\": %.2f,\n", g_app_config.default_playback_speed);
     fprintf(f, "  \"show_album_cover\": %d,\n", g_app_config.show_album_cover);
+    fprintf(f, "  \"lyrics_alignment\": %d,\n", g_app_config.lyrics_alignment);
 
     fprintf(f, "  \"config_version\": 1,\n");
     fprintf(f, "  \"remote_connection_count\": %d,\n", g_app_config.remote_connection_count);
@@ -1940,7 +1948,8 @@ static const char *settings_options[] = {
     "显示歌词面板",
     "默认循环模式",
     "默认倍速",
-    "显示专辑图片"
+    "显示专辑图片",
+    "歌词对齐方式"
 };
 static const char *settings_options_ascii[] = {
     "Playlist Foreground",
@@ -1965,9 +1974,10 @@ static const char *settings_options_ascii[] = {
     "Show Lyrics Panel",
     "Default Loop Mode",
     "Default Speed",
-    "Show Album Cover"
+    "Show Album Cover",
+    "Lyrics Alignment"
 };
-#define SETTINGS_OPTION_COUNT 23
+#define SETTINGS_OPTION_COUNT 24
 
 enum {
     SETTINGS_IDX_THEME_COLOR_PAIR_0 = 0,
@@ -1992,7 +2002,8 @@ enum {
     SETTINGS_IDX_SHOW_LYRICS = 19,
     SETTINGS_IDX_DEFAULT_LOOP = 20,
     SETTINGS_IDX_DEFAULT_SPEED = 21,
-    SETTINGS_IDX_SHOW_ALBUM_COVER = 22
+    SETTINGS_IDX_SHOW_ALBUM_COVER = 22,
+    SETTINGS_IDX_LYRICS_ALIGNMENT = 23
 };
 
 typedef struct {
@@ -2028,6 +2039,7 @@ static const int settings_playback_option_indices[] = {
     SETTINGS_IDX_LATENCY,
     SETTINGS_IDX_SHOW_LYRICS,
     SETTINGS_IDX_SHOW_ALBUM_COVER,
+    SETTINGS_IDX_LYRICS_ALIGNMENT,
     SETTINGS_IDX_DEFAULT_LOOP,
     SETTINGS_IDX_DEFAULT_SPEED
 };
@@ -2142,6 +2154,15 @@ static void format_settings_option_line(int option_index, char *line, size_t lin
         snprintf(line, line_size, "%s%s%s",
                  current_settings_options[option_index], separator,
                  menu_bool_text(g_app_config.show_album_cover));
+    } else if (option_index == SETTINGS_IDX_LYRICS_ALIGNMENT) {
+        const char *align_str;
+        switch (g_app_config.lyrics_alignment) {
+            case 1: align_str = use_english_ui() ? "Center" : "居中"; break;
+            case 2: align_str = use_english_ui() ? "Right" : "居右"; break;
+            default: align_str = use_english_ui() ? "Left" : "居左";
+        }
+        snprintf(line, line_size, "%s%s%s",
+                 current_settings_options[option_index], separator, align_str);
     } else if (option_index == SETTINGS_IDX_DEFAULT_LOOP) {
         const char *loop_mode_str;
         switch (g_app_config.default_loop_mode) {
@@ -2367,6 +2388,14 @@ static void adjust_or_toggle_settings_option(int option_index, int delta) {
             g_app_config.show_album_cover = !g_app_config.show_album_cover;
             save_config();
             break;
+        case SETTINGS_IDX_LYRICS_ALIGNMENT:
+            if (delta < 0) {
+                g_app_config.lyrics_alignment = (g_app_config.lyrics_alignment - 1 + 3) % 3;
+            } else {
+                g_app_config.lyrics_alignment = (g_app_config.lyrics_alignment + 1) % 3;
+            }
+            save_config();
+            break;
         case SETTINGS_IDX_DEFAULT_LOOP:
             if (delta < 0) {
                 g_app_config.default_loop_mode = (g_app_config.default_loop_mode - 1 + 4) % 4;
@@ -2422,6 +2451,7 @@ static void activate_settings_current_option(void) {
         g_settings_current_option == SETTINGS_IDX_LANGUAGE ||
         g_settings_current_option == SETTINGS_IDX_SHOW_LYRICS ||
         g_settings_current_option == SETTINGS_IDX_SHOW_ALBUM_COVER ||
+        g_settings_current_option == SETTINGS_IDX_LYRICS_ALIGNMENT ||
         g_settings_current_option == SETTINGS_IDX_DEFAULT_LOOP ||
         g_settings_current_option == SETTINGS_IDX_DEFAULT_SPEED) {
         adjust_or_toggle_settings_option(g_settings_current_option, 0);
