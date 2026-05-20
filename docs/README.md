@@ -622,7 +622,13 @@ Ter-Music adopts a modular design, main modules include:
 
 This project is licensed under the [GNU General Public License v3.0](LICENSE) open source license. You are free to use, modify, and distribute this software, but modified derivative works must also be open sourced under the same license.
 
-## 8. Author
+## 8. Disclaimer
+
+Ter-Music is a pure audio playback tool that does not provide, host, or distribute any audio files or other copyrighted content. Users must provide their own legally obtained audio files. The software's local and remote playback features are designed solely for playing media files that users have lawfully acquired.
+
+All copyright and intellectual property rights related to audio content played using this software belong to their respective owners. Any copyright disputes arising from the use of this software to play audio content are solely the responsibility of the user. The developer assumes no liability for any copyright or other legal issues arising from the use of this software.
+
+## 9. Author
 
 - **Author**: Yan Xi Zhu Lin
 - **Email**: <yxzl666xx@outlook.com>
