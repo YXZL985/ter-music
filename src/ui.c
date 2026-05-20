@@ -704,7 +704,7 @@ static int get_playlist_index_from_window_row(int window_y, int *display_index, 
     (void)w;
 
     int content_height = h - 2;
-    int visible_lines = content_height - 5;
+    int visible_lines = content_height - 6;
     if (visible_lines <= 0 || window_y < 1 || window_y >= 1 + visible_lines) {
         return 0;
     }
@@ -1661,8 +1661,8 @@ void render_playlist_content() {
         mvwprintw(win_playlist, h/2 + 1, 2, "%s%s", ui_text("当前路径：", "Path: "), display_path);
     } else {
         int start_idx = 0;
-        int visible_lines = content_height - 5; // 预留 5 行给底部状态栏
-        
+        int visible_lines = content_height - 6; // 预留 6 行给底部状态栏(1分隔线+5信息行)
+
         if (g_search_state.active) {
             if (g_search_state.selected_index >= visible_lines) {
                 start_idx = g_search_state.selected_index - visible_lines + 1;
@@ -3025,12 +3025,12 @@ static int get_playlist_scroll_offset(void) {
     (void)w;
     
     int content_height = h - 2;  // 减去边框
-    int visible_lines = content_height - 5;  // 预留 5 行给底部状态栏
-    
+    int visible_lines = content_height - 6;  // 预留 6 行给底部状态栏(1分隔线+5信息行)
+
     if (visible_lines <= 0) {
         return 0;
     }
-    
+
     if (g_search_state.active) {
         int offset = 0;
         if (g_search_state.selected_index >= visible_lines) {
