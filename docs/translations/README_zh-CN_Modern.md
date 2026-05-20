@@ -112,7 +112,7 @@ sudo dnf install ffmpeg-free-devel libpng-devel libjpeg-turbo-devel pulseaudio-l
 ```bash
 sudo apt update
 sudo apt install cmake gcc make pkg-config
-sudo apt install libavcodec-dev libavformat-dev libswresample-dev libavutil-dev libavfilter-dev libpng-dev libjpeg-dev libpulse-dev libncursesw5-dev libcurl4-openssl-dev
+sudo apt install libavcodec-dev libavformat-dev libswresample-dev libswscale-dev libavutil-dev libavfilter-dev libpng-dev libjpeg-dev libpulse-dev libncursesw5-dev libcurl4-openssl-dev
 ```
 
 **注意**：如果无法获取FFmpeg开发库，需先启用universe仓库：
@@ -270,6 +270,7 @@ ter-music [OPTIONS]
 
 选项：
   -o, --open <path>    启动时直接打开指定的音乐目录
+  -d, --debug          启用调试日志（输出到 ter-music-debug.log）
   -h, --help           显示帮助信息
 ```
 
@@ -429,14 +430,22 @@ Ter-Music支持倍速播放功能，可根据需要调整音频播放速度：
 
 ### 八 配置文件
 
-配置文件存储在`~/.config/ter-music/config`，播放器首次启动时会自动创建。
+配置文件存储在`~/.config/ter-music/config.json`，播放器首次启动时会自动创建。
 
 **配置项**：
 - `default_startup_path`：默认启动目录
 - `auto_play_on_start`：启动时自动播放（0/1，0为关闭，1为开启）
 - `remember_last_path`：记住上次访问的目录（0/1）
 - `show_album_cover`：显示专辑封面（0/1）
+- `show_lyrics_panel`：显示歌词面板（0/1）
 - `default_playback_speed`：默认播放速度（0.75、1.0、1.25、1.5、2.0、3.0）
+- `default_loop_mode`：默认循环模式（0=顺序播放、1=单曲循环、2=列表循环、3=随机播放）
+- `lyrics_alignment`：歌词对齐方式（0=居左、1=居中、2=居右）
+- `clear_history_on_startup`：启动时清空播放历史（0/1）
+- `resume_last_playback`：从上次位置继续播放（0/1）
+- `ui_language`：界面语言（0=中文、1=English）
+- `volume_percent`：默认音量百分比（0-100）
+- `audio_latency_ms`：音频延迟（毫秒）
 - `remote_connections`：保存的远程服务器连接（SMB/SFTP/FTP/WebDAV）
 - 颜色主题设置：所有界面元素的前景色、背景色
 
@@ -447,7 +456,7 @@ Ter-Music支持倍速播放功能，可根据需要调整音频播放速度：
 所有用户数据均存储在`~/.config/ter-music/`目录下：
 ```
 ~/.config/ter-music/
-├── config          # 配置文件
+├── config.json      # 配置文件
 ├── history        # 播放历史
 ├── favorites      # 收藏列表
 ├── dir_history    # 目录访问历史
@@ -474,11 +483,11 @@ Ter-Music支持倍速播放功能，可根据需要调整音频播放速度：
 **示例：将歌曲加入收藏**
 1. 在歌单区选中想要收藏的歌曲
 2. 按`F`键，底部状态栏会显示"Added to favorites!"
-3. 按`F4`键可查看所有收藏的歌曲
+3. 按`F5`键可查看所有收藏的歌曲
 4. 在收藏视图中，可选择歌曲播放
 
 **示例：创建自定义歌单**
-1. 按`F3`键进入歌单管理视图
+1. 按`F4`键进入歌单管理视图
 2. 选择"Create New Playlist"
 3. 输入歌单名称
 4. 返回主界面，在歌单中选中歌曲，按`A`键加入该自定义歌单
@@ -515,7 +524,7 @@ Ter-Music支持倍速播放功能，可根据需要调整音频播放速度：
 退出方法有三种：
 - 在主界面按`q`键
 - 按`Ctrl+C`（播放器会正常退出）
-- 在选项菜单中选择"Exit"（即`F7`键）
+- 在选项菜单中选择"Exit"（即`F8`键）
 
 ## 第六章 技术架构
 本播放器采用模块化设计，核心代码文件如下：

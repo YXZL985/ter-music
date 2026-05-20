@@ -50,6 +50,7 @@ RUN dpkg --add-architecture arm64 && \
     libswresample-dev:arm64 \
     libavutil-dev:arm64 \
     libavfilter-dev:arm64 \
+    libswscale-dev:arm64 \
     libpng-dev:arm64 \
     libjpeg-dev:arm64 \
     libcurl4-openssl-dev:arm64 \

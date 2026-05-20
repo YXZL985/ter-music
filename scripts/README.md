@@ -178,7 +178,7 @@ packaging/
 
 ### Dockerfile
 
-用于构建交叉编译环境的 Docker 镜像，基于 Ubuntu 22.04，包含：
+用于构建交叉编译环境的 Docker 镜像，基于 Debian 13 (Trixie)，包含：
 - 基本构建工具（gcc, cmake, make 等）
 - ARM64 交叉编译工具链
 - 各种打包工具（dpkg-dev, rpm-build, 等）
@@ -237,5 +237,5 @@ build/
 **常见依赖：**
 - cmake, make, gcc
 - pkg-config
-- 开发库：libavcodec-dev, libavformat-dev, libswresample-dev, libpulse-dev, libncurses-dev, libcurl4-openssl-dev
+- 开发库：libavcodec-dev, libavformat-dev, libswresample-dev, libswscale-dev, libavutil-dev, libavfilter-dev, libpulse-dev, libncurses-dev, libcurl4-openssl-dev
 - 打包工具：dpkg-dev, rpm-build, linglong-builder 等

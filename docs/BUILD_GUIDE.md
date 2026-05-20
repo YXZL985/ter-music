@@ -325,7 +325,7 @@ sudo pacman -U ter-music-cn-*.pkg.tar.zst
 - `make`
 - `cmake`
 - `pkg-config`
-- `ffmpeg-free-devel`（提供 libavfilter，非静态构建时必需）
+- `ffmpeg-free-devel`（提供 libavfilter/libavcodec/libavformat/libswresample/libswscale/libavutil，非静态构建时必需）
 - `pulseaudio-libs-devel`
 - `ncurses-devel`
 - `libpng-devel`
@@ -373,6 +373,7 @@ sudo pacman -U ter-music-cn-*.pkg.tar.zst
 - `gcc`
 - `tar`
 - `libavfilter-dev`
+- `libswscale-dev`
 - `libpng-dev`
 - `libjpeg-dev`
 
@@ -391,7 +392,7 @@ sudo pacman -U ter-music-cn-*.pkg.tar.zst
 
 在 Debian/Ubuntu 上安装构建依赖：
 ```bash
-sudo apt install dpkg-dev fakeroot cmake make gcc libavfilter-dev libpng-dev libjpeg-dev
+sudo apt install dpkg-dev fakeroot cmake make gcc libavfilter-dev libpng-dev libjpeg-dev libswscale-dev
 ```
 
 ## 交叉编译支持
@@ -493,7 +494,7 @@ sudo apt update
 
 # 安装目标架构的开发库
 sudo apt install libncurses-dev:arm64 libavcodec-dev:arm64 libavformat-dev:arm64 \
-                 libswresample-dev:arm64 libavutil-dev:arm64 libavfilter-dev:arm64 \
+                 libswresample-dev:arm64 libswscale-dev:arm64 libavutil-dev:arm64 libavfilter-dev:arm64 \
                  libpng-dev:arm64 libjpeg-dev:arm64 libpulse-dev:arm64
 ```
 

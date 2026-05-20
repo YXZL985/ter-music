@@ -312,6 +312,7 @@ check_dependencies() {
             "libavformat-dev"
             "libavutil-dev"
             "libswresample-dev"
+            "libswscale-dev"
             "libpng-dev"
             "libjpeg-dev"
             "libncurses-dev"

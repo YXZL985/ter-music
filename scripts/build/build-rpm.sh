@@ -268,6 +268,7 @@ check_dependencies() {
             "libavformat-dev"
             "libavutil-dev"
             "libswresample-dev"
+            "libswscale-dev"
             "libncurses-dev"
             "libpulse-dev"
             "libcurl4-openssl-dev"

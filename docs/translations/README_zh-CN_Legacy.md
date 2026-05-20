@@ -112,7 +112,7 @@ sudo dnf install ffmpeg-free-devel libpng-devel libjpeg-turbo-devel pulseaudio-l
 ```bash
 sudo apt update
 sudo apt install cmake gcc make pkg-config
-sudo apt install libavcodec-dev libavformat-dev libswresample-dev libavutil-dev libavfilter-dev libpng-dev libjpeg-dev libpulse-dev libncursesw5-dev libcurl4-openssl-dev
+sudo apt install libavcodec-dev libavformat-dev libswresample-dev libswscale-dev libavutil-dev libavfilter-dev libpng-dev libjpeg-dev libpulse-dev libncursesw5-dev libcurl4-openssl-dev
 ```
 
 **注**：若斐氏开发之库不可得，当先启universe仓廪：
@@ -270,6 +270,7 @@ ter-music [OPTIONS]
 
 选项：
   -o, --open <path>    启器时直开指定乐籍目录
+  -d, --debug          启调拭志录（录于 ter-music-debug.log）
   -h, --help           显助益之文
 ```
 
@@ -428,14 +429,22 @@ Ter-Music具迅疾节度之能，可依需调音程之迟疾：
 - 若不得歌辞之文，歌辞区将显"No lyrics loaded"
 
 ### 八 节度之文
-节度之文存于`~/.config/ter-music/config`，器初启时将自动创之。
+节度之文存于`~/.config/ter-music/config.json`，器初启时将自动创之。
 
 **节度之项**：
 - `default_startup_path`：默认启行之目录
 - `auto_play_on_start`：启器时自动播弄（0/1）
 - `remember_last_path`：记上次所临之目录（0/1）
 - `show_album_cover`：显专辑封面（0/1）
+- `show_lyrics_panel`：显歌辞之板（0/1）
 - `default_playback_speed`：默播之速（0.75、1.0、1.25、1.5、2.0、3.0）
+- `default_loop_mode`：默循环之制（0=序进、1=单曲回环、2=全帙周流、3=乱序杂陈）
+- `lyrics_alignment`：歌辞对齐之式（0=居左、1=居中、2=居右）
+- `clear_history_on_startup`：启时清播弄之迹（0/1）
+- `resume_last_playback`：续从前之处播弄（0/1）
+- `ui_language`：界语（0=中文、1=English）
+- `volume_percent`：默音量之率（0-100）
+- `audio_latency_ms`：音声迟延（千分秒）
 - `remote_connections`：所存远程服器之连（SMB/SFTP/FTP/WebDAV）
 - 色采主题节度：所有文界元素之前景、背景色
 
@@ -445,7 +454,7 @@ Ter-Music具迅疾节度之能，可依需调音程之迟疾：
 所有用户数据，皆存于`~/.config/ter-music/`目录之下：
 ```
 ~/.config/ter-music/
-├── config          # 节度之文
+├── config.json      # 节度之文
 ├── history        # 播弄往迹
 ├── favorites      # 珍存之帙
 ├── dir_history    # 目录临览往迹
@@ -472,11 +481,11 @@ Ter-Music具迅疾节度之能，可依需调音程之迟疾：
 **例：以曲入珍存之帙**
 1. 于曲帙区择欲存之曲
 2. 按`F`，底部状态栏将显"Added to favorites!"
-3. 按`F4`可览所有珍存之曲
+3. 按`F5`可览所有珍存之曲
 4. 于珍存之视中，可择而播之
 
 **例：创自定曲帙**
-1. 按`F3`入曲帙营理之视
+1. 按`F4`入曲帙营理之视
 2. 择"Create New Playlist"
 3. 输入曲帙之名
 4. 归主界，于曲帙中择曲，按`A`入曲帙
@@ -513,7 +522,7 @@ Ter-Music具迅疾节度之能，可依需调音程之迟疾：
 退之之法有三：
 - 于主界按`q`
 - 按`Ctrl+C`（器将正理而退）
-- 于选项目录中择"Exit"（即`F7`键）
+- 于选项目录中择"Exit"（即`F8`键）
 
 ## 卷六 术法之架构
 本器采分曹营治之制，主干部伍列于左：

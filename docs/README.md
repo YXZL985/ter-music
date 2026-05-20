@@ -131,7 +131,7 @@ sudo dnf install ffmpeg-free-devel libpng-devel libjpeg-turbo-devel pulseaudio-l
 ```bash
 sudo apt update
 sudo apt install cmake gcc make pkg-config
-sudo apt install libavcodec-dev libavformat-dev libswresample-dev libavutil-dev libavfilter-dev libpng-dev libjpeg-dev libpulse-dev libncursesw5-dev libcurl4-openssl-dev
+sudo apt install libavcodec-dev libavformat-dev libswresample-dev libswscale-dev libavutil-dev libavfilter-dev libpng-dev libjpeg-dev libpulse-dev libncursesw5-dev libcurl4-openssl-dev
 ```
 
 **Note**: If you can't find the ffmpeg development packages, you may need to enable the universe repository first:
@@ -314,6 +314,7 @@ ter-music [OPTIONS]
 
 Options:
   -o, --open <path>    Open specified music directory directly on startup
+  -d, --debug          Enable debug logging (outputs to ter-music-debug.log)
   -h, --help           Show help information
 ```
 
@@ -491,7 +492,7 @@ Ter-Music supports automatic loading of LRC format lyrics files:
 
 ### 5.8 Configuration File
 
-The configuration file is stored at `~/.config/ter-music/config`. The program will automatically create it on first run.
+The configuration file is stored at `~/.config/ter-music/config.json`. The program will automatically create it on first run.
 
 **Configuration options include:**
 
@@ -499,7 +500,15 @@ The configuration file is stored at `~/.config/ter-music/config`. The program wi
 - `auto_play_on_start`: Auto-play on startup (0/1)
 - `remember_last_path`: Remember last opened directory (0/1)
 - `show_album_cover`: Show album cover art in the lyrics panel (0/1)
+- `show_lyrics_panel`: Show lyrics panel (0/1)
 - `default_playback_speed`: Default playback speed (0.75, 1.0, 1.25, 1.5, 2.0, 3.0)
+- `default_loop_mode`: Default loop mode (0=Off, 1=Single, 2=List, 3=Random)
+- `lyrics_alignment`: Lyrics text alignment (0=Left, 1=Center, 2=Right)
+- `clear_history_on_startup`: Clear playback history on startup (0/1)
+- `resume_last_playback`: Resume playback from last position (0/1)
+- `ui_language`: Interface language (0=Chinese, 1=English)
+- `volume_percent`: Default volume percentage (0-100)
+- `audio_latency_ms`: Audio latency in milliseconds
 - `remote_connections`: Saved remote server connections (SMB/SFTP/FTP/WebDAV)
 - Color theme configuration: Foreground and background colors for all UI elements
 
@@ -511,7 +520,7 @@ All user data is stored in the `~/.config/ter-music/` directory:
 
 ```
 ~/.config/ter-music/
-├── config          # Configuration file
+├── config.json     # Configuration file
 ├── history        # Playback history
 ├── favorites      # Favorites
 ├── dir_history    # Directory access history
@@ -590,7 +599,7 @@ There are three ways to exit:
 
 - Press `q` in the main interface
 - Press `Ctrl+C` (the program will clean up correctly and exit)
-- Select "Exit" in the options menu (which is the `F7` key)
+- Select "Exit" in the options menu (which is the `F8` key)
 
 ## 6. Technical Architecture
 
