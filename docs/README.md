@@ -1,10 +1,18 @@
+<div align="center">
+
 # Ter-Music - Terminal Music Player
 
 ![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)
 ![Language: C](https://img.shields.io/badge/Language-C-blue.svg)
 ![Platform: Linux](https://img.shields.io/badge/Platform-Linux-green.svg)
+![Docker](https://img.shields.io/badge/Docker-Supported-2496ED.svg)
+![Python](https://img.shields.io/badge/Python-3.x-3776AB.svg)
+![Shell](https://img.shields.io/badge/Shell-Bash-4EAA25.svg)
+![Linyaps](https://img.shields.io/badge/Linyaps-Supported-8A2BE2.svg)
 
-**其他语言版本 / Other Languages:**
+</div>
+
+**Other Languages:**
 - [中文（现代版）](translations/README_zh-CN_Modern.md)
 - [中文（文言版）](translations/README_zh-CN_Legacy.md)
 
@@ -508,7 +516,7 @@ The configuration file is stored at `~/.config/ter-music/config.json`. The progr
 - `resume_last_playback`: Resume playback from last position (0/1)
 - `ui_language`: Interface language (0=Chinese, 1=English)
 - `volume_percent`: Default volume percentage (0-100)
-- `audio_latency_ms`: Audio latency in milliseconds
+- `audio_latency_ms`: Output latency in milliseconds
 - `remote_connections`: Saved remote server connections (SMB/SFTP/FTP/WebDAV)
 - Color theme configuration: Foreground and background colors for all UI elements
 
@@ -601,7 +609,33 @@ There are three ways to exit:
 - Press `Ctrl+C` (the program will clean up correctly and exit)
 - Select "Exit" in the options menu (which is the `F8` key)
 
-## 6. Technical Architecture
+## 6. Frequently Asked Questions
+
+**No sound output**
+- Check whether PulseAudio is running: run `systemctl status pulseaudio` to verify
+- Check that your speaker volume is not muted
+- Verify PulseAudio configuration is correct
+
+**Poor audio quality, choppy/stuttering playback, or crackling noise**
+- Audio device performance varies across different machines, so the default audio latency setting may not be optimal for your hardware
+- Try increasing the "Output Latency" value in the settings menu (press `F2` to enter settings), or directly edit the `audio_latency_ms` field in the configuration file at `~/.config/ter-music/config.json`
+- The latency range is 20-250 milliseconds. It is recommended to increase it by 10 ms at a time and test until playback恢复正常
+- If issues persist after increasing latency, check your PulseAudio configuration or update your audio drivers
+
+**Chinese characters display as garbled text or squares**
+- Make sure your terminal uses UTF-8 encoding
+- Check your system locale settings: run `locale` and verify it shows `LC_CTYPE=UTF-8`
+- If CJK characters still display incorrectly in a tty terminal, try using the kmscon terminal instead, which has better East Asian character support
+
+**Header files not found during compilation**
+- Make sure all development dependency packages are installed (see Section 3)
+- Most systems split runtime and development packages — you need to install the `*-devel` or `*-dev` variants
+
+**Cannot open certain audio files**
+- Verify that your FFmpeg version supports the audio format
+- Newer FFmpeg versions support more formats, so upgrading is recommended
+
+## 7. Technical Architecture
 
 Ter-Music adopts a modular design, main modules include:
 
@@ -618,22 +652,22 @@ Ter-Music adopts a modular design, main modules include:
 - **media_session.c**: MPRIS D-Bus media session integration (optional)
 - **defs.h**: Global definitions, data structure declarations
 
-## 7. License
+## 8. License
 
 This project is licensed under the [GNU General Public License v3.0](LICENSE) open source license. You are free to use, modify, and distribute this software, but modified derivative works must also be open sourced under the same license.
 
-## 8. Disclaimer
+## 9. Disclaimer
 
 Ter-Music is a pure audio playback tool that does not provide, host, or distribute any audio files or other copyrighted content. Users must provide their own legally obtained audio files. The software's local and remote playback features are designed solely for playing media files that users have lawfully acquired.
 
 All copyright and intellectual property rights related to audio content played using this software belong to their respective owners. Any copyright disputes arising from the use of this software to play audio content are solely the responsibility of the user. The developer assumes no liability for any copyright or other legal issues arising from the use of this software.
 
-## 9. Author
+## 10. Author
 
 - **Author**: Yan Xi Zhu Lin
 - **Email**: <yxzl666xx@outlook.com>
 
-## 9. Acknowledgments
+## 11. Acknowledgments
 
 Special thanks to the following contributors for their valuable contributions:
 
