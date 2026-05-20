@@ -50,7 +50,8 @@ oadoc/
 
 .lingma/*
 .trae
+.claude/
 .tmp/*
-.rpmbuild_temp/*
+.*_temp/
 .appimagetool/*
 squashfs-root/*

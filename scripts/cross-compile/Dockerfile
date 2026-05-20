@@ -42,7 +42,7 @@ RUN apt-get update && apt-get install -y \
 
 # Add ARM64 architecture and install development libraries
 RUN dpkg --add-architecture arm64 && \
-    apt-get update && apt-get install -y \
+    apt-get update && apt-get install -y -o DPkg::options::="--force-overwrite" \
     libncurses-dev:arm64 \
     libdbus-1-dev:arm64 \
     libavcodec-dev:arm64 \
