@@ -124,12 +124,17 @@ static void render_no_lyrics_spectrum(int h, int w) {
         return;
     }
 
+    // 自身节流：距上次调用不足 100ms 则跳过（外层已有节流，双保险）
+    static uint64_t last_render_ms = 0;
+    uint64_t now_ms = lyric_now_ms();
+    if (now_ms - last_render_ms < 100) return;
+    last_render_ms = now_ms;
+
     int levels[VISUALIZER_BAND_COUNT] = {0};
     int peaks[VISUALIZER_BAND_COUNT] = {0};
     uint64_t last_update_ms = 0;
     get_visualizer_snapshot(levels, peaks, VISUALIZER_BAND_COUNT, &last_update_ms);
 
-    uint64_t now_ms = lyric_now_ms();
     double spin = (double)(now_ms % 5000ULL) / 5000.0;
     double highlight_angle = (spin * M_PI * 2.0) - (M_PI / 2.0);
     int pulse_phase = (int)((now_ms / 180ULL) % 24ULL);
@@ -153,8 +158,10 @@ static void render_no_lyrics_spectrum(int h, int w) {
         max_bar_len = 2;
     }
 
-    for (int row = 1; row < h - 1; row++) {
-        for (int col = 2; col < w - 2; col++) {
+    // 大窗口下隔行渲染以降低 CPU 负载
+    int step = (h > 30) ? 2 : 1;
+    for (int row = 1; row < h - 1; row += step) {
+        for (int col = 2; col < w - 2; col += step) {
             double dx = ((double)col - (double)center_x) / x_scale;
             double dy = (double)row - (double)center_y;
             double dist = sqrt(dx * dx + dy * dy);
@@ -308,7 +315,14 @@ static int render_corner_spectrum(int h, int w) {
         }
     }
 
-    int column_units[graph_width];
+    static int *column_units = NULL;
+    static int column_units_cap = 0;
+    if (graph_width > column_units_cap) {
+        int *new_buf = realloc(column_units, (size_t)graph_width * sizeof(int));
+        if (!new_buf) return 1;
+        column_units = new_buf;
+        column_units_cap = graph_width;
+    }
     for (int col = 0; col < graph_width; col++) {
         double normalized = (graph_width <= 1)
             ? 0.0
@@ -337,7 +351,14 @@ static int render_corner_spectrum(int h, int w) {
     }
 
     if (graph_width >= 3) {
-        int smoothed_units[graph_width];
+        static int *smoothed_units = NULL;
+        static int smoothed_units_cap = 0;
+        if (graph_width > smoothed_units_cap) {
+            int *new_buf = realloc(smoothed_units, (size_t)graph_width * sizeof(int));
+            if (!new_buf) return 1;
+            smoothed_units = new_buf;
+            smoothed_units_cap = graph_width;
+        }
         smoothed_units[0] = (column_units[0] * 3 + column_units[1]) / 4;
         for (int col = 1; col < graph_width - 1; col++) {
             smoothed_units[col] = (column_units[col - 1] + column_units[col] * 2 + column_units[col + 1]) / 4;

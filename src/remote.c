@@ -5,6 +5,28 @@
 #include <unistd.h>
 #include <curl/curl.h>
 
+static void (*g_remote_progress_hook)(void) = NULL;
+
+void remote_set_progress_hook(void (*hook)(void)) {
+    g_remote_progress_hook = hook;
+}
+
+static int progress_cb(void *clientp,
+                       curl_off_t dltotal, curl_off_t dlnow,
+                       curl_off_t ultotal, curl_off_t ulnow) {
+    (void)dltotal; (void)dlnow; (void)ultotal; (void)ulnow;
+    if (!g_remote_progress_hook) return 0;
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    uint64_t now = (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+    uint64_t *last_refresh = (uint64_t *)clientp;
+    if (now - *last_refresh >= 500) {
+        g_remote_progress_hook();
+        *last_refresh = now;
+    }
+    return 0;
+}
+
 /* ---------- error reporting ---------- */
 
 static char g_remote_errbuf[256];
@@ -1022,6 +1044,13 @@ int remote_fetch_to_buffer(const char *url, unsigned char **data, size_t *size) 
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
 
+    uint64_t last_refresh = 0;
+    if (g_remote_progress_hook) {
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progress_cb);
+        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &last_refresh);
+    }
+
     CURLcode res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
         curl_easy_cleanup(curl);
@@ -1165,6 +1194,13 @@ int remote_fetch_to_file(const char *url, const char *dest_path) {
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 30L);
+
+    uint64_t last_refresh = 0;
+    if (g_remote_progress_hook) {
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progress_cb);
+        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &last_refresh);
+    }
 
     CURLcode res = curl_easy_perform(curl);
     long http_code = 0;

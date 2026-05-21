@@ -1978,6 +1978,13 @@ cleanup:
 }
 
 /**
+ * 远程下载进度回调包装 — 定期刷新 ncurses 界面
+ */
+static void remote_progress_refresh(void) {
+    refresh();
+}
+
+/**
  * 播放指定索引的音频文件
  * 如果已有播放线程在运行，则先停止当前播放
  */
@@ -2033,6 +2040,9 @@ void play_audio(int index) {
     if (remote_is_remote_path(track_path)) {
         cleanup_playback_cache();
 
+        // 下载期间定期刷新 ncurses 界面，保持响应
+        remote_set_progress_hook(remote_progress_refresh);
+
         // 从原始 URL 中提取扩展名
         const char *src_ext = strrchr(track_path, '.');
         char ext_buf[16] = "";
@@ -2086,6 +2096,9 @@ void play_audio(int index) {
                 }
             }
         }
+
+        // 远程下载完成，清除进度钩子
+        remote_set_progress_hook(NULL);
     }
 
     int *index_ptr = malloc(sizeof(int));

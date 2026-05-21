@@ -943,8 +943,10 @@ void preload_visible_tracks(int start, int end) {
     if (end >= playlist_total) end = playlist_total - 1;
     if (start > end) return;
 
+    // 限制每帧最多加载 2 个非缓存曲目，防止慢速文件系统阻塞 UI
+    int loaded = 0;
     Track track;
-    for (int i = start; i <= end; i++) {
+    for (int i = start; i <= end && loaded < 2; i++) {
         int cached = 0;
         playlist_lock();
         cached = (find_in_cache_locked(i) != NULL);
@@ -952,6 +954,7 @@ void preload_visible_tracks(int start, int end) {
 
         if (!cached) {
             get_track_metadata(i, &track);
+            loaded++;
         }
     }
 }

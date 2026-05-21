@@ -54,4 +54,10 @@ int remote_fetch_to_buffer(const char *url, unsigned char **data, size_t *size);
 // Returns 0 on success, -1 on error (partial file is cleaned up).
 int remote_fetch_to_file(const char *url, const char *dest_path);
 
+// Set a hook that is called periodically during remote download to keep the
+// UI responsive.  Pass NULL to unset.  The hook is called from inside curl's
+// blocking I/O, so it must be safe to call from any context (typically just
+// calls refresh() or similar).
+void remote_set_progress_hook(void (*hook)(void));
+
 #endif

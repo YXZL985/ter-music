@@ -465,7 +465,14 @@ static void render_wave_particle_visualizer(int start_col, int graph_width) {
         }
     }
 
-    int column_units[graph_width];
+    static int *column_units = NULL;
+    static int column_units_cap = 0;
+    if (graph_width > column_units_cap) {
+        int *new_buf = realloc(column_units, (size_t)graph_width * sizeof(int));
+        if (!new_buf) return;
+        column_units = new_buf;
+        column_units_cap = graph_width;
+    }
     for (int col = 0; col < graph_width; col++) {
         double normalized = (graph_width <= 1)
             ? 0.0
@@ -495,7 +502,14 @@ static void render_wave_particle_visualizer(int start_col, int graph_width) {
     }
 
     if (graph_width >= 3) {
-        int smoothed_units[graph_width];
+        static int *smoothed_units = NULL;
+        static int smoothed_units_cap = 0;
+        if (graph_width > smoothed_units_cap) {
+            int *new_buf = realloc(smoothed_units, (size_t)graph_width * sizeof(int));
+            if (!new_buf) return;
+            smoothed_units = new_buf;
+            smoothed_units_cap = graph_width;
+        }
         smoothed_units[0] = (column_units[0] * 3 + column_units[1]) / 4;
         for (int col = 1; col < graph_width - 1; col++) {
             smoothed_units[col] = (column_units[col - 1] + column_units[col] * 2 + column_units[col + 1]) / 4;
@@ -2156,19 +2170,11 @@ void update_progress_bar() {
         update_lyrics_display();
     }
 
-    static uint64_t last_placeholder_refresh_ms = 0;
-    static uint64_t last_corner_spectrum_refresh_ms = 0;
-    if (g_current_view == VIEW_MAIN &&
-        (!g_lyrics.has_lyrics || g_lyrics.count == 0) &&
-        (position_changed || now_ms - last_placeholder_refresh_ms >= 100ULL)) {
-        render_lyrics();
-        last_placeholder_refresh_ms = now_ms;
-    } else if (g_current_view == VIEW_MAIN &&
-               g_lyrics.has_lyrics &&
-               g_lyrics.count > 0 &&
-               (now_ms - last_corner_spectrum_refresh_ms >= 100ULL)) {
-        render_lyrics();
-        last_corner_spectrum_refresh_ms = now_ms;
+    // 频谱渲染统一节流到 150ms，通过脏掩码延迟渲染
+    static uint64_t last_spectrum_refresh_ms = 0;
+    if (g_current_view == VIEW_MAIN && (now_ms - last_spectrum_refresh_ms >= 150ULL)) {
+        request_ui_refresh(UI_DIRTY_LYRICS);
+        last_spectrum_refresh_ms = now_ms;
     }
 
     last_refresh_ms = now_ms;
@@ -2873,10 +2879,7 @@ void run_event_loop() {
                              }
 
                              delwin(win_win);
-                             create_layout();
-                             render_playlist_content();
-                             render_controls();
-                             render_lyrics();
+                             request_ui_refresh(UI_DIRTY_PLAYLIST | UI_DIRTY_CONTROLS | UI_DIRTY_LYRICS);
                         } else if (g_playlist_manager.count == 0) {
                             update_controls_status(ui_text("还没有歌单，请先到 F4 新建",
                                                            "No playlist yet. Create one in F4"));
@@ -2894,9 +2897,7 @@ void run_event_loop() {
             delwin(win_lyrics);
             clear();
             create_layout();
-            render_playlist_content();
-            render_controls();
-            render_lyrics();
+            request_ui_refresh(UI_DIRTY_PLAYLIST | UI_DIRTY_CONTROLS | UI_DIRTY_LYRICS);
             continue;
         }
     }
@@ -3069,9 +3070,7 @@ void update_rainbow_colors(void) {
     apply_color_theme();
 
     if (g_current_view == VIEW_MAIN) {
-        render_playlist_content();
-        render_controls();
-        render_lyrics();
+        request_ui_refresh(UI_DIRTY_PLAYLIST | UI_DIRTY_CONTROLS | UI_DIRTY_LYRICS);
     }
 }
 
@@ -3138,8 +3137,6 @@ void toggle_rainbow_mode(void) {
     
     if (g_current_view == VIEW_MAIN) {
         create_layout();
-        render_playlist_content();
-        render_controls();
-        render_lyrics();
+        request_ui_refresh(UI_DIRTY_PLAYLIST | UI_DIRTY_CONTROLS | UI_DIRTY_LYRICS);
     }
 }
