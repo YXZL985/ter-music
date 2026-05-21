@@ -257,6 +257,7 @@ extern float g_playback_speed;
 void toggle_playback_speed(void);
 void init_ffmpeg();
 void init_audio_device();
+int audio_backend_is_available(int backend);
 int load_playlist(const char *folder_path);
 int append_playlist(const char *folder_path);
 int load_single_file(const char *file_path);

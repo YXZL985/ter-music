@@ -2458,13 +2458,8 @@ static void adjust_or_toggle_settings_option(int option_index, int delta) {
         case SETTINGS_IDX_AUDIO_BACKEND: {
             int options[] = {AUDIO_BACKEND_AUTO, AUDIO_BACKEND_PULSE, AUDIO_BACKEND_ALSA};
             int count = 3;
-            int has_pulse = 0, has_alsa = 0;
-#ifdef HAVE_PULSE
-            has_pulse = 1;
-#endif
-#ifdef HAVE_ALSA
-            has_alsa = 1;
-#endif
+            int has_pulse = audio_backend_is_available(AUDIO_BACKEND_PULSE);
+            int has_alsa = audio_backend_is_available(AUDIO_BACKEND_ALSA);
             int current = 0;
             for (int i = 0; i < count; i++) {
                 if (g_app_config.audio_backend == options[i]) {

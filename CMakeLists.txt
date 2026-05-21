@@ -37,36 +37,30 @@ if(STATIC_LINKING)
 endif()
 pkg_check_modules(PNG REQUIRED libpng)
 pkg_check_modules(JPEG REQUIRED libjpeg)
+# PulseAudio 和 ALSA 仅用于获取头文件路径，运行时通过 dlopen 加载
 pkg_check_modules(PULSE libpulse)
 pkg_check_modules(ALSA alsa)
 pkg_check_modules(DBUS dbus-1)
 pkg_check_modules(LIBCURL libcurl)
 
-if(NOT PULSE_FOUND AND NOT ALSA_FOUND)
-    message(FATAL_ERROR "No audio backend found. Install libpulse-dev or libasound2-dev.")
-endif()
-
 if(PULSE_FOUND)
-    set(AUDIO_BACKEND_DEFINES HAVE_PULSE=1)
     set(AUDIO_BACKEND_INCLUDE_DIRS ${PULSE_INCLUDE_DIRS})
-    set(AUDIO_BACKEND_LIBRARIES ${PULSE_LIBRARIES})
     set(AUDIO_BACKEND_CFLAGS ${PULSE_CFLAGS_OTHER})
 endif()
 if(ALSA_FOUND)
-    set(AUDIO_BACKEND_DEFINES ${AUDIO_BACKEND_DEFINES} HAVE_ALSA=1)
     set(AUDIO_BACKEND_INCLUDE_DIRS ${AUDIO_BACKEND_INCLUDE_DIRS} ${ALSA_INCLUDE_DIRS})
-    set(AUDIO_BACKEND_LIBRARIES ${AUDIO_BACKEND_LIBRARIES} ${ALSA_LIBRARIES})
     set(AUDIO_BACKEND_CFLAGS ${AUDIO_BACKEND_CFLAGS} ${ALSA_CFLAGS_OTHER})
 endif()
 
 if(PULSE_FOUND AND ALSA_FOUND)
-    set(AUDIO_BACKEND_NAME "PulseAudio + ALSA (runtime selectable)")
+    message(STATUS "Audio backend(s): PulseAudio + ALSA (runtime dlopen)")
 elseif(PULSE_FOUND)
-    set(AUDIO_BACKEND_NAME "PulseAudio only")
+    message(STATUS "Audio backend(s): PulseAudio (runtime dlopen)")
+elseif(ALSA_FOUND)
+    message(STATUS "Audio backend(s): ALSA (runtime dlopen)")
 else()
-    set(AUDIO_BACKEND_NAME "ALSA only")
+    message(STATUS "Audio backend(s): NONE (will probe at runtime)")
 endif()
-message(STATUS "Audio backend(s): ${AUDIO_BACKEND_NAME}")
 if(DBUS_FOUND)
     message(STATUS "Using system media session backend: MPRIS (D-Bus)")
 else()
@@ -138,12 +132,12 @@ target_link_libraries(${PROJECT_NAME}
     ${AVUTIL_LIBRARIES}
     ${AVFILTER_LIBRARIES}
     ${SWSCALE_LIBRARIES}
-    ${AUDIO_BACKEND_LIBRARIES}
     ${PNG_LIBRARIES}
     ${JPEG_LIBRARIES}
     ${NCURSESW_LIBRARY}
     m
     ${PTHREAD_LIBRARY}
+    ${CMAKE_DL_LIBS}
 )
 
 if(DBUS_FOUND)
@@ -174,7 +168,6 @@ endif()
 # 添加预处理器定义
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     _GNU_SOURCE
-    ${AUDIO_BACKEND_DEFINES}
 )
 
 if(DBUS_FOUND)
