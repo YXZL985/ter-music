@@ -166,10 +166,10 @@ int generate_braille_art_dynamic(const char *image_path,
     int pixel_width = target_width * BRAILLE_CELL_W;
     int pixel_height = target_height * BRAILLE_CELL_H;
 
-    unsigned char *gray = malloc(w * h);
-    unsigned char *resized = malloc(pixel_width * pixel_height);
-    unsigned char *binary = malloc(pixel_width * pixel_height);
-    uint32_t *braille = malloc(target_width * target_height * sizeof(uint32_t));
+    unsigned char *gray = calloc(w, h);
+    unsigned char *resized = calloc(pixel_width, pixel_height);
+    unsigned char *binary = calloc(pixel_width, pixel_height);
+    uint32_t *braille = calloc(target_width, target_height * sizeof(uint32_t));
 
     if (!gray || !resized || !binary || !braille) {
         free(rgba); free(gray); free(resized); free(binary); free(braille);
