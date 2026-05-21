@@ -776,6 +776,38 @@ static double parse_timestamp(const char *time_str) {
 }
 
 /**
+ * 去除歌词文本中嵌入的 [mm:ss.xx] 时间戳标签
+ * 新式 LRC 同一行内正文后可能包含额外时间戳，如 "作词 : ST[00:01.00]"
+ */
+static void strip_embedded_timestamps(char *text) {
+    if (!text || !text[0]) {
+        return;
+    }
+    char *src = text;
+    char *dst = text;
+    while (*src) {
+        if (*src == '[') {
+            char *end = strchr(src, ']');
+            if (end) {
+                int mm, ss, xx;
+                if (sscanf(src + 1, "%d:%d.%d", &mm, &ss, &xx) == 3) {
+                    src = end + 1;
+                    continue;
+                }
+            }
+        }
+        *dst++ = *src++;
+    }
+    *dst = '\0';
+
+    // 去除可能因删除时间戳产生的尾随空格
+    int len = strlen(text);
+    while (len > 0 && text[len - 1] == ' ') {
+        text[--len] = '\0';
+    }
+}
+
+/**
  * 解析单行 LRC 内容
  * @param line LRC 文件的一行
  * @param timestamp 输出：时间戳（秒，包含毫秒）
@@ -844,7 +876,11 @@ static int parse_lrc_line(const char *line, double *timestamp, char *text) {
     while (len > 0 && (text[len-1] == '\n' || text[len-1] == '\r' || text[len-1] == ' ')) {
         text[--len] = '\0';
     }
-    
+
+    // 去除嵌入的 [mm:ss.xx] 时间戳标签（新式 LRC 格式）
+    strip_embedded_timestamps(text);
+    len = strlen(text);
+
     // 如果歌词文本为空，使用占位符
     if (len == 0) {
         snprintf(text, MAX_LYRIC_TEXT_LEN, "%s", lyric_text("(纯音乐)", "(Instrumental)"));
@@ -1028,6 +1064,22 @@ void load_lyrics(const char *audio_path) {
 
         if (line[0] == '\0') {
             continue;
+        }
+
+        // 检测头部元数据行 [ti:曲名]、[ar:歌手]、[al:专辑]
+        if ((line[0] == '[') && (line[1] == 't' && line[2] == 'i' && line[3] == ':') ||
+            (line[0] == '[') && (line[1] == 'a' && line[2] == 'r' && line[3] == ':') ||
+            (line[0] == '[') && (line[1] == 'a' && line[2] == 'l' && line[3] == ':')) {
+            char *close = strchr(line + 4, ']');
+            if (close && close > line + 4) {
+                *close = '\0';
+                temp_lines[count].timestamp = 0.0;
+                strncpy(temp_lines[count].text, line + 4, MAX_LYRIC_TEXT_LEN - 1);
+                temp_lines[count].text[MAX_LYRIC_TEXT_LEN - 1] = '\0';
+                *close = ']';
+                count++;
+                continue;
+            }
         }
 
         double timestamp;
