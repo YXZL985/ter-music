@@ -13,6 +13,9 @@
 #include <unistd.h>
 #include <ctype.h>
 #include <limits.h>
+
+// 前向声明
+void audio_backend_shutdown(void);
 #include <wchar.h>
 #include <wctype.h>
 #include <locale.h>
@@ -2927,6 +2930,7 @@ void cleanup() {
         win_lyrics = NULL;
     }
     endwin(); // 结束 ncurses 模式
+    audio_backend_shutdown();
     remote_cleanup();
 }
 

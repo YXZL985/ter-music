@@ -285,6 +285,7 @@ int main(int argc, char *argv[]) {
     remote_init();
     log_info("main", "Subsystems initialized");
 
+    g_active_backend = g_app_config.audio_backend;
     init_audio_device();
     media_session_init();
     

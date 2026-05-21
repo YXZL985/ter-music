@@ -700,6 +700,12 @@ void load_config(void) {
             g_app_config.lyrics_alignment = 0;
         }
     }
+    if (strstr(json, "\"audio_backend\"")) {
+        g_app_config.audio_backend = (int)extract_json_int(json, "audio_backend");
+        if (g_app_config.audio_backend < 0 || g_app_config.audio_backend > 2) {
+            g_app_config.audio_backend = AUDIO_BACKEND_AUTO;
+        }
+    }
     g_playback_speed = g_app_config.default_playback_speed;
 
     g_app_config.resume_last_playback = g_app_config.resume_last_playback ? 1 : 0;
@@ -820,6 +826,7 @@ void save_config(void) {
     fprintf(f, "  \"default_playback_speed\": %.2f,\n", g_app_config.default_playback_speed);
     fprintf(f, "  \"show_album_cover\": %d,\n", g_app_config.show_album_cover);
     fprintf(f, "  \"lyrics_alignment\": %d,\n", g_app_config.lyrics_alignment);
+    fprintf(f, "  \"audio_backend\": %d,\n", g_app_config.audio_backend);
 
     fprintf(f, "  \"config_version\": 1,\n");
     fprintf(f, "  \"remote_connection_count\": %d,\n", g_app_config.remote_connection_count);
@@ -1949,7 +1956,8 @@ static const char *settings_options[] = {
     "默认循环模式",
     "默认倍速",
     "显示专辑图片",
-    "歌词对齐方式"
+    "歌词对齐方式",
+    "音频后端"
 };
 static const char *settings_options_ascii[] = {
     "Playlist Foreground",
@@ -1975,9 +1983,10 @@ static const char *settings_options_ascii[] = {
     "Default Loop Mode",
     "Default Speed",
     "Show Album Cover",
-    "Lyrics Alignment"
+    "Lyrics Alignment",
+    "Audio Backend"
 };
-#define SETTINGS_OPTION_COUNT 24
+#define SETTINGS_OPTION_COUNT 25
 
 enum {
     SETTINGS_IDX_THEME_COLOR_PAIR_0 = 0,
@@ -2003,7 +2012,8 @@ enum {
     SETTINGS_IDX_DEFAULT_LOOP = 20,
     SETTINGS_IDX_DEFAULT_SPEED = 21,
     SETTINGS_IDX_SHOW_ALBUM_COVER = 22,
-    SETTINGS_IDX_LYRICS_ALIGNMENT = 23
+    SETTINGS_IDX_LYRICS_ALIGNMENT = 23,
+    SETTINGS_IDX_AUDIO_BACKEND = 24
 };
 
 typedef struct {
@@ -2041,7 +2051,8 @@ static const int settings_playback_option_indices[] = {
     SETTINGS_IDX_SHOW_ALBUM_COVER,
     SETTINGS_IDX_LYRICS_ALIGNMENT,
     SETTINGS_IDX_DEFAULT_LOOP,
-    SETTINGS_IDX_DEFAULT_SPEED
+    SETTINGS_IDX_DEFAULT_SPEED,
+    SETTINGS_IDX_AUDIO_BACKEND
 };
 
 static SettingsSectionSpec get_settings_section_spec_for_sidebar(int sidebar_idx) {
@@ -2188,6 +2199,16 @@ static void format_settings_option_line(int option_index, char *line, size_t lin
         snprintf(line, line_size, "%s%s%.2fx",
                  current_settings_options[option_index], separator,
                  g_app_config.default_playback_speed);
+    } else if (option_index == SETTINGS_IDX_AUDIO_BACKEND) {
+        const char *backend_str;
+        switch (g_app_config.audio_backend) {
+            case AUDIO_BACKEND_AUTO:  backend_str = use_english_ui() ? "Auto" : "自动"; break;
+            case AUDIO_BACKEND_PULSE: backend_str = "PulseAudio"; break;
+            case AUDIO_BACKEND_ALSA:  backend_str = "ALSA"; break;
+            default:                  backend_str = use_english_ui() ? "Auto" : "自动";
+        }
+        snprintf(line, line_size, "%s%s%s",
+                 current_settings_options[option_index], separator, backend_str);
     } else {
         snprintf(line, line_size, "%s", current_settings_options[option_index]);
     }
@@ -2432,6 +2453,41 @@ static void adjust_or_toggle_settings_option(int option_index, int delta) {
                      menu_text("默认倍速已更新", "Default speed updated"),
                      g_app_config.default_playback_speed);
             show_status_message(msg);
+            break;
+        }
+        case SETTINGS_IDX_AUDIO_BACKEND: {
+            int options[] = {AUDIO_BACKEND_AUTO, AUDIO_BACKEND_PULSE, AUDIO_BACKEND_ALSA};
+            int count = 3;
+            int has_pulse = 0, has_alsa = 0;
+#ifdef HAVE_PULSE
+            has_pulse = 1;
+#endif
+#ifdef HAVE_ALSA
+            has_alsa = 1;
+#endif
+            int current = 0;
+            for (int i = 0; i < count; i++) {
+                if (g_app_config.audio_backend == options[i]) {
+                    current = i;
+                    break;
+                }
+            }
+            int direction = (delta >= 0) ? 1 : -1;
+            int next = current;
+            int attempts = 0;
+            do {
+                next = (next + direction + count) % count;
+                attempts++;
+                if ((options[next] == AUDIO_BACKEND_PULSE && !has_pulse) ||
+                    (options[next] == AUDIO_BACKEND_ALSA && !has_alsa)) {
+                    continue;
+                }
+                break;
+            } while (attempts < count);
+            g_app_config.audio_backend = options[next];
+            save_config();
+            show_status_message(menu_text("音频后端将在下次启动时生效",
+                                          "Audio backend will take effect on next restart"));
             break;
         }
         default:

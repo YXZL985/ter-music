@@ -78,6 +78,10 @@ typedef enum {
 #define MAX_REMOTE_CONNECTIONS 20
 #define MAX_REMOTE_NAME_LEN 64
 
+#define AUDIO_BACKEND_AUTO  0
+#define AUDIO_BACKEND_PULSE 1
+#define AUDIO_BACKEND_ALSA  2
+
 typedef struct {
     char path[MAX_PATH_LEN];
     char title[MAX_META_LEN];
@@ -190,6 +194,7 @@ typedef struct {
     float default_playback_speed;
     int show_album_cover;
     int lyrics_alignment;  // 0=居左(Left), 1=居中(Center), 2=居右(Right)
+    int audio_backend;     // 0=Auto, 1=PulseAudio, 2=ALSA
     int config_version;
     RemoteConnectionConfig remote_connections[MAX_REMOTE_CONNECTIONS];
     int remote_connection_count;
@@ -243,6 +248,8 @@ extern pthread_mutex_t g_seek_mutex;
 
 extern int g_lyric_cursor_mode;
 extern int g_lyric_cursor_index;
+
+extern int g_active_backend;
 
 extern SearchState g_search_state;
 extern float g_playback_speed;

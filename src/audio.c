@@ -18,11 +18,13 @@
 #endif
 
 // 音频后端头文件
-#if defined(HAVE_PULSE)
+#ifdef HAVE_PULSE
 #include <pulse/pulseaudio.h>
-#elif defined(HAVE_ALSA)
+#endif
+#ifdef HAVE_ALSA
 #include <alsa/asoundlib.h>
-#else
+#endif
+#if !defined(HAVE_PULSE) && !defined(HAVE_ALSA)
 #error "No audio backend configured"
 #endif
 
@@ -48,16 +50,19 @@
 #endif
 
 // 音频后端全局变量
-#if defined(HAVE_PULSE)
+#ifdef HAVE_PULSE
 static pa_mainloop *pa_ml = NULL;
 static pa_context *pa_ctx = NULL;
 static pa_stream *pa_s = NULL;
 static pa_sample_spec pa_ss;
 static int pa_connected = 0;
-#elif defined(HAVE_ALSA)
+#endif
+#ifdef HAVE_ALSA
 static snd_pcm_t *alsa_pcm = NULL;
 static int alsa_ready = 0;
 #endif
+
+int g_active_backend = AUDIO_BACKEND_AUTO;
 
 static pthread_mutex_t audio_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t g_volume_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -451,10 +456,11 @@ static void pcm_queue_consume(PCMQueue *queue) {
 }
 
 static void apply_volume_to_samples(int32_t *samples, int sample_count) {
-#if defined(HAVE_PULSE)
-    (void)samples;
-    (void)sample_count;
-#else
+    if (g_active_backend == AUDIO_BACKEND_PULSE) {
+        (void)samples;
+        (void)sample_count;
+        return;
+    }
     if (!samples || sample_count <= 0) {
         return;
     }
@@ -471,7 +477,6 @@ static void apply_volume_to_samples(int32_t *samples, int sample_count) {
     for (int i = 0; i < sample_count; i++) {
         samples[i] = (int32_t)(((int64_t)samples[i] * volume) / 100);
     }
-#endif
 }
 
 static int consume_volume_sync_request(int *volume_out, int force) {
@@ -498,32 +503,34 @@ static void audio_backend_sync_volume(int force) {
         return;
     }
 
-#if defined(HAVE_PULSE)
-    if (!pa_ctx || !pa_ml || !pa_s || pa_stream_get_state(pa_s) != PA_STREAM_READY) {
+#ifdef HAVE_PULSE
+    if (g_active_backend == AUDIO_BACKEND_PULSE) {
+        if (!pa_ctx || !pa_ml || !pa_s || pa_stream_get_state(pa_s) != PA_STREAM_READY) {
+            return;
+        }
+
+        uint32_t stream_index = pa_stream_get_index(pa_s);
+        if (stream_index == PA_INVALID_INDEX) {
+            return;
+        }
+
+        pa_cvolume cvolume;
+        pa_cvolume_set(&cvolume, pa_ss.channels, pa_sw_volume_from_linear((double)volume / 100.0));
+
+        pa_operation *op = pa_context_set_sink_input_volume(pa_ctx, stream_index, &cvolume, NULL, NULL);
+        if (!op) {
+            return;
+        }
+
+        while (pa_operation_get_state(op) == PA_OPERATION_RUNNING) {
+            pa_mainloop_iterate(pa_ml, 1, NULL);
+        }
+        pa_operation_unref(op);
         return;
     }
-
-    uint32_t stream_index = pa_stream_get_index(pa_s);
-    if (stream_index == PA_INVALID_INDEX) {
-        return;
-    }
-
-    pa_cvolume cvolume;
-    pa_cvolume_set(&cvolume, pa_ss.channels, pa_sw_volume_from_linear((double)volume / 100.0));
-
-    pa_operation *op = pa_context_set_sink_input_volume(pa_ctx, stream_index, &cvolume, NULL, NULL);
-    if (!op) {
-        return;
-    }
-
-    while (pa_operation_get_state(op) == PA_OPERATION_RUNNING) {
-        pa_mainloop_iterate(pa_ml, 1, NULL);
-    }
-    pa_operation_unref(op);
-#else
+#endif
     (void)force;
     (void)volume;
-#endif
 }
 
 // 全局变量定义
@@ -931,96 +938,108 @@ static int audio_backend_prepare_stream(int sample_rate, int channels) {
     }
     unsigned int max_latency_usec = latency_usec * 2U;
 
-#if defined(HAVE_PULSE)
-    if (!pa_connected || !pa_ctx) {
-        update_controls_status(audio_text("PulseAudio 未连接", "PulseAudio disconnected"));
-        return -1;
-    }
+#ifdef HAVE_PULSE
+    if (g_active_backend == AUDIO_BACKEND_PULSE) {
+        if (!pa_connected || !pa_ctx) {
+            update_controls_status(audio_text("PulseAudio 未连接", "PulseAudio disconnected"));
+            return -1;
+        }
 
-    pa_ss.format = PA_SAMPLE_S32LE;
-    pa_ss.rate = sample_rate;
-    pa_ss.channels = (uint8_t)channels;
+        pa_ss.format = PA_SAMPLE_S32LE;
+        pa_ss.rate = sample_rate;
+        pa_ss.channels = (uint8_t)channels;
 
-    pa_stream *new_stream = pa_stream_new(pa_ctx, "playback", &pa_ss, NULL);
-    if (!new_stream) {
-        update_controls_status(audio_text("无法创建 PulseAudio 播放流", "Cannot create PulseAudio stream"));
-        return -1;
-    }
+        pa_stream *new_stream = pa_stream_new(pa_ctx, "playback", &pa_ss, NULL);
+        if (!new_stream) {
+            update_controls_status(audio_text("无法创建 PulseAudio 播放流", "Cannot create PulseAudio stream"));
+            return -1;
+        }
 
-    pa_buffer_attr ba;
-    memset(&ba, 0, sizeof(ba));
-    ba.maxlength = pa_usec_to_bytes((pa_usec_t)max_latency_usec, &pa_ss);
-    ba.tlength = pa_usec_to_bytes((pa_usec_t)latency_usec, &pa_ss);
-    ba.prebuf = 0;
-    ba.minreq = pa_usec_to_bytes((pa_usec_t)minreq_usec, &pa_ss);
-    ba.fragsize = (uint32_t)-1;
+        pa_buffer_attr ba;
+        memset(&ba, 0, sizeof(ba));
+        ba.maxlength = pa_usec_to_bytes((pa_usec_t)max_latency_usec, &pa_ss);
+        ba.tlength = pa_usec_to_bytes((pa_usec_t)latency_usec, &pa_ss);
+        ba.prebuf = 0;
+        ba.minreq = pa_usec_to_bytes((pa_usec_t)minreq_usec, &pa_ss);
+        ba.fragsize = (uint32_t)-1;
 
-    if (pa_stream_connect_playback(new_stream, NULL, &ba, PA_STREAM_ADJUST_LATENCY, NULL, NULL) < 0) {
-        update_controls_status(audio_text("无法连接 PulseAudio 播放流", "Cannot connect PulseAudio stream"));
-        pa_stream_unref(new_stream);
-        return -1;
-    }
-
-    while (pa_stream_get_state(new_stream) != PA_STREAM_READY) {
-        if (pa_stream_get_state(new_stream) == PA_STREAM_FAILED ||
-            pa_stream_get_state(new_stream) == PA_STREAM_TERMINATED) {
-            update_controls_status(audio_text("PulseAudio 播放流初始化失败", "PulseAudio stream init failed"));
+        if (pa_stream_connect_playback(new_stream, NULL, &ba, PA_STREAM_ADJUST_LATENCY, NULL, NULL) < 0) {
+            update_controls_status(audio_text("无法连接 PulseAudio 播放流", "Cannot connect PulseAudio stream"));
             pa_stream_unref(new_stream);
             return -1;
         }
-        pa_mainloop_iterate(pa_ml, 1, NULL);
-    }
 
-    pa_s = new_stream;
-    return 0;
-#else
-    if (!alsa_ready) {
-        update_controls_status(audio_text("ALSA 后端未就绪", "ALSA backend not ready"));
-        return -1;
-    }
+        while (pa_stream_get_state(new_stream) != PA_STREAM_READY) {
+            if (pa_stream_get_state(new_stream) == PA_STREAM_FAILED ||
+                pa_stream_get_state(new_stream) == PA_STREAM_TERMINATED) {
+                update_controls_status(audio_text("PulseAudio 播放流初始化失败", "PulseAudio stream init failed"));
+                pa_stream_unref(new_stream);
+                return -1;
+            }
+            pa_mainloop_iterate(pa_ml, 1, NULL);
+        }
 
-    if (snd_pcm_open(&alsa_pcm, g_default_audio_device, SND_PCM_STREAM_PLAYBACK, 0) < 0) {
-        update_controls_status(audio_text("无法打开 ALSA 设备", "Cannot open ALSA device"));
-        alsa_pcm = NULL;
-        return -1;
+        pa_s = new_stream;
+        return 0;
     }
-
-    if (snd_pcm_set_params(alsa_pcm,
-                           SND_PCM_FORMAT_S32_LE,
-                           SND_PCM_ACCESS_RW_INTERLEAVED,
-                           (unsigned int)channels,
-                           (unsigned int)sample_rate,
-                           1,
-                           latency_usec) < 0) {
-        update_controls_status(audio_text("无法配置 ALSA 设备", "Cannot configure ALSA device"));
-        snd_pcm_close(alsa_pcm);
-        alsa_pcm = NULL;
-        return -1;
-    }
-
-    return 0;
 #endif
+
+#ifdef HAVE_ALSA
+    if (g_active_backend == AUDIO_BACKEND_ALSA) {
+        if (!alsa_ready) {
+            update_controls_status(audio_text("ALSA 后端未就绪", "ALSA backend not ready"));
+            return -1;
+        }
+
+        if (snd_pcm_open(&alsa_pcm, g_default_audio_device, SND_PCM_STREAM_PLAYBACK, 0) < 0) {
+            update_controls_status(audio_text("无法打开 ALSA 设备", "Cannot open ALSA device"));
+            alsa_pcm = NULL;
+            return -1;
+        }
+
+        if (snd_pcm_set_params(alsa_pcm,
+                               SND_PCM_FORMAT_S32_LE,
+                               SND_PCM_ACCESS_RW_INTERLEAVED,
+                               (unsigned int)channels,
+                               (unsigned int)sample_rate,
+                               1,
+                               latency_usec) < 0) {
+            update_controls_status(audio_text("无法配置 ALSA 设备", "Cannot configure ALSA device"));
+            snd_pcm_close(alsa_pcm);
+            alsa_pcm = NULL;
+            return -1;
+        }
+
+        return 0;
+    }
+#endif
+
+    update_controls_status(audio_text("没有可用的音频后端", "No audio backend available"));
+    return -1;
 }
 
 static void audio_backend_cleanup_stream(void) {
-#if defined(HAVE_PULSE)
-    if (pa_s) {
+#ifdef HAVE_PULSE
+    if (g_active_backend == AUDIO_BACKEND_PULSE && pa_s) {
         pa_stream_disconnect(pa_s);
         pa_stream_unref(pa_s);
         pa_s = NULL;
+        return;
     }
-#else
-    if (alsa_pcm) {
+#endif
+#ifdef HAVE_ALSA
+    if (g_active_backend == AUDIO_BACKEND_ALSA && alsa_pcm) {
         snd_pcm_drop(alsa_pcm);
         snd_pcm_close(alsa_pcm);
         alsa_pcm = NULL;
+        return;
     }
 #endif
 }
 
 static void audio_backend_flush_stream(void) {
-#if defined(HAVE_PULSE)
-    if (pa_s && pa_ml && pa_ctx) {
+#ifdef HAVE_PULSE
+    if (g_active_backend == AUDIO_BACKEND_PULSE && pa_s && pa_ml && pa_ctx) {
         pa_stream_state_t state = pa_stream_get_state(pa_s);
         if (state == PA_STREAM_READY) {
             pa_operation *op = pa_stream_flush(pa_s, NULL, NULL);
@@ -1031,11 +1050,14 @@ static void audio_backend_flush_stream(void) {
                 pa_operation_unref(op);
             }
         }
+        return;
     }
-#else
-    if (alsa_pcm) {
+#endif
+#ifdef HAVE_ALSA
+    if (g_active_backend == AUDIO_BACKEND_ALSA && alsa_pcm) {
         snd_pcm_drop(alsa_pcm);
         snd_pcm_prepare(alsa_pcm);
+        return;
     }
 #endif
 }
@@ -1045,65 +1067,73 @@ static int audio_backend_write_samples(const int32_t *samples, int frame_count) 
         return 0;
     }
 
-#if defined(HAVE_PULSE)
-    size_t bytes = (size_t)frame_count * pa_ss.channels * sizeof(int32_t);
+#ifdef HAVE_PULSE
+    if (g_active_backend == AUDIO_BACKEND_PULSE) {
+        size_t bytes = (size_t)frame_count * pa_ss.channels * sizeof(int32_t);
 
-    if (!pa_s || pa_stream_get_state(pa_s) != PA_STREAM_READY) {
-        return -1;
+        if (!pa_s || pa_stream_get_state(pa_s) != PA_STREAM_READY) {
+            return -1;
+        }
+
+        while (pa_s && pa_stream_get_state(pa_s) == PA_STREAM_READY &&
+               pa_stream_writable_size(pa_s) < bytes) {
+            if (!g_play_thread_running) {
+                return 0;
+            }
+            pa_mainloop_iterate(pa_ml, 1, NULL);
+        }
+
+        if (!pa_s || pa_stream_get_state(pa_s) != PA_STREAM_READY) {
+            return -1;
+        }
+
+        return pa_stream_write(pa_s, samples, bytes, NULL, 0, PA_SEEK_RELATIVE);
     }
-
-    while (pa_s && pa_stream_get_state(pa_s) == PA_STREAM_READY &&
-           pa_stream_writable_size(pa_s) < bytes) {
-        if (!g_play_thread_running) {
-            return 0;
-        }
-        pa_mainloop_iterate(pa_ml, 1, NULL);
-    }
-
-    if (!pa_s || pa_stream_get_state(pa_s) != PA_STREAM_READY) {
-        return -1;
-    }
-
-    return pa_stream_write(pa_s, samples, bytes, NULL, 0, PA_SEEK_RELATIVE);
-#else
-    int written = 0;
-    int wait_timeout_ms = get_configured_latency_ms();
-    if (wait_timeout_ms < 20) {
-        wait_timeout_ms = 20;
-    }
-
-    while (written < frame_count) {
-        if (!g_play_thread_running) {
-            return 0;
-        }
-
-        if (snd_pcm_wait(alsa_pcm, wait_timeout_ms) < 0) {
-            snd_pcm_prepare(alsa_pcm);
-        }
-        snd_pcm_sframes_t ret = snd_pcm_writei(alsa_pcm,
-                                               samples + (written * g_output_channels),
-                                               frame_count - written);
-        if (ret > 0) {
-            written += (int)ret;
-            continue;
-        }
-        if (ret == -EAGAIN) {
-            continue;
-        }
-        if (ret == -EPIPE || ret == -ESTRPIPE) {
-            snd_pcm_prepare(alsa_pcm);
-            continue;
-        }
-        return -1;
-    }
-
-    return 0;
 #endif
+
+#ifdef HAVE_ALSA
+    if (g_active_backend == AUDIO_BACKEND_ALSA) {
+        int written = 0;
+        int wait_timeout_ms = get_configured_latency_ms();
+        if (wait_timeout_ms < 20) {
+            wait_timeout_ms = 20;
+        }
+
+        while (written < frame_count) {
+            if (!g_play_thread_running) {
+                return 0;
+            }
+
+            if (snd_pcm_wait(alsa_pcm, wait_timeout_ms) < 0) {
+                snd_pcm_prepare(alsa_pcm);
+            }
+            snd_pcm_sframes_t ret = snd_pcm_writei(alsa_pcm,
+                                                   samples + (written * g_output_channels),
+                                                   frame_count - written);
+            if (ret > 0) {
+                written += (int)ret;
+                continue;
+            }
+            if (ret == -EAGAIN) {
+                continue;
+            }
+            if (ret == -EPIPE || ret == -ESTRPIPE) {
+                snd_pcm_prepare(alsa_pcm);
+                continue;
+            }
+            return -1;
+        }
+
+        return 0;
+    }
+#endif
+
+    return -1;
 }
 
 static void audio_backend_pause_stream(void) {
-#if defined(HAVE_PULSE)
-    if (pa_s && pa_ml && pa_ctx) {
+#ifdef HAVE_PULSE
+    if (g_active_backend == AUDIO_BACKEND_PULSE && pa_s && pa_ml && pa_ctx) {
         pa_stream_state_t state = pa_stream_get_state(pa_s);
         if (state == PA_STREAM_READY && !pa_stream_is_corked(pa_s)) {
             pa_operation *op = pa_stream_cork(pa_s, 1, NULL, NULL);
@@ -1111,17 +1141,20 @@ static void audio_backend_pause_stream(void) {
                 pa_operation_unref(op);
             }
         }
+        return;
     }
-#else
-    if (alsa_pcm) {
+#endif
+#ifdef HAVE_ALSA
+    if (g_active_backend == AUDIO_BACKEND_ALSA && alsa_pcm) {
         snd_pcm_pause(alsa_pcm, 1);
+        return;
     }
 #endif
 }
 
 static void audio_backend_resume_stream(void) {
-#if defined(HAVE_PULSE)
-    if (pa_s && pa_ml && pa_ctx) {
+#ifdef HAVE_PULSE
+    if (g_active_backend == AUDIO_BACKEND_PULSE && pa_s && pa_ml && pa_ctx) {
         pa_stream_state_t state = pa_stream_get_state(pa_s);
         if (state == PA_STREAM_READY && pa_stream_is_corked(pa_s)) {
             pa_operation *op = pa_stream_cork(pa_s, 0, NULL, NULL);
@@ -1129,10 +1162,13 @@ static void audio_backend_resume_stream(void) {
                 pa_operation_unref(op);
             }
         }
+        return;
     }
-#else
-    if (alsa_pcm) {
+#endif
+#ifdef HAVE_ALSA
+    if (g_active_backend == AUDIO_BACKEND_ALSA && alsa_pcm) {
         snd_pcm_pause(alsa_pcm, 0);
+        return;
     }
 #endif
 }
@@ -1150,50 +1186,108 @@ void init_ffmpeg() {
     log_debug("audio", "FFmpeg initialized, log suppressed");
 }
 
-void init_audio_device() {
-    log_info("audio", "Initializing audio device");
-#if defined(HAVE_PULSE)
-    pa_ml = pa_mainloop_new();
-    if (!pa_ml) {
-        log_warn("audio", "Failed to create PulseAudio mainloop");
-        printf("%s\n", audio_text("警告：无法创建 PulseAudio 主循环", "Warning: cannot create PulseAudio mainloop"));
-        return;
+void audio_backend_shutdown(void) {
+#ifdef HAVE_PULSE
+    if (pa_s) {
+        pa_stream_disconnect(pa_s);
+        pa_stream_unref(pa_s);
+        pa_s = NULL;
     }
-
-    pa_ctx = pa_context_new(pa_mainloop_get_api(pa_ml), APP_NAME);
-    if (!pa_ctx) {
-        log_warn("audio", "Failed to create PulseAudio context");
-        printf("%s\n", audio_text("警告：无法创建 PulseAudio 上下文", "Warning: cannot create PulseAudio context"));
+    if (pa_ml) {
+        if (pa_ctx) {
+            pa_context_disconnect(pa_ctx);
+            pa_context_unref(pa_ctx);
+            pa_ctx = NULL;
+        }
         pa_mainloop_free(pa_ml);
         pa_ml = NULL;
-        return;
     }
-
-    pa_context_connect(pa_ctx, NULL, PA_CONTEXT_NOFLAGS, NULL);
-    while (pa_context_get_state(pa_ctx) != PA_CONTEXT_READY) {
-        if (pa_context_get_state(pa_ctx) == PA_CONTEXT_FAILED ||
-            pa_context_get_state(pa_ctx) == PA_CONTEXT_TERMINATED) {
-            log_warn("audio", "Failed to connect to PulseAudio server");
-            printf("%s\n", audio_text("警告：无法连接 PulseAudio 服务", "Warning: cannot connect PulseAudio"));
-            pa_context_unref(pa_ctx);
-            pa_mainloop_free(pa_ml);
-            pa_ctx = NULL;
-            pa_ml = NULL;
-            pa_connected = 0;
-            return;
-        }
-        pa_mainloop_iterate(pa_ml, 1, NULL);
+    pa_connected = 0;
+#endif
+#ifdef HAVE_ALSA
+    if (alsa_pcm) {
+        snd_pcm_drop(alsa_pcm);
+        snd_pcm_close(alsa_pcm);
+        alsa_pcm = NULL;
     }
-
-    pa_connected = 1;
-    log_info("audio", "PulseAudio connected successfully");
-    printf("%s\n", audio_text("已连接到 PulseAudio 服务", "Connected to PulseAudio"));
-#else
-    alsa_ready = 1;
-    log_info("audio", "ALSA backend ready, device='default'");
-    printf("%s\n", audio_text("当前使用 ALSA 音频后端", "Using ALSA backend"));
+    alsa_ready = 0;
 #endif
 }
+
+void init_audio_device() {
+    log_info("audio", "Initializing audio device");
+
+    if (g_active_backend == AUDIO_BACKEND_AUTO || g_active_backend == AUDIO_BACKEND_PULSE) {
+#ifdef HAVE_PULSE
+        log_info("audio", "Trying PulseAudio backend");
+        pa_ml = pa_mainloop_new();
+        if (!pa_ml) {
+            log_warn("audio", "Failed to create PulseAudio mainloop");
+            goto pulse_failed;
+        }
+
+        pa_ctx = pa_context_new(pa_mainloop_get_api(pa_ml), APP_NAME);
+        if (!pa_ctx) {
+            log_warn("audio", "Failed to create PulseAudio context");
+            pa_mainloop_free(pa_ml);
+            pa_ml = NULL;
+            goto pulse_failed;
+        }
+
+        pa_context_connect(pa_ctx, NULL, PA_CONTEXT_NOFLAGS, NULL);
+        while (pa_context_get_state(pa_ctx) != PA_CONTEXT_READY) {
+            if (pa_context_get_state(pa_ctx) == PA_CONTEXT_FAILED ||
+                pa_context_get_state(pa_ctx) == PA_CONTEXT_TERMINATED) {
+                log_warn("audio", "Failed to connect to PulseAudio server");
+                pa_context_unref(pa_ctx);
+                pa_ctx = NULL;
+                pa_mainloop_free(pa_ml);
+                pa_ml = NULL;
+                goto pulse_failed;
+            }
+            pa_mainloop_iterate(pa_ml, 1, NULL);
+        }
+
+        pa_connected = 1;
+        g_active_backend = AUDIO_BACKEND_PULSE;
+        log_info("audio", "PulseAudio connected successfully");
+        printf("%s\n", audio_text("已连接到 PulseAudio 服务", "Connected to PulseAudio"));
+        return;
+
+pulse_failed:
+        pa_connected = 0;
+        if (g_active_backend == AUDIO_BACKEND_PULSE) {
+            log_error("audio", "PulseAudio selected but unavailable");
+            return;
+        }
+        log_info("audio", "PulseAudio not available, will try ALSA");
+#else
+        if (g_active_backend == AUDIO_BACKEND_PULSE) {
+            log_error("audio", "PulseAudio not compiled in this build");
+            return;
+        }
+#endif
+    }
+
+#ifdef HAVE_ALSA
+    if (g_active_backend == AUDIO_BACKEND_AUTO || g_active_backend == AUDIO_BACKEND_ALSA) {
+        alsa_ready = 1;
+        g_active_backend = AUDIO_BACKEND_ALSA;
+        log_info("audio", "ALSA backend ready, device='default'");
+        printf("%s\n", audio_text("当前使用 ALSA 音频后端", "Using ALSA backend"));
+        return;
+    }
+#else
+    if (g_active_backend == AUDIO_BACKEND_ALSA) {
+        log_error("audio", "ALSA not compiled in this build");
+        return;
+    }
+#endif
+
+    log_error("audio", "No audio backend available");
+}
+
+
 
 int get_volume_percent(void) {
     int volume = 100;
@@ -1370,7 +1464,10 @@ void cleanup_playback_cache(void) {
 }
 
 void wait_for_playback_thread_shutdown(void) {
-    while (1) {
+    int timeout_ms = 2000;
+    int waited = 0;
+
+    while (waited < timeout_ms) {
         reap_finished_playback_thread();
 
         pthread_mutex_lock(&g_play_mutex);
@@ -1385,6 +1482,11 @@ void wait_for_playback_thread_shutdown(void) {
 
         signal_playback_thread();
         usleep(10000);
+        waited += 10;
+    }
+
+    if (waited >= timeout_ms) {
+        log_warn("audio", "Playback thread did not stop within %dms, forcing shutdown", timeout_ms);
     }
 }
 
