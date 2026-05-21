@@ -123,7 +123,7 @@ static int init_resampler(SwrContext *swr_ctx,
     av_opt_set_int(swr_ctx, "in_sample_rate", codec_ctx->sample_rate, 0);
     av_opt_set_int(swr_ctx, "out_sample_rate", output_sample_rate, 0);
     av_opt_set_sample_fmt(swr_ctx, "in_sample_fmt", codec_ctx->sample_fmt, 0);
-    av_opt_set_sample_fmt(swr_ctx, "out_sample_fmt", AV_SAMPLE_FMT_S16, 0);
+    av_opt_set_sample_fmt(swr_ctx, "out_sample_fmt", AV_SAMPLE_FMT_S32, 0);
 
     return swr_init(swr_ctx);
 }
@@ -139,7 +139,7 @@ static uint64_t audio_now_ms(void) {
 #define PCM_QUEUE_MAX_PREFILL_MS 420
 
 typedef struct {
-    int16_t *data;
+    int32_t *data;
     int frame_count;
     int bytes;
     int capacity_bytes;
@@ -200,7 +200,7 @@ void reset_visualizer_state(void) {
     pthread_mutex_unlock(&g_visualizer_mutex);
 }
 
-void push_visualizer_samples(const int16_t *samples, int frame_count, int channels) {
+void push_visualizer_samples(const int32_t *samples, int frame_count, int channels) {
     if (!samples || frame_count <= 0 || channels <= 0) {
         return;
     }
@@ -236,7 +236,7 @@ void push_visualizer_samples(const int16_t *samples, int frame_count, int channe
         for (int ch = 0; ch < channels; ch++) {
             mixed += (double)samples[src_frame * channels + ch];
         }
-        mixed /= (double)channels * 32768.0;
+        mixed /= (double)channels * 2147483648.0;
         mono[i] = mixed * window[i];
     }
 
@@ -342,7 +342,7 @@ static int pcm_chunk_ensure_capacity(PCMChunk *chunk, int required_bytes) {
         new_capacity *= 2;
     }
 
-    int16_t *new_data = realloc(chunk->data, (size_t)new_capacity);
+    int32_t *new_data = realloc(chunk->data, (size_t)new_capacity);
     if (!new_data) {
         return -1;
     }
@@ -450,7 +450,7 @@ static void pcm_queue_consume(PCMQueue *queue) {
     }
 }
 
-static void apply_volume_to_samples(int16_t *samples, int sample_count) {
+static void apply_volume_to_samples(int32_t *samples, int sample_count) {
 #if defined(HAVE_PULSE)
     (void)samples;
     (void)sample_count;
@@ -464,12 +464,12 @@ static void apply_volume_to_samples(int16_t *samples, int sample_count) {
         return;
     }
     if (volume <= 0) {
-        memset(samples, 0, (size_t)sample_count * sizeof(int16_t));
+        memset(samples, 0, (size_t)sample_count * sizeof(int32_t));
         return;
     }
 
     for (int i = 0; i < sample_count; i++) {
-        samples[i] = (int16_t)(((int)samples[i] * volume) / 100);
+        samples[i] = (int32_t)(((int64_t)samples[i] * volume) / 100);
     }
 #endif
 }
@@ -937,7 +937,7 @@ static int audio_backend_prepare_stream(int sample_rate, int channels) {
         return -1;
     }
 
-    pa_ss.format = PA_SAMPLE_S16LE;
+    pa_ss.format = PA_SAMPLE_S32LE;
     pa_ss.rate = sample_rate;
     pa_ss.channels = (uint8_t)channels;
 
@@ -986,7 +986,7 @@ static int audio_backend_prepare_stream(int sample_rate, int channels) {
     }
 
     if (snd_pcm_set_params(alsa_pcm,
-                           SND_PCM_FORMAT_S16_LE,
+                           SND_PCM_FORMAT_S32_LE,
                            SND_PCM_ACCESS_RW_INTERLEAVED,
                            (unsigned int)channels,
                            (unsigned int)sample_rate,
@@ -1040,13 +1040,13 @@ static void audio_backend_flush_stream(void) {
 #endif
 }
 
-static int audio_backend_write_samples(const int16_t *samples, int frame_count) {
+static int audio_backend_write_samples(const int32_t *samples, int frame_count) {
     if (!samples || frame_count <= 0) {
         return 0;
     }
 
 #if defined(HAVE_PULSE)
-    size_t bytes = (size_t)frame_count * pa_ss.channels * sizeof(int16_t);
+    size_t bytes = (size_t)frame_count * pa_ss.channels * sizeof(int32_t);
 
     if (!pa_s || pa_stream_get_state(pa_s) != PA_STREAM_READY) {
         return -1;
@@ -1487,7 +1487,7 @@ static int decode_next_pcm_chunk(AVFormatContext *fmt_ctx,
 
                 if (!use_resampler) {
                     produced_bytes = av_samples_get_buffer_size(NULL, output_channels, filtered_frame->nb_samples,
-                                                                AV_SAMPLE_FMT_S16, 1);
+                                                                AV_SAMPLE_FMT_S32, 1);
                     if (produced_bytes > 0 && pcm_chunk_ensure_capacity(slot, produced_bytes) == 0) {
                         memcpy(slot->data, filtered_frame->data[0], (size_t)produced_bytes);
                         produced_frames = filtered_frame->nb_samples;
@@ -1497,13 +1497,13 @@ static int decode_next_pcm_chunk(AVFormatContext *fmt_ctx,
                         swr_get_delay(swr_ctx, atempo_filter->input_sample_rate) + filtered_frame->nb_samples,
                         output_sample_rate, atempo_filter->input_sample_rate, AV_ROUND_UP);
                     produced_bytes = av_samples_get_buffer_size(NULL, output_channels, dst_nb_samples,
-                                                                AV_SAMPLE_FMT_S16, 1);
+                                                                AV_SAMPLE_FMT_S32, 1);
                     if (produced_bytes > 0 && pcm_chunk_ensure_capacity(slot, produced_bytes) == 0) {
                         uint8_t *output_planes[] = {(uint8_t *)slot->data};
                         produced_frames = swr_convert(swr_ctx, output_planes, dst_nb_samples,
                                                       (const uint8_t **)filtered_frame->data, filtered_frame->nb_samples);
                         if (produced_frames > 0) {
-                            produced_bytes = produced_frames * output_channels * (int)sizeof(int16_t);
+                            produced_bytes = produced_frames * output_channels * (int)sizeof(int32_t);
                         }
                     }
                 }
@@ -1542,7 +1542,7 @@ static int decode_next_pcm_chunk(AVFormatContext *fmt_ctx,
 
             if (!use_resampler) {
                 produced_bytes = av_samples_get_buffer_size(NULL, output_channels, frame->nb_samples,
-                                                            AV_SAMPLE_FMT_S16, 1);
+                                                            AV_SAMPLE_FMT_S32, 1);
                 if (produced_bytes > 0 && pcm_chunk_ensure_capacity(slot, produced_bytes) == 0) {
                     memcpy(slot->data, frame->data[0], (size_t)produced_bytes);
                     produced_frames = frame->nb_samples;
@@ -1555,13 +1555,13 @@ static int decode_next_pcm_chunk(AVFormatContext *fmt_ctx,
                     swr_get_delay(swr_ctx, codec_ctx->sample_rate) + frame->nb_samples,
                     output_sample_rate, codec_ctx->sample_rate, AV_ROUND_UP);
                 produced_bytes = av_samples_get_buffer_size(NULL, output_channels, dst_nb_samples,
-                                                            AV_SAMPLE_FMT_S16, 1);
+                                                            AV_SAMPLE_FMT_S32, 1);
                 if (produced_bytes > 0 && pcm_chunk_ensure_capacity(slot, produced_bytes) == 0) {
                     uint8_t *output_planes[] = {(uint8_t *)slot->data};
                     produced_frames = swr_convert(swr_ctx, output_planes, dst_nb_samples,
                                                   (const uint8_t **)frame->data, frame->nb_samples);
                     if (produced_frames > 0) {
-                        produced_bytes = produced_frames * output_channels * (int)sizeof(int16_t);
+                        produced_bytes = produced_frames * output_channels * (int)sizeof(int32_t);
                     }
                 } else if (produced_bytes > 0) {
                     av_frame_unref(frame);
@@ -1777,7 +1777,7 @@ void *play_audio_thread(void *arg) {
     prefill_target_frames = (output_sample_rate * get_pcm_prefill_target_ms(output_sample_rate) + 999) / 1000;
     
     // 检查是否需要重采样（输出格式不是 S16 或通道数需要转换）
-    use_resampler = (codec_ctx->sample_fmt != AV_SAMPLE_FMT_S16 || input_channels != output_channels);
+    use_resampler = (codec_ctx->sample_fmt != AV_SAMPLE_FMT_S32 || input_channels != output_channels);
 
     if (use_resampler) {
         swr_ctx = swr_alloc();
