@@ -95,25 +95,29 @@ static int load_startup_playlist(const char *path, char *final_path, size_t fina
     }
 
     if (S_ISREG(s.st_mode)) {
-        if (load_playlist(path) <= 0) {
+        // 提取父目录路径
+        char dir_buf[MAX_PATH_LEN];
+        const char *slash = strrchr(path, '/');
+        if (slash && slash > path) {
+            size_t len = (size_t)(slash - path);
+            memcpy(dir_buf, path, len);
+            dir_buf[len] = '\0';
+        } else {
+            snprintf(dir_buf, sizeof(dir_buf), ".");
+        }
+
+        // 加载整个目录以显示同级音乐
+        if (load_playlist(dir_buf) <= 0) {
             return 0;
         }
-        g_selected_index = 0;
-        
-        const char *slash = strrchr(path, '/');
-        if (slash) {
-            size_t length = (size_t)(slash - path);
-            if (length > 0) {
-                memcpy(final_path, path, length);
-                final_path[length] = '\0';
-            } else {
-                final_path[0] = '.';
-                final_path[1] = '\0';
-            }
-        } else {
-            final_path[0] = '.';
-            final_path[1] = '\0';
+
+        // 定位被打开的文件
+        g_selected_index = playlist_find_track_index_by_path(path);
+        if (g_selected_index < 0) {
+            g_selected_index = 0;
         }
+
+        snprintf(final_path, final_path_size, "%s", dir_buf);
         return 1;
     }
 
@@ -469,6 +473,7 @@ int main(int argc, char *argv[]) {
         }
 
         if (g_app_config.resume_last_playback &&
+            !opened_single_file &&
             strcmp(final_path, g_app_config.last_played_folder_path) == 0) {
             log_info("main", "Attempting to resume playback session");
             resumed_playback = restore_saved_playback_session();
@@ -484,7 +489,7 @@ int main(int argc, char *argv[]) {
         if (!resumed_playback && playlist_count() > 0 &&
             (g_app_config.auto_play_on_start || opened_single_file)) {
             log_info("main", "Auto-playing first track");
-            play_audio(0);
+            play_audio(g_selected_index);
         }
         if (attempted_resume_load &&
             !resumed_playback &&
