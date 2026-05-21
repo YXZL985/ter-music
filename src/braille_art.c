@@ -77,20 +77,13 @@ int binary_to_braille(const unsigned char *binary, int w, int h, int cols, int r
 
                     if (binary[py * w + px]) {
                         int dot;
-                        if (dx == 0) {
-                            dot = dy + 1;
+                        if (dy < 3) {
+                            dot = (dx == 0) ? dy + 1 : dy + 4;
                         } else {
-                            dot = dy + 4;
+                            dot = (dx == 0) ? 7 : 8;
                         }
 
-                        int bit;
-                        if (dot <= 6) {
-                            bit = dot - 1;
-                        } else {
-                            bit = dot;
-                        }
-
-                        bits |= (1 << bit);
+                        bits |= (1 << (dot - 1));
                     }
                 }
             }
