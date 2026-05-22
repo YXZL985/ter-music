@@ -226,6 +226,13 @@ typedef struct {
     int active;
     int selected_index;
     int result_offset;
+
+    // 异步搜索字段（由 g_search_mutex 保护）
+    volatile int in_progress;       // 搜索线程正在运行
+    volatile int cancel;            // 设置为 1 以取消搜索
+    int progress;                   // 迄今为止已检查的轨道数
+    pthread_t thread;               // 搜索线程句柄
+    char query[MAX_META_LEN];       // 当前搜索查询
 } SearchState;
 
 typedef struct {
@@ -267,6 +274,7 @@ extern int g_lyric_cursor_index;
 extern int g_active_backend;
 
 extern SearchState g_search_state;
+extern pthread_mutex_t g_search_mutex;
 extern SortState g_sort_state;
 extern float g_playback_speed;
 

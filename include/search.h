@@ -3,13 +3,20 @@
 
 #include "defs.h"
 
-// 执行搜索：遍历所有曲目，填充 g_search_state
-void perform_search(const char *query);
+// 启动异步搜索。取消任何正在进行的搜索，然后启动新线程。
+void search_async_start(const char *query);
+
+// 请求取消正在进行的搜索（非阻塞，设置取消标志）。
+void search_async_cancel(void);
+
+// 如果搜索线程正在运行，返回非零值。
+int search_async_is_running(void);
 
 // 交互式搜索提示（启动字符输入循环，适用于主页 playlist 搜索）
+// 内部调用 search_async_start。
 void search_prompt(void);
 
-// 清除搜索状态
+// 清除搜索状态并取消任何正在运行的搜索线程（阻塞直到线程退出）。
 void search_clear(void);
 
 // 在文本行数组中搜索匹配项（供帮助页面等复用）

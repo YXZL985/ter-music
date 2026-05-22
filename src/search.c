@@ -14,39 +14,151 @@ extern void render_playlist_content(void);
 extern void update_controls_status(const char *msg);
 
 SearchState g_search_state = {0};
+pthread_mutex_t g_search_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-void search_clear(void) {
-    memset(&g_search_state, 0, sizeof(g_search_state));
-}
+#define SEARCH_BATCH_PUBLISH_SIZE 15
 
-void perform_search(const char *query) {
+static void* search_thread_func(void *arg) {
+    char *query = (char *)arg;
     int playlist_total = playlist_count();
+    int local_results[MAX_SEARCH_RESULTS];
+    int local_count = 0;
+    int last_published_count = 0;
 
-    memset(&g_search_state, 0, sizeof(g_search_state));
-    g_search_state.selected_index = 0;
+    for (int i = 0; i < playlist_total && local_count < MAX_SEARCH_RESULTS; i++) {
+        // 检查取消
+        pthread_mutex_lock(&g_search_mutex);
+        int should_cancel = g_search_state.cancel;
+        pthread_mutex_unlock(&g_search_mutex);
+        if (should_cancel) {
+            break;
+        }
 
-    for (int i = 0; i < playlist_total && g_search_state.result_count < MAX_SEARCH_RESULTS; i++) {
+        // 匹配检查（可能因 FFmpeg I/O 阻塞）
         if (track_matches_query(i, query)) {
-            g_search_state.result_indices[g_search_state.result_count++] = i;
+            local_results[local_count++] = i;
+        }
+
+        // 批量发布：每 BATCH_SIZE 个匹配或循环结束时
+        if ((local_count - last_published_count) >= SEARCH_BATCH_PUBLISH_SIZE ||
+            i == playlist_total - 1) {
+            pthread_mutex_lock(&g_search_mutex);
+            memcpy(g_search_state.result_indices, local_results,
+                   local_count * sizeof(int));
+            g_search_state.result_count = local_count;
+            g_search_state.progress = i + 1;
+            pthread_mutex_unlock(&g_search_mutex);
+            last_published_count = local_count;
+            request_ui_refresh(UI_DIRTY_PLAYLIST);
         }
     }
 
-    if (g_search_state.result_count > 0) {
-        g_search_state.active = 1;
-    } else {
-        g_search_state.active = 0;
-    }
+    // 最终发布
+    pthread_mutex_lock(&g_search_mutex);
+    memcpy(g_search_state.result_indices, local_results,
+           local_count * sizeof(int));
+    g_search_state.result_count = local_count;
+    g_search_state.progress = playlist_total;
+    g_search_state.active = (local_count > 0 && !g_search_state.cancel) ? 1 : 0;
+    g_search_state.in_progress = 0;
+    g_search_state.cancel = 0;
+    g_search_state.selected_index = 0;
+    g_search_state.result_offset = 0;
+    snprintf(g_search_state.query, sizeof(g_search_state.query), "%s",
+             query ? query : "");
+    pthread_mutex_unlock(&g_search_mutex);
 
-    log_info("search", "Search '%s': %d results out of %d tracks", query, g_search_state.result_count, playlist_total);
-
-    render_playlist_content();
+    request_ui_refresh(UI_DIRTY_PLAYLIST);
 
     char msg[64];
     snprintf(msg, sizeof(msg), "%s: %d %s",
              use_english_ui() ? "Search completed" : "搜索完成",
-             g_search_state.result_count,
+             local_count,
              use_english_ui() ? "results" : "个结果");
     update_controls_status(msg);
+    log_info("search", "Search '%s': %d results out of %d tracks",
+             query, local_count, playlist_total);
+
+    free(query);
+    return NULL;
+}
+
+void search_async_start(const char *query) {
+    if (!query || query[0] == '\0') {
+        return;
+    }
+
+    search_async_cancel();
+
+    pthread_mutex_lock(&g_search_mutex);
+    pthread_t old_thread = g_search_state.thread;
+    int had_running = g_search_state.in_progress;
+    pthread_mutex_unlock(&g_search_mutex);
+
+    if (had_running) {
+        pthread_join(old_thread, NULL);
+    }
+
+    pthread_mutex_lock(&g_search_mutex);
+    memset(g_search_state.result_indices, 0,
+           sizeof(g_search_state.result_indices));
+    g_search_state.result_count = 0;
+    g_search_state.selected_index = 0;
+    g_search_state.result_offset = 0;
+    g_search_state.active = 0;
+    g_search_state.progress = 0;
+    g_search_state.cancel = 0;
+    g_search_state.in_progress = 1;
+    snprintf(g_search_state.query, sizeof(g_search_state.query), "%s", query);
+    pthread_mutex_unlock(&g_search_mutex);
+
+    char *query_copy = strdup(query);
+    if (pthread_create(&g_search_state.thread, NULL,
+                       search_thread_func, query_copy) != 0) {
+        free(query_copy);
+        pthread_mutex_lock(&g_search_mutex);
+        g_search_state.in_progress = 0;
+        g_search_state.active = 0;
+        pthread_mutex_unlock(&g_search_mutex);
+        update_controls_status(use_english_ui() ? "Search failed" : "搜索失败");
+        return;
+    }
+
+    request_ui_refresh(UI_DIRTY_PLAYLIST);
+    update_controls_status(use_english_ui() ? "Searching..." : "正在搜索...");
+}
+
+void search_async_cancel(void) {
+    pthread_mutex_lock(&g_search_mutex);
+    if (g_search_state.in_progress) {
+        g_search_state.cancel = 1;
+    }
+    pthread_mutex_unlock(&g_search_mutex);
+}
+
+int search_async_is_running(void) {
+    int running;
+    pthread_mutex_lock(&g_search_mutex);
+    running = g_search_state.in_progress;
+    pthread_mutex_unlock(&g_search_mutex);
+    return running;
+}
+
+void search_clear(void) {
+    search_async_cancel();
+
+    pthread_mutex_lock(&g_search_mutex);
+    pthread_t old_thread = g_search_state.thread;
+    int was_running = g_search_state.in_progress;
+    pthread_mutex_unlock(&g_search_mutex);
+
+    if (was_running) {
+        pthread_join(old_thread, NULL);
+    }
+
+    pthread_mutex_lock(&g_search_mutex);
+    memset(&g_search_state, 0, sizeof(g_search_state));
+    pthread_mutex_unlock(&g_search_mutex);
 }
 
 void search_prompt(void) {
@@ -149,9 +261,13 @@ void search_prompt(void) {
     }
 
     if (strlen(input) > 0) {
-        perform_search(input);
+        search_async_start(input);
     } else {
+        search_async_cancel();
+        pthread_mutex_lock(&g_search_mutex);
         g_search_state.active = 0;
+        g_search_state.in_progress = 0;
+        pthread_mutex_unlock(&g_search_mutex);
         render_playlist_content();
         update_controls_status(use_english_ui() ? "Search cancelled" : "搜索已取消");
     }
