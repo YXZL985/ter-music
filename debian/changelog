@@ -1,3 +1,9 @@
+ter-music (1.11.0-1) unstable; urgency=medium
+
+  * Bump version to 1.11.0.
+
+ -- Yanxi Bamboo Forest <yxzl666xx@outlook.com>  Fri, 22 May 2026 00:00:00 +0800
+
 ter-music (1.10.0-1) unstable; urgency=medium
 
   * Static-link FFmpeg for single RPM compatible with RHEL 8/9/10.
