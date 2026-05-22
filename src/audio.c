@@ -17,14 +17,10 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-// 音频后端头文件
-#if defined(HAVE_PULSE)
-#include <pulse/pulseaudio.h>
-#elif defined(HAVE_ALSA)
-#include <alsa/asoundlib.h>
-#else
-#error "No audio backend configured"
-#endif
+// 音频后端头文件 — 运行时通过 dlopen/dlsym 加载，不编译时硬链接
+#include "dyn_pulse.h"
+#include "dyn_alsa.h"
+#include <dlfcn.h>
 
 // FFmpeg 头文件
 #include <libavformat/avformat.h>
@@ -47,17 +43,23 @@
 #define DT_UNKNOWN 0
 #endif
 
-// 音频后端全局变量
-#if defined(HAVE_PULSE)
+// 函数指针表全局实例定义
+struct pulseaudio_funcs P = {0};
+struct alsa_funcs A = {0};
+
+// 音频后端全局变量 — 始终定义，运行时检查是否加载成功
 static pa_mainloop *pa_ml = NULL;
 static pa_context *pa_ctx = NULL;
 static pa_stream *pa_s = NULL;
 static pa_sample_spec pa_ss;
 static int pa_connected = 0;
-#elif defined(HAVE_ALSA)
 static snd_pcm_t *alsa_pcm = NULL;
 static int alsa_ready = 0;
-#endif
+
+static int pulse_loaded = 0;  // 运行时 PA dlopen 成功标志
+static int alsa_loaded = 0;   // 运行时 ALSA dlopen 成功标志
+
+int g_active_backend = AUDIO_BACKEND_AUTO;
 
 static pthread_mutex_t audio_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t g_volume_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -71,6 +73,11 @@ static int g_visualizer_levels[VISUALIZER_BAND_COUNT] = {0};
 static int g_visualizer_peaks[VISUALIZER_BAND_COUNT] = {0};
 static uint64_t g_visualizer_last_update_ms = 0;
 static uint64_t g_visualizer_last_analysis_ms = 0;
+
+int g_audio_sample_rate = 0;
+int g_audio_bit_rate = 0;
+int g_audio_bit_depth = 0;
+char g_audio_codec_name[32] = "";
 
 #define VISUALIZER_ANALYSIS_SIZE 128
 #define VISUALIZER_UPDATE_INTERVAL_MS 40ULL
@@ -451,10 +458,11 @@ static void pcm_queue_consume(PCMQueue *queue) {
 }
 
 static void apply_volume_to_samples(int32_t *samples, int sample_count) {
-#if defined(HAVE_PULSE)
-    (void)samples;
-    (void)sample_count;
-#else
+    if (g_active_backend == AUDIO_BACKEND_PULSE) {
+        (void)samples;
+        (void)sample_count;
+        return;
+    }
     if (!samples || sample_count <= 0) {
         return;
     }
@@ -471,7 +479,6 @@ static void apply_volume_to_samples(int32_t *samples, int sample_count) {
     for (int i = 0; i < sample_count; i++) {
         samples[i] = (int32_t)(((int64_t)samples[i] * volume) / 100);
     }
-#endif
 }
 
 static int consume_volume_sync_request(int *volume_out, int force) {
@@ -498,32 +505,32 @@ static void audio_backend_sync_volume(int force) {
         return;
     }
 
-#if defined(HAVE_PULSE)
-    if (!pa_ctx || !pa_ml || !pa_s || pa_stream_get_state(pa_s) != PA_STREAM_READY) {
+    if (pulse_loaded && g_active_backend == AUDIO_BACKEND_PULSE) {
+        if (!pa_ctx || !pa_ml || !pa_s || P.stream_get_state(pa_s) != PA_STREAM_READY) {
+            return;
+        }
+
+        uint32_t stream_index = P.stream_get_index(pa_s);
+        if (stream_index == PA_INVALID_INDEX) {
+            return;
+        }
+
+        pa_cvolume cvolume;
+        P.cvolume_set(&cvolume, pa_ss.channels, P.sw_volume_from_linear((double)volume / 100.0));
+
+        pa_operation *op = P.context_set_sink_input_volume(pa_ctx, stream_index, &cvolume, NULL, NULL);
+        if (!op) {
+            return;
+        }
+
+        while (P.operation_get_state(op) == PA_OPERATION_RUNNING) {
+            P.mainloop_iterate(pa_ml, 1, NULL);
+        }
+        P.operation_unref(op);
         return;
     }
-
-    uint32_t stream_index = pa_stream_get_index(pa_s);
-    if (stream_index == PA_INVALID_INDEX) {
-        return;
-    }
-
-    pa_cvolume cvolume;
-    pa_cvolume_set(&cvolume, pa_ss.channels, pa_sw_volume_from_linear((double)volume / 100.0));
-
-    pa_operation *op = pa_context_set_sink_input_volume(pa_ctx, stream_index, &cvolume, NULL, NULL);
-    if (!op) {
-        return;
-    }
-
-    while (pa_operation_get_state(op) == PA_OPERATION_RUNNING) {
-        pa_mainloop_iterate(pa_ml, 1, NULL);
-    }
-    pa_operation_unref(op);
-#else
     (void)force;
     (void)volume;
-#endif
 }
 
 // 全局变量定义
@@ -574,6 +581,117 @@ pthread_mutex_t g_seek_mutex = PTHREAD_MUTEX_INITIALIZER; // 跳转操作互斥�
 
 // 全局变量：默认音频设备名称
 char g_default_audio_device[128] = "default";
+
+/* ------------------------------------------------------------------- */
+/*  PulseAudio 动态加载                                                 */
+/* ------------------------------------------------------------------- */
+#define PULSE_SONAME "libpulse.so.0"
+
+#define PULSE_LOAD(name) do { \
+    *(void **)(&P.name) = dlsym(P.handle, "pa_" #name); \
+    if (!P.name) { \
+        fprintf(stderr, "dlsym(pa_" #name ") failed: %s\n", dlerror()); \
+        dlclose(P.handle); \
+        P.handle = NULL; \
+        return -1; \
+    } \
+} while(0)
+
+int pulse_load(void) {
+    if (P.loaded) return 0;
+    P.handle = dlopen(PULSE_SONAME, RTLD_LAZY | RTLD_LOCAL);
+    if (!P.handle) return -1;
+
+    PULSE_LOAD(mainloop_new);
+    PULSE_LOAD(mainloop_get_api);
+    PULSE_LOAD(mainloop_free);
+    PULSE_LOAD(mainloop_iterate);
+
+    PULSE_LOAD(context_new);
+    PULSE_LOAD(context_connect);
+    PULSE_LOAD(context_get_state);
+    PULSE_LOAD(context_disconnect);
+    PULSE_LOAD(context_unref);
+    PULSE_LOAD(context_set_sink_input_volume);
+
+    PULSE_LOAD(stream_new);
+    PULSE_LOAD(stream_connect_playback);
+    PULSE_LOAD(stream_get_state);
+    PULSE_LOAD(stream_get_index);
+    PULSE_LOAD(stream_disconnect);
+    PULSE_LOAD(stream_unref);
+    PULSE_LOAD(stream_writable_size);
+    PULSE_LOAD(stream_write);
+    PULSE_LOAD(stream_flush);
+    PULSE_LOAD(stream_is_corked);
+    PULSE_LOAD(stream_cork);
+
+    PULSE_LOAD(usec_to_bytes);
+
+    PULSE_LOAD(operation_get_state);
+    PULSE_LOAD(operation_unref);
+
+    PULSE_LOAD(cvolume_set);
+    PULSE_LOAD(sw_volume_from_linear);
+
+    P.loaded = 1;
+    return 0;
+}
+
+void pulse_unload(void) {
+    if (P.handle) {
+        dlclose(P.handle);
+        P.handle = NULL;
+    }
+    P.loaded = 0;
+}
+
+/* ------------------------------------------------------------------- */
+/*  ALSA 动态加载                                                      */
+/* ------------------------------------------------------------------- */
+#define ALSA_SONAME "libasound.so.2"
+
+#define ALSA_LOAD(name) do { \
+    *(void **)(&A.name) = dlsym(A.handle, "snd_" #name); \
+    if (!A.name) { \
+        fprintf(stderr, "dlsym(snd_" #name ") failed: %s\n", dlerror()); \
+        dlclose(A.handle); \
+        A.handle = NULL; \
+        return -1; \
+    } \
+} while(0)
+
+int alsa_load(void) {
+    if (A.loaded) return 0;
+    A.handle = dlopen(ALSA_SONAME, RTLD_LAZY | RTLD_LOCAL);
+    if (!A.handle) return -1;
+
+    ALSA_LOAD(pcm_open);
+    ALSA_LOAD(pcm_set_params);
+    ALSA_LOAD(pcm_writei);
+    ALSA_LOAD(pcm_wait);
+    ALSA_LOAD(pcm_prepare);
+    ALSA_LOAD(pcm_drop);
+    ALSA_LOAD(pcm_close);
+    ALSA_LOAD(pcm_pause);
+
+    A.loaded = 1;
+    return 0;
+}
+
+void alsa_unload(void) {
+    if (A.handle) {
+        dlclose(A.handle);
+        A.handle = NULL;
+    }
+    A.loaded = 0;
+}
+
+int audio_backend_is_available(int backend) {
+    if (backend == AUDIO_BACKEND_PULSE) return pulse_loaded;
+    if (backend == AUDIO_BACKEND_ALSA)  return alsa_loaded;
+    return 0;
+}
 
 // PulseAudio 状态检查宏
 #define PA_CHECK_SUCCESS(op, msg) do { \
@@ -931,113 +1049,116 @@ static int audio_backend_prepare_stream(int sample_rate, int channels) {
     }
     unsigned int max_latency_usec = latency_usec * 2U;
 
-#if defined(HAVE_PULSE)
-    if (!pa_connected || !pa_ctx) {
-        update_controls_status(audio_text("PulseAudio 未连接", "PulseAudio disconnected"));
-        return -1;
-    }
-
-    pa_ss.format = PA_SAMPLE_S32LE;
-    pa_ss.rate = sample_rate;
-    pa_ss.channels = (uint8_t)channels;
-
-    pa_stream *new_stream = pa_stream_new(pa_ctx, "playback", &pa_ss, NULL);
-    if (!new_stream) {
-        update_controls_status(audio_text("无法创建 PulseAudio 播放流", "Cannot create PulseAudio stream"));
-        return -1;
-    }
-
-    pa_buffer_attr ba;
-    memset(&ba, 0, sizeof(ba));
-    ba.maxlength = pa_usec_to_bytes((pa_usec_t)max_latency_usec, &pa_ss);
-    ba.tlength = pa_usec_to_bytes((pa_usec_t)latency_usec, &pa_ss);
-    ba.prebuf = 0;
-    ba.minreq = pa_usec_to_bytes((pa_usec_t)minreq_usec, &pa_ss);
-    ba.fragsize = (uint32_t)-1;
-
-    if (pa_stream_connect_playback(new_stream, NULL, &ba, PA_STREAM_ADJUST_LATENCY, NULL, NULL) < 0) {
-        update_controls_status(audio_text("无法连接 PulseAudio 播放流", "Cannot connect PulseAudio stream"));
-        pa_stream_unref(new_stream);
-        return -1;
-    }
-
-    while (pa_stream_get_state(new_stream) != PA_STREAM_READY) {
-        if (pa_stream_get_state(new_stream) == PA_STREAM_FAILED ||
-            pa_stream_get_state(new_stream) == PA_STREAM_TERMINATED) {
-            update_controls_status(audio_text("PulseAudio 播放流初始化失败", "PulseAudio stream init failed"));
-            pa_stream_unref(new_stream);
+    if (pulse_loaded && g_active_backend == AUDIO_BACKEND_PULSE) {
+        if (!pa_connected || !pa_ctx) {
+            update_controls_status(audio_text("PulseAudio 未连接", "PulseAudio disconnected"));
             return -1;
         }
-        pa_mainloop_iterate(pa_ml, 1, NULL);
+
+        pa_ss.format = PA_SAMPLE_S32LE;
+        pa_ss.rate = sample_rate;
+        pa_ss.channels = (uint8_t)channels;
+
+        pa_stream *new_stream = P.stream_new(pa_ctx, "playback", &pa_ss, NULL);
+        if (!new_stream) {
+            update_controls_status(audio_text("无法创建 PulseAudio 播放流", "Cannot create PulseAudio stream"));
+            return -1;
+        }
+
+        pa_buffer_attr ba;
+        memset(&ba, 0, sizeof(ba));
+        ba.maxlength = P.usec_to_bytes((uint64_t)max_latency_usec, &pa_ss);
+        ba.tlength = P.usec_to_bytes((uint64_t)latency_usec, &pa_ss);
+        ba.prebuf = 0;
+        ba.minreq = P.usec_to_bytes((uint64_t)minreq_usec, &pa_ss);
+        ba.fragsize = (uint32_t)-1;
+
+        if (P.stream_connect_playback(new_stream, NULL, &ba, PA_STREAM_ADJUST_LATENCY, NULL, NULL) < 0) {
+            update_controls_status(audio_text("无法连接 PulseAudio 播放流", "Cannot connect PulseAudio stream"));
+            P.stream_unref(new_stream);
+            return -1;
+        }
+
+        while (P.stream_get_state(new_stream) != PA_STREAM_READY) {
+            if (P.stream_get_state(new_stream) == PA_STREAM_FAILED ||
+                P.stream_get_state(new_stream) == PA_STREAM_TERMINATED) {
+                update_controls_status(audio_text("PulseAudio 播放流初始化失败", "PulseAudio stream init failed"));
+                P.stream_unref(new_stream);
+                return -1;
+            }
+            P.mainloop_iterate(pa_ml, 1, NULL);
+        }
+
+        pa_s = new_stream;
+        return 0;
     }
 
-    pa_s = new_stream;
-    return 0;
-#else
-    if (!alsa_ready) {
-        update_controls_status(audio_text("ALSA 后端未就绪", "ALSA backend not ready"));
-        return -1;
+    if (alsa_loaded && g_active_backend == AUDIO_BACKEND_ALSA) {
+        if (!alsa_ready) {
+            update_controls_status(audio_text("ALSA 后端未就绪", "ALSA backend not ready"));
+            return -1;
+        }
+
+        if (A.pcm_open(&alsa_pcm, g_default_audio_device, SND_PCM_STREAM_PLAYBACK, 0) < 0) {
+            update_controls_status(audio_text("无法打开 ALSA 设备", "Cannot open ALSA device"));
+            alsa_pcm = NULL;
+            return -1;
+        }
+
+        if (A.pcm_set_params(alsa_pcm,
+                               SND_PCM_FORMAT_S32_LE,
+                               SND_PCM_ACCESS_RW_INTERLEAVED,
+                               (unsigned int)channels,
+                               (unsigned int)sample_rate,
+                               1,
+                               latency_usec) < 0) {
+            update_controls_status(audio_text("无法配置 ALSA 设备", "Cannot configure ALSA device"));
+            A.pcm_close(alsa_pcm);
+            alsa_pcm = NULL;
+            return -1;
+        }
+
+        return 0;
     }
 
-    if (snd_pcm_open(&alsa_pcm, g_default_audio_device, SND_PCM_STREAM_PLAYBACK, 0) < 0) {
-        update_controls_status(audio_text("无法打开 ALSA 设备", "Cannot open ALSA device"));
-        alsa_pcm = NULL;
-        return -1;
-    }
-
-    if (snd_pcm_set_params(alsa_pcm,
-                           SND_PCM_FORMAT_S32_LE,
-                           SND_PCM_ACCESS_RW_INTERLEAVED,
-                           (unsigned int)channels,
-                           (unsigned int)sample_rate,
-                           1,
-                           latency_usec) < 0) {
-        update_controls_status(audio_text("无法配置 ALSA 设备", "Cannot configure ALSA device"));
-        snd_pcm_close(alsa_pcm);
-        alsa_pcm = NULL;
-        return -1;
-    }
-
-    return 0;
-#endif
+    update_controls_status(audio_text("没有可用的音频后端", "No audio backend available"));
+    return -1;
 }
 
 static void audio_backend_cleanup_stream(void) {
-#if defined(HAVE_PULSE)
-    if (pa_s) {
-        pa_stream_disconnect(pa_s);
-        pa_stream_unref(pa_s);
+    if (pulse_loaded && g_active_backend == AUDIO_BACKEND_PULSE && pa_s) {
+        P.stream_disconnect(pa_s);
+        P.stream_unref(pa_s);
         pa_s = NULL;
+        return;
     }
-#else
-    if (alsa_pcm) {
-        snd_pcm_drop(alsa_pcm);
-        snd_pcm_close(alsa_pcm);
+    if (alsa_loaded && g_active_backend == AUDIO_BACKEND_ALSA && alsa_pcm) {
+        A.pcm_drop(alsa_pcm);
+        A.pcm_close(alsa_pcm);
         alsa_pcm = NULL;
+        return;
     }
-#endif
 }
 
 static void audio_backend_flush_stream(void) {
-#if defined(HAVE_PULSE)
-    if (pa_s && pa_ml && pa_ctx) {
-        pa_stream_state_t state = pa_stream_get_state(pa_s);
+    if (pulse_loaded && g_active_backend == AUDIO_BACKEND_PULSE && pa_s && pa_ml && pa_ctx) {
+        int state = P.stream_get_state(pa_s);
         if (state == PA_STREAM_READY) {
-            pa_operation *op = pa_stream_flush(pa_s, NULL, NULL);
+            pa_operation *op = P.stream_flush(pa_s, NULL, NULL);
             if (op) {
-                while (pa_operation_get_state(op) == PA_OPERATION_RUNNING) {
-                    pa_mainloop_iterate(pa_ml, 1, NULL);
+                while (P.operation_get_state(op) == PA_OPERATION_RUNNING) {
+                    P.mainloop_iterate(pa_ml, 1, NULL);
                 }
-                pa_operation_unref(op);
+                P.operation_unref(op);
             }
         }
+        return;
     }
-#else
-    if (alsa_pcm) {
-        snd_pcm_drop(alsa_pcm);
-        snd_pcm_prepare(alsa_pcm);
+    if (alsa_loaded && g_active_backend == AUDIO_BACKEND_ALSA && alsa_pcm) {
+        A.pcm_drop(alsa_pcm);
+        A.pcm_prepare(alsa_pcm);
+        return;
     }
-#endif
 }
 
 static int audio_backend_write_samples(const int32_t *samples, int frame_count) {
@@ -1045,96 +1166,98 @@ static int audio_backend_write_samples(const int32_t *samples, int frame_count) 
         return 0;
     }
 
-#if defined(HAVE_PULSE)
-    size_t bytes = (size_t)frame_count * pa_ss.channels * sizeof(int32_t);
+    if (pulse_loaded && g_active_backend == AUDIO_BACKEND_PULSE) {
+        size_t bytes = (size_t)frame_count * pa_ss.channels * sizeof(int32_t);
 
-    if (!pa_s || pa_stream_get_state(pa_s) != PA_STREAM_READY) {
-        return -1;
+        if (!pa_s || P.stream_get_state(pa_s) != PA_STREAM_READY) {
+            return -1;
+        }
+
+        while (pa_s && P.stream_get_state(pa_s) == PA_STREAM_READY &&
+               P.stream_writable_size(pa_s) < bytes) {
+            if (!g_play_thread_running) {
+                return 0;
+            }
+            P.mainloop_iterate(pa_ml, 1, NULL);
+        }
+
+        if (!pa_s || P.stream_get_state(pa_s) != PA_STREAM_READY) {
+            return -1;
+        }
+
+        return P.stream_write(pa_s, samples, bytes, NULL, 0, PA_SEEK_RELATIVE);
     }
 
-    while (pa_s && pa_stream_get_state(pa_s) == PA_STREAM_READY &&
-           pa_stream_writable_size(pa_s) < bytes) {
-        if (!g_play_thread_running) {
-            return 0;
+    if (alsa_loaded && g_active_backend == AUDIO_BACKEND_ALSA) {
+        int written = 0;
+        int wait_timeout_ms = get_configured_latency_ms();
+        if (wait_timeout_ms < 20) {
+            wait_timeout_ms = 20;
         }
-        pa_mainloop_iterate(pa_ml, 1, NULL);
+
+        while (written < frame_count) {
+            if (!g_play_thread_running) {
+                return 0;
+            }
+
+            if (A.pcm_wait(alsa_pcm, wait_timeout_ms) < 0) {
+                A.pcm_prepare(alsa_pcm);
+            }
+            snd_pcm_sframes_t ret = A.pcm_writei(alsa_pcm,
+                                                   samples + (written * g_output_channels),
+                                                   frame_count - written);
+            if (ret > 0) {
+                written += (int)ret;
+                continue;
+            }
+            if (ret == -EAGAIN) {
+                continue;
+            }
+            if (ret == -EPIPE || ret == -ESTRPIPE) {
+                A.pcm_prepare(alsa_pcm);
+                continue;
+            }
+            return -1;
+        }
+
+        return 0;
     }
 
-    if (!pa_s || pa_stream_get_state(pa_s) != PA_STREAM_READY) {
-        return -1;
-    }
-
-    return pa_stream_write(pa_s, samples, bytes, NULL, 0, PA_SEEK_RELATIVE);
-#else
-    int written = 0;
-    int wait_timeout_ms = get_configured_latency_ms();
-    if (wait_timeout_ms < 20) {
-        wait_timeout_ms = 20;
-    }
-
-    while (written < frame_count) {
-        if (!g_play_thread_running) {
-            return 0;
-        }
-
-        if (snd_pcm_wait(alsa_pcm, wait_timeout_ms) < 0) {
-            snd_pcm_prepare(alsa_pcm);
-        }
-        snd_pcm_sframes_t ret = snd_pcm_writei(alsa_pcm,
-                                               samples + (written * g_output_channels),
-                                               frame_count - written);
-        if (ret > 0) {
-            written += (int)ret;
-            continue;
-        }
-        if (ret == -EAGAIN) {
-            continue;
-        }
-        if (ret == -EPIPE || ret == -ESTRPIPE) {
-            snd_pcm_prepare(alsa_pcm);
-            continue;
-        }
-        return -1;
-    }
-
-    return 0;
-#endif
+    return -1;
 }
 
 static void audio_backend_pause_stream(void) {
-#if defined(HAVE_PULSE)
-    if (pa_s && pa_ml && pa_ctx) {
-        pa_stream_state_t state = pa_stream_get_state(pa_s);
-        if (state == PA_STREAM_READY && !pa_stream_is_corked(pa_s)) {
-            pa_operation *op = pa_stream_cork(pa_s, 1, NULL, NULL);
+    if (pulse_loaded && g_active_backend == AUDIO_BACKEND_PULSE && pa_s && pa_ml && pa_ctx) {
+        int state = P.stream_get_state(pa_s);
+        if (state == PA_STREAM_READY && !P.stream_is_corked(pa_s)) {
+            pa_operation *op = P.stream_cork(pa_s, 1, NULL, NULL);
             if (op) {
-                pa_operation_unref(op);
+                P.operation_unref(op);
             }
         }
+        return;
     }
-#else
-    if (alsa_pcm) {
-        snd_pcm_pause(alsa_pcm, 1);
+    if (alsa_loaded && g_active_backend == AUDIO_BACKEND_ALSA && alsa_pcm) {
+        A.pcm_pause(alsa_pcm, 1);
+        return;
     }
-#endif
 }
 
 static void audio_backend_resume_stream(void) {
-#if defined(HAVE_PULSE)
-    if (pa_s && pa_ml && pa_ctx) {
-        pa_stream_state_t state = pa_stream_get_state(pa_s);
-        if (state == PA_STREAM_READY && pa_stream_is_corked(pa_s)) {
-            pa_operation *op = pa_stream_cork(pa_s, 0, NULL, NULL);
+    if (pulse_loaded && g_active_backend == AUDIO_BACKEND_PULSE && pa_s && pa_ml && pa_ctx) {
+        int state = P.stream_get_state(pa_s);
+        if (state == PA_STREAM_READY && P.stream_is_corked(pa_s)) {
+            pa_operation *op = P.stream_cork(pa_s, 0, NULL, NULL);
             if (op) {
-                pa_operation_unref(op);
+                P.operation_unref(op);
             }
         }
+        return;
     }
-#else
-    if (alsa_pcm) {
-        snd_pcm_pause(alsa_pcm, 0);
+    if (alsa_loaded && g_active_backend == AUDIO_BACKEND_ALSA && alsa_pcm) {
+        A.pcm_pause(alsa_pcm, 0);
+        return;
     }
-#endif
 }
 
 /**
@@ -1150,50 +1273,116 @@ void init_ffmpeg() {
     log_debug("audio", "FFmpeg initialized, log suppressed");
 }
 
+void audio_backend_shutdown(void) {
+    if (pulse_loaded && pa_s) {
+        P.stream_disconnect(pa_s);
+        P.stream_unref(pa_s);
+        pa_s = NULL;
+    }
+    if (pulse_loaded && pa_ml) {
+        if (pa_ctx) {
+            P.context_disconnect(pa_ctx);
+            P.context_unref(pa_ctx);
+            pa_ctx = NULL;
+        }
+        P.mainloop_free(pa_ml);
+        pa_ml = NULL;
+    }
+    pa_connected = 0;
+    if (alsa_loaded && alsa_pcm) {
+        A.pcm_drop(alsa_pcm);
+        A.pcm_close(alsa_pcm);
+        alsa_pcm = NULL;
+    }
+    alsa_ready = 0;
+}
+
 void init_audio_device() {
     log_info("audio", "Initializing audio device");
-#if defined(HAVE_PULSE)
-    pa_ml = pa_mainloop_new();
-    if (!pa_ml) {
-        log_warn("audio", "Failed to create PulseAudio mainloop");
-        printf("%s\n", audio_text("警告：无法创建 PulseAudio 主循环", "Warning: cannot create PulseAudio mainloop"));
-        return;
+
+    /* 尝试运行时加载音频后端库 */
+    if (pulse_load() == 0) {
+        pulse_loaded = 1;
+        log_info("audio", "PulseAudio library loaded");
+    } else {
+        pulse_loaded = 0;
+        log_info("audio", "PulseAudio library not available");
+    }
+    if (alsa_load() == 0) {
+        alsa_loaded = 1;
+        log_info("audio", "ALSA library loaded");
+    } else {
+        alsa_loaded = 0;
+        log_info("audio", "ALSA library not available");
     }
 
-    pa_ctx = pa_context_new(pa_mainloop_get_api(pa_ml), APP_NAME);
-    if (!pa_ctx) {
-        log_warn("audio", "Failed to create PulseAudio context");
-        printf("%s\n", audio_text("警告：无法创建 PulseAudio 上下文", "Warning: cannot create PulseAudio context"));
-        pa_mainloop_free(pa_ml);
-        pa_ml = NULL;
-        return;
-    }
+    if (g_active_backend == AUDIO_BACKEND_AUTO || g_active_backend == AUDIO_BACKEND_PULSE) {
+        if (pulse_loaded) {
+            log_info("audio", "Trying PulseAudio backend");
+            pa_ml = P.mainloop_new();
+            if (!pa_ml) {
+                log_warn("audio", "Failed to create PulseAudio mainloop");
+                goto pulse_failed;
+            }
 
-    pa_context_connect(pa_ctx, NULL, PA_CONTEXT_NOFLAGS, NULL);
-    while (pa_context_get_state(pa_ctx) != PA_CONTEXT_READY) {
-        if (pa_context_get_state(pa_ctx) == PA_CONTEXT_FAILED ||
-            pa_context_get_state(pa_ctx) == PA_CONTEXT_TERMINATED) {
-            log_warn("audio", "Failed to connect to PulseAudio server");
-            printf("%s\n", audio_text("警告：无法连接 PulseAudio 服务", "Warning: cannot connect PulseAudio"));
-            pa_context_unref(pa_ctx);
-            pa_mainloop_free(pa_ml);
-            pa_ctx = NULL;
-            pa_ml = NULL;
+            pa_ctx = P.context_new(P.mainloop_get_api(pa_ml), APP_NAME);
+            if (!pa_ctx) {
+                log_warn("audio", "Failed to create PulseAudio context");
+                P.mainloop_free(pa_ml);
+                pa_ml = NULL;
+                goto pulse_failed;
+            }
+
+            P.context_connect(pa_ctx, NULL, PA_CONTEXT_NOFLAGS, NULL);
+            while (P.context_get_state(pa_ctx) != PA_CONTEXT_READY) {
+                if (P.context_get_state(pa_ctx) == PA_CONTEXT_FAILED ||
+                    P.context_get_state(pa_ctx) == PA_CONTEXT_TERMINATED) {
+                    log_warn("audio", "Failed to connect to PulseAudio server");
+                    P.context_unref(pa_ctx);
+                    pa_ctx = NULL;
+                    P.mainloop_free(pa_ml);
+                    pa_ml = NULL;
+                    goto pulse_failed;
+                }
+                P.mainloop_iterate(pa_ml, 1, NULL);
+            }
+
+            pa_connected = 1;
+            g_active_backend = AUDIO_BACKEND_PULSE;
+            log_info("audio", "PulseAudio connected successfully");
+            printf("%s\n", audio_text("已连接到 PulseAudio 服务", "Connected to PulseAudio"));
+            return;
+
+pulse_failed:
             pa_connected = 0;
+            if (g_active_backend == AUDIO_BACKEND_PULSE) {
+                log_error("audio", "PulseAudio selected but unavailable");
+                return;
+            }
+            log_info("audio", "PulseAudio not available, will try ALSA");
+        } else if (g_active_backend == AUDIO_BACKEND_PULSE) {
+            log_error("audio", "PulseAudio library could not be loaded");
             return;
         }
-        pa_mainloop_iterate(pa_ml, 1, NULL);
     }
 
-    pa_connected = 1;
-    log_info("audio", "PulseAudio connected successfully");
-    printf("%s\n", audio_text("已连接到 PulseAudio 服务", "Connected to PulseAudio"));
-#else
-    alsa_ready = 1;
-    log_info("audio", "ALSA backend ready, device='default'");
-    printf("%s\n", audio_text("当前使用 ALSA 音频后端", "Using ALSA backend"));
-#endif
+    if (g_active_backend == AUDIO_BACKEND_AUTO || g_active_backend == AUDIO_BACKEND_ALSA) {
+        if (alsa_loaded) {
+            alsa_ready = 1;
+            g_active_backend = AUDIO_BACKEND_ALSA;
+            log_info("audio", "ALSA backend ready, device='default'");
+            printf("%s\n", audio_text("当前使用 ALSA 音频后端", "Using ALSA backend"));
+            return;
+        } else if (g_active_backend == AUDIO_BACKEND_ALSA) {
+            log_error("audio", "ALSA library could not be loaded");
+            return;
+        }
+    }
+
+    log_error("audio", "No audio backend available");
 }
+
+
 
 int get_volume_percent(void) {
     int volume = 100;
@@ -1370,7 +1559,10 @@ void cleanup_playback_cache(void) {
 }
 
 void wait_for_playback_thread_shutdown(void) {
-    while (1) {
+    int timeout_ms = 2000;
+    int waited = 0;
+
+    while (waited < timeout_ms) {
         reap_finished_playback_thread();
 
         pthread_mutex_lock(&g_play_mutex);
@@ -1385,6 +1577,11 @@ void wait_for_playback_thread_shutdown(void) {
 
         signal_playback_thread();
         usleep(10000);
+        waited += 10;
+    }
+
+    if (waited >= timeout_ms) {
+        log_warn("audio", "Playback thread did not stop within %dms, forcing shutdown", timeout_ms);
     }
 }
 
@@ -1770,6 +1967,27 @@ void *play_audio_thread(void *arg) {
     output_channels = (input_channels == 1) ? 1 : 2;
     // 使用原始采样率，倍速通过 atempo 滤镜实现
     output_sample_rate = codec_ctx->sample_rate > 0 ? codec_ctx->sample_rate : 44100;
+
+    // 提取音频技术信息供 UI 显示，覆盖旧数据
+    // 使用 codec_ctx 而非 codec_par，因为 avcodec_open2 后才填充完整
+    g_audio_sample_rate = codec_ctx->sample_rate > 0 ? codec_ctx->sample_rate : 0;
+    g_audio_bit_rate = (codec_ctx->bit_rate > 0) ? codec_ctx->bit_rate :
+                       (codec_par->bit_rate > 0) ? codec_par->bit_rate : 0;
+    // FLAC 等 VBR 格式的比特率常为 0，从文件大小/时长推算平均比特率
+    if (g_audio_bit_rate <= 0 && g_total_duration > 0 && fmt_ctx && fmt_ctx->pb) {
+        int64_t file_size = avio_size(fmt_ctx->pb);
+        if (file_size > 0) {
+            g_audio_bit_rate = (int)((file_size * 8) / g_total_duration);
+        }
+    }
+    if (codec_ctx->bits_per_raw_sample > 0) {
+        g_audio_bit_depth = codec_ctx->bits_per_raw_sample;
+    } else {
+        int bytes = av_get_bytes_per_sample(codec_ctx->sample_fmt);
+        g_audio_bit_depth = bytes > 0 ? bytes * 8 : 0;
+    }
+    snprintf(g_audio_codec_name, sizeof(g_audio_codec_name), "%s", codec->name);
+
     log_debug("audio", "Audio stream: rate=%d, channels=%d, codec=%s, duration=%ds",
               output_sample_rate, output_channels,
               codec ? codec->name : "unknown",
@@ -1961,6 +2179,12 @@ cleanup:
     g_play_state = PLAY_STATE_STOPPED;
     g_current_play_index = -1;
 
+    // 清理音频技术信息（新曲目开始时由提取代码重新填充）
+    g_audio_sample_rate = 0;
+    g_audio_bit_rate = 0;
+    g_audio_bit_depth = 0;
+    g_audio_codec_name[0] = '\0';
+
     if (followup_index >= 0 && g_pending_playback_index < 0) {
         g_pending_playback_index = followup_index;
     }
@@ -1982,6 +2206,18 @@ cleanup:
  */
 static void remote_progress_refresh(void) {
     refresh();
+}
+
+/**
+ * 在排序激活时，将曲目索引（物理位置）转换为视觉位置（屏幕行号）
+ */
+static int visual_position_of(int track_index) {
+    if (!g_sort_state.active) return track_index;
+    for (int i = 0; i < g_playlist.count; i++) {
+        if (g_sort_state.sorted_indices[i] == track_index)
+            return i;
+    }
+    return track_index;
 }
 
 /**
@@ -2012,7 +2248,6 @@ void play_audio(int index) {
 
     if (g_play_thread_active) {
         log_debug("audio", "Pending play_audio(%d) - thread already active, scheduling switch", index);
-        g_selected_index = index;
         g_pending_playback_index = index;
         g_play_thread_running = 0;
         g_seek_request = 0;
@@ -2026,7 +2261,6 @@ void play_audio(int index) {
 
     g_pending_playback_index = -1;
     g_current_play_index = index;
-    g_selected_index = index;
     g_play_thread_active = 1;
     g_play_thread_running = 1;
     g_play_thread_finished = 0;
@@ -2231,6 +2465,10 @@ void stop_audio() {
     g_seek_request = 0;
     g_play_state = PLAY_STATE_STOPPED;
     g_current_play_index = -1;
+    g_audio_sample_rate = 0;
+    g_audio_bit_rate = 0;
+    g_audio_bit_depth = 0;
+    g_audio_codec_name[0] = '\0';
     pthread_mutex_unlock(&g_play_mutex);
     signal_playback_thread();
 
@@ -2257,6 +2495,14 @@ void next_track() {
     int next_index;
     if (g_loop_mode == LOOP_RANDOM) {
         next_index = rand() % playlist_total;
+    } else if (g_sort_state.active) {
+        // 排序激活时按视觉顺序跳转
+        int visual_pos = (g_current_play_index >= 0)
+            ? visual_position_of(g_current_play_index)
+            : g_selected_index;
+        int next_visual = (visual_pos + 1) % playlist_total;
+        next_index = g_sort_state.sorted_indices[next_visual];
+        g_selected_index = next_visual;
     } else {
         if (g_current_play_index >= 0) {
             next_index = g_current_play_index + 1;
@@ -2268,7 +2514,7 @@ void next_track() {
             next_index = 0;
         }
     }
-    
+
     play_audio(next_index);
 }
 
@@ -2282,10 +2528,18 @@ void prev_track() {
     if (playlist_total == 0) {
         return;
     }
-    
+
     int prev_index;
     if (g_loop_mode == LOOP_RANDOM) {
         prev_index = rand() % playlist_total;
+    } else if (g_sort_state.active) {
+        // 排序激活时按视觉顺序跳转
+        int visual_pos = (g_current_play_index >= 0)
+            ? visual_position_of(g_current_play_index)
+            : g_selected_index;
+        int prev_visual = (visual_pos - 1 + playlist_total) % playlist_total;
+        prev_index = g_sort_state.sorted_indices[prev_visual];
+        g_selected_index = prev_visual;
     } else {
         if (g_current_play_index >= 0) {
             prev_index = g_current_play_index - 1;
@@ -2297,7 +2551,7 @@ void prev_track() {
             prev_index = playlist_total - 1;
         }
     }
-    
+
     play_audio(prev_index);
 }
 

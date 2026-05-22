@@ -36,4 +36,6 @@ build() {
 package() {
   cd "$srcdir/ter-music/build"
   install -Dm755 ter-music "$pkgdir/usr/bin/ter-music"
+  install -Dm644 ../data/help-quickstart-zh.txt "$pkgdir/usr/share/ter-music/help-quickstart-zh.txt"
+  install -Dm644 ../data/help-quickstart-en.txt "$pkgdir/usr/share/ter-music/help-quickstart-en.txt"
 }

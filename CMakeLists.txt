@@ -37,26 +37,30 @@ if(STATIC_LINKING)
 endif()
 pkg_check_modules(PNG REQUIRED libpng)
 pkg_check_modules(JPEG REQUIRED libjpeg)
+# PulseAudio 和 ALSA 仅用于获取头文件路径，运行时通过 dlopen 加载
 pkg_check_modules(PULSE libpulse)
+pkg_check_modules(ALSA alsa)
 pkg_check_modules(DBUS dbus-1)
 pkg_check_modules(LIBCURL libcurl)
 
 if(PULSE_FOUND)
-    set(AUDIO_BACKEND_NAME "PulseAudio")
     set(AUDIO_BACKEND_INCLUDE_DIRS ${PULSE_INCLUDE_DIRS})
-    set(AUDIO_BACKEND_LIBRARIES ${PULSE_LIBRARIES})
     set(AUDIO_BACKEND_CFLAGS ${PULSE_CFLAGS_OTHER})
-    set(AUDIO_BACKEND_DEFINES HAVE_PULSE=1)
-else()
-    pkg_check_modules(ALSA REQUIRED alsa)
-    set(AUDIO_BACKEND_NAME "ALSA")
-    set(AUDIO_BACKEND_INCLUDE_DIRS ${ALSA_INCLUDE_DIRS})
-    set(AUDIO_BACKEND_LIBRARIES ${ALSA_LIBRARIES})
-    set(AUDIO_BACKEND_CFLAGS ${ALSA_CFLAGS_OTHER})
-    set(AUDIO_BACKEND_DEFINES HAVE_ALSA=1)
+endif()
+if(ALSA_FOUND)
+    set(AUDIO_BACKEND_INCLUDE_DIRS ${AUDIO_BACKEND_INCLUDE_DIRS} ${ALSA_INCLUDE_DIRS})
+    set(AUDIO_BACKEND_CFLAGS ${AUDIO_BACKEND_CFLAGS} ${ALSA_CFLAGS_OTHER})
 endif()
 
-message(STATUS "Using audio backend: ${AUDIO_BACKEND_NAME}")
+if(PULSE_FOUND AND ALSA_FOUND)
+    message(STATUS "Audio backend(s): PulseAudio + ALSA (runtime dlopen)")
+elseif(PULSE_FOUND)
+    message(STATUS "Audio backend(s): PulseAudio (runtime dlopen)")
+elseif(ALSA_FOUND)
+    message(STATUS "Audio backend(s): ALSA (runtime dlopen)")
+else()
+    message(STATUS "Audio backend(s): NONE (will probe at runtime)")
+endif()
 if(DBUS_FOUND)
     message(STATUS "Using system media session backend: MPRIS (D-Bus)")
 else()
@@ -90,6 +94,8 @@ add_executable(${PROJECT_NAME}
     src/image_loader.c
     src/remote.c
     src/logger.c
+    src/search.c
+    src/scrollbar.c
 )
 
 # 包含头文件目录
@@ -128,12 +134,12 @@ target_link_libraries(${PROJECT_NAME}
     ${AVUTIL_LIBRARIES}
     ${AVFILTER_LIBRARIES}
     ${SWSCALE_LIBRARIES}
-    ${AUDIO_BACKEND_LIBRARIES}
     ${PNG_LIBRARIES}
     ${JPEG_LIBRARIES}
     ${NCURSESW_LIBRARY}
     m
     ${PTHREAD_LIBRARY}
+    ${CMAKE_DL_LIBS}
 )
 
 if(DBUS_FOUND)
@@ -164,7 +170,6 @@ endif()
 # 添加预处理器定义
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     _GNU_SOURCE
-    ${AUDIO_BACKEND_DEFINES}
 )
 
 if(DBUS_FOUND)
@@ -193,4 +198,16 @@ install(FILES resources/icons/hicolor/128x128/apps/${PROJECT_NAME}.png
 )
 install(FILES resources/icons/hicolor/scalable/apps/${PROJECT_NAME}.svg
     DESTINATION share/icons/hicolor/scalable/apps
+)
+
+# 安装帮助文档
+install(FILES data/help-quickstart-zh.txt data/help-quickstart-en.txt
+        DESTINATION share/ter-music
+)
+
+# Uninstall target — removes files listed in install_manifest.txt
+add_custom_target(uninstall
+    COMMAND ${CMAKE_COMMAND} -E echo "Uninstalling ${PROJECT_NAME}..."
+    COMMAND if [ -f ${CMAKE_BINARY_DIR}/install_manifest.txt ]\; then xargs rm -f < ${CMAKE_BINARY_DIR}/install_manifest.txt\; else echo "No install manifest. Run make install first."\; exit 1\; fi
+    COMMAND ${CMAKE_COMMAND} -E echo "Done."
 )

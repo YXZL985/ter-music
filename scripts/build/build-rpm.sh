@@ -567,11 +567,15 @@ install -m 644 ../resources/icons/hicolor/32x32/apps/%{name}.png %{buildroot}%{_
 install -m 644 ../resources/icons/hicolor/48x48/apps/%{name}.png %{buildroot}%{_datadir}/icons/hicolor/48x48/apps/%{name}.png
 install -m 644 ../resources/icons/hicolor/128x128/apps/%{name}.png %{buildroot}%{_datadir}/icons/hicolor/128x128/apps/%{name}.png
 install -m 644 ../resources/icons/hicolor/scalable/apps/%{name}.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/%{name}.svg
+mkdir -p %{buildroot}%{_datadir}/ter-music
+install -m 644 ../data/help-quickstart-zh.txt %{buildroot}%{_datadir}/ter-music/help-quickstart-zh.txt
+install -m 644 ../data/help-quickstart-en.txt %{buildroot}%{_datadir}/ter-music/help-quickstart-en.txt
 
 %files
 %{_bindir}/%{name}
 %{_datadir}/applications/%{name}.desktop
 %{_datadir}/icons/hicolor/*/apps/%{name}.*
+%{_datadir}/ter-music/*
 
 %changelog
 * $(LC_ALL=C date +'%a %b %d %Y') Packager <packager@example.com> - ${version}-1

@@ -22,6 +22,14 @@ typedef enum {
 } LoopMode;
 
 typedef enum {
+    SORT_DEFAULT = 0,
+    SORT_TITLE   = 1,
+    SORT_ARTIST  = 2,
+    SORT_ALBUM   = 3,
+    SORT_FILENAME = 4
+} SortMode;
+
+typedef enum {
     PLAY_STATE_STOPPED = 0,
     PLAY_STATE_PLAYING = 1,
     PLAY_STATE_PAUSED = 2
@@ -33,7 +41,8 @@ typedef enum {
     VIEW_HISTORY = 2,
     VIEW_PLAYLIST = 3,
     VIEW_FAVORITES = 4,
-    VIEW_INFO = 5
+    VIEW_INFO = 5,
+    VIEW_HELP = 6
 } ViewMode;
 
 typedef enum {
@@ -77,6 +86,10 @@ typedef enum {
 #define ALBUM_COVER_TEMP_PREFIX "/tmp/ter-music-cover-"
 #define MAX_REMOTE_CONNECTIONS 20
 #define MAX_REMOTE_NAME_LEN 64
+
+#define AUDIO_BACKEND_AUTO  0
+#define AUDIO_BACKEND_PULSE 1
+#define AUDIO_BACKEND_ALSA  2
 
 typedef struct {
     char path[MAX_PATH_LEN];
@@ -190,6 +203,8 @@ typedef struct {
     float default_playback_speed;
     int show_album_cover;
     int lyrics_alignment;  // 0=居左(Left), 1=居中(Center), 2=居右(Right)
+    int audio_backend;     // 0=Auto, 1=PulseAudio, 2=ALSA
+    int sort_mode;         // SortMode value, 0=default (no sort)
     int config_version;
     RemoteConnectionConfig remote_connections[MAX_REMOTE_CONNECTIONS];
     int remote_connection_count;
@@ -211,7 +226,19 @@ typedef struct {
     int active;
     int selected_index;
     int result_offset;
+
+    // 异步搜索字段（由 g_search_mutex 保护）
+    volatile int in_progress;       // 搜索线程正在运行
+    volatile int cancel;            // 设置为 1 以取消搜索
+    int progress;                   // 迄今为止已检查的轨道数
+    pthread_t thread;               // 搜索线程句柄
+    char query[MAX_META_LEN];       // 当前搜索查询
 } SearchState;
+
+typedef struct {
+    int sorted_indices[MAX_TRACKS];
+    int active;
+} SortState;
 
 extern Playlist g_playlist;
 extern int g_selected_index;
@@ -244,12 +271,17 @@ extern pthread_mutex_t g_seek_mutex;
 extern int g_lyric_cursor_mode;
 extern int g_lyric_cursor_index;
 
+extern int g_active_backend;
+
 extern SearchState g_search_state;
+extern pthread_mutex_t g_search_mutex;
+extern SortState g_sort_state;
 extern float g_playback_speed;
 
 void toggle_playback_speed(void);
 void init_ffmpeg();
 void init_audio_device();
+int audio_backend_is_available(int backend);
 int load_playlist(const char *folder_path);
 int append_playlist(const char *folder_path);
 int load_single_file(const char *file_path);
@@ -314,6 +346,7 @@ void update_rainbow_colors(void);
 int get_track_metadata(int index, Track *out);
 void preload_visible_tracks(int start, int end);
 void clear_metadata_cache(void);
+void recompute_sort_order(void);
 
 int extract_album_cover(const char *audio_path, char *output_path, size_t output_size);
 int get_current_album_cover_path(char *path, size_t path_size);
@@ -326,5 +359,10 @@ extern int g_current_album_cover_valid;
 
 extern char g_braille_art_buffer[];
 extern int g_album_cover_size;
+
+extern int g_audio_sample_rate;          // Hz, e.g. 44100
+extern int g_audio_bit_rate;             // bps, e.g. 320000
+extern int g_audio_bit_depth;            // bits, e.g. 16 or 24 (0 = unknown)
+extern char g_audio_codec_name[32];      // e.g. "flac", "mp3"
 
 #endif

@@ -3,6 +3,8 @@
 #include "../include/lyrics.h"
 #include "../include/menu_views.h"
 #include "../include/braille_art.h"
+#include "../include/search.h"
+#include "../include/scrollbar.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +15,9 @@
 #include <unistd.h>
 #include <ctype.h>
 #include <limits.h>
+
+// 前向声明
+void audio_backend_shutdown(void);
 #include <wchar.h>
 #include <wctype.h>
 #include <locale.h>
@@ -725,15 +730,33 @@ static int get_playlist_index_from_window_row(int window_y, int *display_index, 
 
     int clicked_display_index = get_playlist_scroll_offset() + (window_y - 1);
 
-    if (g_search_state.active) {
-        if (clicked_display_index < 0 || clicked_display_index >= g_search_state.result_count) {
+    if (g_search_state.active || g_search_state.in_progress) {
+        pthread_mutex_lock(&g_search_mutex);
+        int snap_count = g_search_state.result_count;
+        int idx = (snap_count > 0 && clicked_display_index >= 0 && clicked_display_index < snap_count)
+                  ? g_search_state.result_indices[clicked_display_index] : -1;
+        pthread_mutex_unlock(&g_search_mutex);
+        if (idx < 0) {
             return 0;
         }
         if (display_index) {
             *display_index = clicked_display_index;
         }
         if (actual_index) {
-            *actual_index = g_search_state.result_indices[clicked_display_index];
+            *actual_index = idx;
+        }
+        return 1;
+    }
+
+    if (g_sort_state.active) {
+        if (clicked_display_index < 0 || clicked_display_index >= playlist_count()) {
+            return 0;
+        }
+        if (display_index) {
+            *display_index = clicked_display_index;
+        }
+        if (actual_index) {
+            *actual_index = g_sort_state.sorted_indices[clicked_display_index];
         }
         return 1;
     }
@@ -889,17 +912,17 @@ static int get_lyric_index_from_window_row(int window_y, int *lyric_index, doubl
 int get_menu_hint_fkey_from_column(int screen_x) {
     static const char *menu_labels_zh[] = {
         "F1:主页", "F2:设置", "F3:历史", "F4:歌单",
-        "F5:收藏", "F6:信息", "F7:中/EN", "F8:退出"
+        "F5:收藏", "F6:信息", "F7:中/EN", "F8:帮助", "F9:退出"
     };
     static const char *menu_labels_en[] = {
         "F1:Home", "F2:Settings", "F3:History", "F4:Playlists",
-        "F5:Favorites", "F6:Info", "F7:Lang", "F8:Quit"
+        "F5:Favorites", "F6:Info", "F7:Lang", "F8:Help", "F9:Quit"
     };
 
     const char **labels = use_english_ui() ? menu_labels_en : menu_labels_zh;
     int col = 2;
 
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 9; i++) {
         int width = utf8_str_width(labels[i]);
         if (screen_x >= col && screen_x < col + width) {
             return KEY_F(i + 1);
@@ -946,14 +969,20 @@ static int handle_main_view_mouse_event(const MEVENT *event) {
         }
 
         g_control_focus = 0;
-        if (g_search_state.active) {
+        if (g_search_state.active || g_search_state.in_progress) {
+            if (g_search_state.in_progress) {
+                search_async_cancel();
+                pthread_mutex_lock(&g_search_mutex);
+                g_search_state.in_progress = 0;
+                pthread_mutex_unlock(&g_search_mutex);
+            }
             g_search_state.selected_index = display_index;
-            g_selected_index = actual_index;
             play_audio(actual_index);
             g_search_state.active = 0;
+            g_selected_index = g_sort_state.active ? 0 : actual_index;
             render_playlist_content();
         } else {
-            g_selected_index = actual_index;
+            g_selected_index = display_index;
             play_audio(actual_index);
         }
         render_controls();
@@ -1636,10 +1665,37 @@ void render_playlist_content() {
     if (!win_playlist) {
         return;
     }
+
+    // 拍摄搜索状态快照，保证渲染一致性
+    int snap_active, snap_in_progress, snap_count, snap_selected, snap_progress;
+    int snap_indices[MAX_SEARCH_RESULTS];
+    pthread_mutex_lock(&g_search_mutex);
+    snap_active = g_search_state.active;
+    snap_in_progress = g_search_state.in_progress;
+    snap_count = g_search_state.result_count;
+    snap_selected = g_search_state.selected_index;
+    snap_progress = g_search_state.progress;
+    if (snap_count > 0) {
+        memcpy(snap_indices, g_search_state.result_indices,
+               snap_count * sizeof(int));
+    }
+    pthread_mutex_unlock(&g_search_mutex);
+
     werase(win_playlist); // 清空窗口内容
     box(win_playlist, 0, 0);
-    if (g_search_state.active) {
-        mvwprintw(win_playlist, 0, 2, "%s (%d %s) ", ui_text(" 搜索结果 ", " Search Results "), g_search_state.result_count, ui_text("个", "found"));
+    char title_buf[128];
+    if (snap_in_progress) {
+        snprintf(title_buf, sizeof(title_buf), "%s (%d/%d) ",
+                 ui_text(" 搜索中 ", " Searching "),
+                 snap_progress,
+                 playlist_count());
+        mvwprintw(win_playlist, 0, 2, "%s", title_buf);
+    } else if (snap_active) {
+        snprintf(title_buf, sizeof(title_buf), "%s (%d %s) ",
+                 ui_text(" 搜索结果 ", " Search Results "),
+                 snap_count,
+                 ui_text("个", "found"));
+        mvwprintw(win_playlist, 0, 2, "%s", title_buf);
     } else {
         mvwprintw(win_playlist, 0, 2, "%s", ui_text(" 播放列表 ", " Playlist "));
     }
@@ -1654,9 +1710,13 @@ void render_playlist_content() {
     int total_tracks;
     int current_selected;
     
-    if (g_search_state.active && g_search_state.result_count > 0) {
-        total_tracks = g_search_state.result_count;
-        current_selected = g_search_state.selected_index;
+    if ((snap_active || snap_in_progress) && snap_count > 0) {
+        total_tracks = snap_count;
+        current_selected = snap_selected;
+    } else if (snap_in_progress) {
+        // 搜索进行中但尚无结果
+        total_tracks = 0;
+        current_selected = 0;
     } else {
         total_tracks = playlist_total;
         current_selected = g_selected_index;
@@ -1677,9 +1737,9 @@ void render_playlist_content() {
         int start_idx = 0;
         int visible_lines = content_height - 6; // 预留 6 行给底部状态栏(1分隔线+5信息行)
 
-        if (g_search_state.active) {
-            if (g_search_state.selected_index >= visible_lines) {
-                start_idx = g_search_state.selected_index - visible_lines + 1;
+        if (snap_active || snap_in_progress) {
+            if (snap_selected >= visible_lines) {
+                start_idx = snap_selected - visible_lines + 1;
             }
         } else {
             if (g_selected_index >= visible_lines) {
@@ -1687,15 +1747,27 @@ void render_playlist_content() {
             }
         }
 
-        preload_visible_tracks(start_idx, start_idx + visible_lines - 1);
-        
+        if (g_sort_state.active && !snap_active) {
+            // 排序激活时，按排序后的实际索引预加载元数据缓存
+            int loaded = 0;
+            Track tmp;
+            for (int vi = start_idx; vi < start_idx + visible_lines && vi < total_tracks && loaded < 2; vi++) {
+                get_track_metadata(g_sort_state.sorted_indices[vi], &tmp);
+                loaded++;
+            }
+        } else {
+            preload_visible_tracks(start_idx, start_idx + visible_lines - 1);
+        }
+
         for (int i = 0; i < visible_lines && (start_idx + i) < total_tracks; i++) {
             int idx = start_idx + i;
             int actual_idx = idx;
             Track t;
-            
-            if (g_search_state.active) {
-                actual_idx = g_search_state.result_indices[idx];
+
+            if (snap_active || snap_in_progress) {
+                actual_idx = snap_indices[idx];
+            } else if (g_sort_state.active) {
+                actual_idx = g_sort_state.sorted_indices[idx];
             }
             
             get_track_metadata(actual_idx, &t);
@@ -1712,8 +1784,8 @@ void render_playlist_content() {
             format_display_text(truncated_artist, sizeof(truncated_artist), t.artist, artist_width - 1, 1);
 
             int is_selected;
-            if (g_search_state.active) {
-                is_selected = (idx == g_search_state.selected_index);
+            if (snap_active || snap_in_progress) {
+                is_selected = (idx == snap_selected);
             } else {
                 is_selected = (idx == g_selected_index && g_control_focus == 0);
             }
@@ -1728,11 +1800,23 @@ void render_playlist_content() {
         }
         
         if (total_tracks == 0) {
-             if (g_search_state.active) {
-                 mvwprintw(win_playlist, 1, 2, "%s", ui_text("没有找到匹配的歌曲。", "No matching tracks found."));
-             } else {
-                 mvwprintw(win_playlist, 1, 2, "%s", ui_text("当前目录下没有音频文件。", "No audio files found here."));
-             }
+            if (snap_in_progress) {
+                mvwprintw(win_playlist, 1, 2, "%s",
+                         ui_text("正在搜索...", "Searching..."));
+            } else if (snap_active) {
+                mvwprintw(win_playlist, 1, 2, "%s",
+                         ui_text("没有找到匹配的歌曲。", "No matching tracks found."));
+            } else {
+                mvwprintw(win_playlist, 1, 2, "%s",
+                         ui_text("当前目录下没有音频文件。", "No audio files found here."));
+            }
+        }
+
+        // 绘制滚动条
+        {
+            int sb_col = w - 2;
+            scrollbar_draw(win_playlist, 1, visible_lines,
+                           total_tracks, visible_lines, start_idx, sb_col);
         }
 
         // --- 新增：在播放列表底部绘制状态栏 ---
@@ -1757,6 +1841,9 @@ void render_playlist_content() {
         if (playlist_total > 0) {
             Track t;
             int index = g_current_play_index >= 0 ? g_current_play_index : g_selected_index;
+            if (g_sort_state.active && !snap_active && g_current_play_index < 0) {
+                index = g_sort_state.sorted_indices[g_selected_index];
+            }
             if (index < 0) {
                 index = 0;
             }
@@ -1776,7 +1863,7 @@ void render_playlist_content() {
             if (g_album_cover_enabled && g_app_config.show_album_cover &&
                 get_current_album_cover_path(cover_path, sizeof(cover_path)) == 0) {
                 // 根据窗口宽度计算合适的封面大小
-                int min_info_width = 40;  // 左侧信息栏最小宽度
+                int min_info_width = 52;  // 左侧信息栏最小宽度（两列各约26字符）
                 int max_cover_size = 12;  // 最大封面大小（字符高度）
                 int min_cover_size = 5;   // 最小封面大小
 
@@ -1816,28 +1903,69 @@ void render_playlist_content() {
                 }
             }
 
-            // 计算左侧信息栏宽度
+            // 计算左侧两栏宽度（左栏=元数据，中栏=音频技术信息，右栏=专辑封面）
             int info_width = show_cover ? cover_start_col - 4 : w - 4;
-            int title_width = info_width * 2 / 5;
-            int artist_width = info_width * 2 / 5;
-            int album_width = info_width * 1 / 5;
+            int col_width = info_width / 2;       // 左栏和中栏等宽
+            int left_col_x = 2;                    // 左栏起始列
+            int center_col_x = 2 + col_width;     // 中栏起始列
 
-            // 截断过长的字符串
+            // 截断左栏文本（元数据）
             char truncated_title[MAX_META_LEN];
             char truncated_artist[MAX_META_LEN];
             char truncated_album[MAX_META_LEN];
 
-            format_display_text(truncated_title, sizeof(truncated_title), t.title, title_width - 1, 0);
-            format_display_text(truncated_artist, sizeof(truncated_artist), t.artist, artist_width - 1, 0);
-            format_display_text(truncated_album, sizeof(truncated_album), t.album, album_width - 1, 0);
+            format_display_text(truncated_title, sizeof(truncated_title), t.title, col_width - 1, 0);
+            format_display_text(truncated_artist, sizeof(truncated_artist), t.artist, col_width - 1, 0);
+            format_display_text(truncated_album, sizeof(truncated_album), t.album, col_width - 1, 0);
 
-            mvwprintw(win_playlist, status_line + 1, 2, "%s%s",
+            // 左栏：元数据（5行）
+            mvwprintw(win_playlist, status_line + 1, left_col_x, "%s%s",
                       ui_text("状态：", "State: "), status_msg);
-            mvwprintw(win_playlist, status_line + 2, 2, "%s%s",
+            mvwprintw(win_playlist, status_line + 2, left_col_x, "%s%s",
                       ui_text("循环：", "Loop: "), get_loop_mode_str());
-            mvwprintw(win_playlist, status_line + 3, 2, "%s%s", ui_text("标题：", "Title: "), truncated_title);
-            mvwprintw(win_playlist, status_line + 4, 2, "%s%s", ui_text("艺术家：", "Artist: "), truncated_artist);
-            mvwprintw(win_playlist, status_line + 5, 2, "%s%s", ui_text("专辑：", "Album: "), truncated_album);
+            mvwprintw(win_playlist, status_line + 3, left_col_x, "%s%s",
+                      ui_text("标题：", "Title: "), truncated_title);
+            mvwprintw(win_playlist, status_line + 4, left_col_x, "%s%s",
+                      ui_text("艺术家：", "Artist: "), truncated_artist);
+            mvwprintw(win_playlist, status_line + 5, left_col_x, "%s%s",
+                      ui_text("专辑：", "Album: "), truncated_album);
+
+            // 中栏：音频技术信息（5行）
+            char rate_str[32] = "--";
+            char depth_str[32] = "--";
+            char bitrate_str[32] = "--";
+            char codec_display[32] = "--";
+
+            if (g_audio_sample_rate > 0) {
+                snprintf(rate_str, sizeof(rate_str), "%dHz", g_audio_sample_rate);
+            }
+            if (g_audio_bit_depth > 0) {
+                snprintf(depth_str, sizeof(depth_str), "%dbit", g_audio_bit_depth);
+            }
+            if (g_audio_bit_rate > 0) {
+                snprintf(bitrate_str, sizeof(bitrate_str), "%dkbps", g_audio_bit_rate / 1000);
+            }
+            if (g_audio_codec_name[0] != '\0') {
+                // 转大写首字母以显示更友好的名称
+                char upper[32];
+                int ci = 0;
+                for (; g_audio_codec_name[ci] && ci < (int)sizeof(upper) - 1; ci++) {
+                    upper[ci] = (ci == 0) ? toupper((unsigned char)g_audio_codec_name[ci])
+                                          : g_audio_codec_name[ci];
+                }
+                upper[ci] = '\0';
+                snprintf(codec_display, sizeof(codec_display), "%s", upper);
+            }
+
+            mvwprintw(win_playlist, status_line + 1, center_col_x, "%s%s",
+                      ui_text("采样率：", "Sample Rate: "), rate_str);
+            mvwprintw(win_playlist, status_line + 2, center_col_x, "%s%s",
+                      ui_text("位深：", "Bit Depth: "), depth_str);
+            mvwprintw(win_playlist, status_line + 3, center_col_x, "%s%s",
+                      ui_text("比特率：", "Bitrate: "), bitrate_str);
+            mvwprintw(win_playlist, status_line + 4, center_col_x, "%s%s",
+                      ui_text("编码：", "Codec: "), codec_display);
+            // 第5行留空
 
             // 绘制专辑封面字符画
             if (show_cover) {
@@ -1854,6 +1982,9 @@ void render_playlist_content() {
                 }
             }
         } else {
+             int col_width = (w - 4) / 2;
+             int center_col_x = 2 + col_width;
+             // 左栏：元数据
              mvwprintw(win_playlist, status_line + 1, 2, "%s%s",
                        ui_text("状态：", "State: "), status_msg);
              mvwprintw(win_playlist, status_line + 2, 2, "%s%s",
@@ -1861,6 +1992,11 @@ void render_playlist_content() {
              mvwprintw(win_playlist, status_line + 3, 2, "%s--", ui_text("标题：", "Title: "));
              mvwprintw(win_playlist, status_line + 4, 2, "%s--", ui_text("艺术家：", "Artist: "));
              mvwprintw(win_playlist, status_line + 5, 2, "%s--", ui_text("专辑：", "Album: "));
+             // 中栏：技术信息占位
+             mvwprintw(win_playlist, status_line + 1, center_col_x, "%s--", ui_text("采样率：", "Sample Rate: "));
+             mvwprintw(win_playlist, status_line + 2, center_col_x, "%s--", ui_text("位深：", "Bit Depth: "));
+             mvwprintw(win_playlist, status_line + 3, center_col_x, "%s--", ui_text("比特率：", "Bitrate: "));
+             mvwprintw(win_playlist, status_line + 4, center_col_x, "%s--", ui_text("编码：", "Codec: "));
         }
     }
     wrefresh(win_playlist);
@@ -2312,144 +2448,6 @@ static void prompt_append_folder() {
     prompt_folder_input(1);
 }
 
-static void perform_search(const char *query);
-
-static void search_prompt() {
-    if (!win_controls || !playlist_is_loaded() || playlist_count() == 0) {
-        if (!playlist_is_loaded() || playlist_count() == 0) {
-            update_controls_status(ui_text("播放列表为空，无法搜索", "Playlist is empty"));
-        }
-        return;
-    }
-
-    echo();
-    curs_set(1);
-
-    int max_y, max_x;
-    getmaxyx(win_controls, max_y, max_x);
-
-    mvwprintw(win_controls, 4, 2, "%s", ui_text("搜索歌曲: ", "Search: "));
-    wclrtoeol(win_controls);
-    wrefresh(win_controls);
-
-    char input[MAX_META_LEN];
-    memset(input, 0, sizeof(input));
-    int pos = 0;
-    int ch;
-
-    flushinp();
-
-    while ((ch = getch()) != '\n' && ch != KEY_ENTER && ch != 27 && pos < MAX_META_LEN - 1) {
-        if (ch == ERR) {
-            media_session_tick();
-            continue;
-        }
-        if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
-            if (pos > 0) {
-                int cx = getcurx(win_controls);
-                int cy = getcury(win_controls);
-
-                unsigned char last_c = (unsigned char)input[pos - 1];
-                int bytes_to_remove = 1;
-                if (last_c >= 0x80) {
-                    if ((last_c & 0xE0) == 0xC0) bytes_to_remove = 2;
-                    else if ((last_c & 0xF0) == 0xE0) bytes_to_remove = 3;
-                    else if ((last_c & 0xF8) == 0xF0) bytes_to_remove = 4;
-                    else if ((last_c & 0xC0) == 0x80) {
-                        bytes_to_remove = 2;
-                        while (pos - bytes_to_remove >= 0 &&
-                               (unsigned char)input[pos - bytes_to_remove] >= 0x80 &&
-                               (unsigned char)input[pos - bytes_to_remove] < 0xC0) {
-                            bytes_to_remove++;
-                        }
-                    }
-                    if (bytes_to_remove > pos) bytes_to_remove = pos;
-                    pos -= bytes_to_remove;
-
-                    if ((last_c & 0xF0) == 0xE0 || (last_c & 0xE0) == 0xC0) {
-                        move(cy, cx - 2);
-                    } else {
-                        move(cy, cx - 1);
-                    }
-                } else {
-                    pos--;
-                    move(cy, cx - 1);
-                }
-                clrtoeol();
-                wrefresh(win_controls);
-            }
-        } else if (ch >= 0x20 && ch <= 0x7E) {
-            input[pos++] = (char)ch;
-            waddch(win_controls, ch);
-            wrefresh(win_controls);
-        } else if ((ch & 0xC0) == 0x80 || ch >= 0x80) {
-            if (pos < MAX_META_LEN - 1) {
-                input[pos++] = (char)ch;
-                if ((ch & 0xE0) == 0xC0 || (ch & 0xF0) == 0xE0) {
-                    waddch(win_controls, ch);
-                    wrefresh(win_controls);
-                }
-            }
-        } else {
-            input[pos++] = (char)ch;
-            waddch(win_controls, ch);
-            wrefresh(win_controls);
-        }
-    }
-
-    input[pos] = '\0';
-    flushinp();
-
-    noecho();
-    curs_set(0);
-
-    mvwprintw(win_controls, 4, 2, "                    ");
-    wclrtoeol(win_controls);
-    wrefresh(win_controls);
-
-    if (ch == 27) {
-        update_controls_status(ui_text("搜索已取消", "Search cancelled"));
-        return;
-    }
-
-    if (strlen(input) > 0) {
-        perform_search(input);
-    } else {
-        g_search_state.active = 0;
-        render_playlist_content();
-        update_controls_status(ui_text("搜索已取消", "Search cancelled"));
-    }
-}
-
-static void perform_search(const char *query) {
-    int playlist_total = playlist_count();
-
-    memset(&g_search_state, 0, sizeof(g_search_state));
-    g_search_state.selected_index = 0;
-
-    for (int i = 0; i < playlist_total && g_search_state.result_count < MAX_SEARCH_RESULTS; i++) {
-        if (track_matches_query(i, query)) {
-            g_search_state.result_indices[g_search_state.result_count++] = i;
-        }
-    }
-
-    if (g_search_state.result_count > 0) {
-        g_search_state.active = 1;
-    } else {
-        g_search_state.active = 0;
-    }
-
-    log_info("ui", "Search '%s': %d results out of %d tracks", query, g_search_state.result_count, playlist_total);
-
-    render_playlist_content();
-
-    char msg[64];
-    snprintf(msg, sizeof(msg), "%s: %d %s",
-             ui_text("搜索完成", "Search completed"),
-             g_search_state.result_count,
-             ui_text("个结果", "results"));
-    update_controls_status(msg);
-}
 
 /**
  * 主事件循环
@@ -2513,7 +2511,7 @@ void run_event_loop() {
             uint64_t now = get_ui_time_ms();
             if (now - esc_pending_time > ESC_TIMEOUT_MS) {
                 esc_pending = 0;
-            } else if (ch >= '1' && ch <= '8') {
+            } else if (ch >= '1' && ch <= '9') {
                 int fnum = ch - '1';
                 handle_function_keys(KEY_F(1 + fnum));
                 esc_pending = 0;
@@ -2550,8 +2548,8 @@ void run_event_loop() {
             continue;
         }
         
-        // 处理功能键（F1-F8）
-        if (ch >= KEY_F(1) && ch <= KEY_F(8)) {
+        // 处理功能键（F1-F9）
+        if (ch >= KEY_F(1) && ch <= KEY_F(9)) {
             log_debug("ui", "Function key F%d pressed", ch - KEY_F(0));
             handle_function_keys(ch);
             continue;
@@ -2704,7 +2702,7 @@ void run_event_loop() {
                             } else {
                                 pthread_mutex_unlock(&g_lyrics.lock);
                             }
-                        } else if (g_search_state.active) {
+                        } else if (g_search_state.active || g_search_state.in_progress) {
                             // 搜索模式下，方向键控制搜索结果选中项
                             if (g_search_state.selected_index > 0) {
                                 g_search_state.selected_index--;
@@ -2734,7 +2732,7 @@ void run_event_loop() {
                             } else {
                                 pthread_mutex_unlock(&g_lyrics.lock);
                             }
-                        } else if (g_search_state.active) {
+                        } else if (g_search_state.active || g_search_state.in_progress) {
                             // 搜索模式下，方向键控制搜索结果选中项
                             if (g_search_state.selected_index < g_search_state.result_count - 1) {
                                 g_search_state.selected_index++;
@@ -2750,14 +2748,22 @@ void run_event_loop() {
                         break;
                     case ' ':
                     case 10:
+                        if (g_search_state.in_progress) {
+                            update_controls_status(ui_text("搜索中，请稍候...", "Searching, please wait..."));
+                            break;
+                        }
                         if (g_search_state.active && g_search_state.result_count > 0) {
                             int original_index = g_search_state.result_indices[g_search_state.selected_index];
-                            g_selected_index = original_index;
                             play_audio(original_index);
                             g_search_state.active = 0;
+                            g_selected_index = g_sort_state.active ? 0 : original_index;
                             render_playlist_content();
                         } else {
-                            play_audio(g_selected_index);
+                            int play_idx = g_selected_index;
+                            if (g_sort_state.active) {
+                                play_idx = g_sort_state.sorted_indices[g_selected_index];
+                            }
+                            play_audio(play_idx);
                         }
                         break;
                     case 'O':
@@ -2774,7 +2780,15 @@ void run_event_loop() {
                     case 'F':
                         if (playlist_count() > 0) {
                             Track t;
-                            get_track_metadata(g_selected_index, &t);
+                            int track_idx = g_selected_index;
+                            if (g_search_state.active) {
+                                pthread_mutex_lock(&g_search_mutex);
+                                track_idx = g_search_state.result_indices[g_search_state.selected_index];
+                                pthread_mutex_unlock(&g_search_mutex);
+                            } else if (g_sort_state.active) {
+                                track_idx = g_sort_state.sorted_indices[g_selected_index];
+                            }
+                            get_track_metadata(track_idx, &t);
                             int result = add_to_favorites(&t);
                             if (result == 0) {
                                 update_controls_status(ui_text("已添加到收藏", "Added to favorites"));
@@ -2791,8 +2805,12 @@ void run_event_loop() {
                         }
                         break;
                     case 27:
-                        if (g_search_state.active) {
+                        if (g_search_state.active || g_search_state.in_progress) {
+                            search_async_cancel();
+                            pthread_mutex_lock(&g_search_mutex);
                             g_search_state.active = 0;
+                            g_search_state.in_progress = 0;
+                            pthread_mutex_unlock(&g_search_mutex);
                             render_playlist_content();
                             update_controls_status(ui_text("搜索已取消", "Search cancelled"));
                             continue;
@@ -2802,7 +2820,15 @@ void run_event_loop() {
                     case 'A':
                         if (playlist_count() > 0 && g_playlist_manager.count > 0) {
                             Track t;
-                            get_track_metadata(g_selected_index, &t);
+                            int track_idx = g_selected_index;
+                            if (g_search_state.active) {
+                                pthread_mutex_lock(&g_search_mutex);
+                                track_idx = g_search_state.result_indices[g_search_state.selected_index];
+                                pthread_mutex_unlock(&g_search_mutex);
+                            } else if (g_sort_state.active) {
+                                track_idx = g_sort_state.sorted_indices[g_selected_index];
+                            }
+                            get_track_metadata(track_idx, &t);
                             Track *tp = &t;
 
                             int max_y, max_x;
@@ -2909,6 +2935,18 @@ void run_event_loop() {
  */
 void cleanup() {
     log_info("ui", "cleanup() called");
+
+    // 取消并等待搜索线程
+    search_async_cancel();
+    pthread_mutex_lock(&g_search_mutex);
+    if (g_search_state.in_progress) {
+        pthread_t old_thread = g_search_state.thread;
+        pthread_mutex_unlock(&g_search_mutex);
+        pthread_join(old_thread, NULL);
+    } else {
+        pthread_mutex_unlock(&g_search_mutex);
+    }
+
     persist_playback_session_state();
     stop_audio();
     wait_for_playback_thread_shutdown();
@@ -2927,6 +2965,7 @@ void cleanup() {
         win_lyrics = NULL;
     }
     endwin(); // 结束 ncurses 模式
+    audio_backend_shutdown();
     remote_cleanup();
 }
 
@@ -2950,6 +2989,9 @@ static void activate_current_control(void) {
                         int target_index = (g_current_play_index >= 0)
                             ? g_current_play_index
                             : g_selected_index;
+                        if (g_sort_state.active && g_current_play_index < 0) {
+                            target_index = g_sort_state.sorted_indices[g_selected_index];
+                        }
                         if (target_index >= 0 && target_index < playlist_total) {
                             play_audio(target_index);
                         }
@@ -3032,7 +3074,7 @@ static int get_playlist_scroll_offset(void) {
         return 0;
     }
 
-    if (g_search_state.active) {
+    if (g_search_state.active || g_search_state.in_progress) {
         int offset = 0;
         if (g_search_state.selected_index >= visible_lines) {
             offset = g_search_state.selected_index - visible_lines + 1;

@@ -10,6 +10,8 @@
  */
 
 #include "../include/defs.h"
+#include "../include/search.h"
+#include "../include/scrollbar.h"
 #include "../include/lyrics.h"
 #include "../include/menu_views.h"
 #include "../include/remote.h"
@@ -95,6 +97,12 @@ static const char *info_sidebar_items[] = {
 };
 #define INFO_ITEM_COUNT 3
 
+static const char *help_sidebar_items[] = {
+    "快速上手",
+    "← 返回"
+};
+#define HELP_ITEM_COUNT 2
+
 static const char *settings_sidebar_items_ascii[] = {
     "Theme",
     "Default Path",
@@ -124,6 +132,11 @@ static const char *favorites_sidebar_items_ascii[] = {
 static const char *info_sidebar_items_ascii[] = {
     "About",
     "Repository",
+    "<- Back"
+};
+
+static const char *help_sidebar_items_ascii[] = {
+    "Quick Start",
     "<- Back"
 };
 
@@ -226,6 +239,9 @@ static const char **resolve_sidebar_items(const char **items) {
     }
     if (items == info_sidebar_items) {
         return info_sidebar_items_ascii;
+    }
+    if (items == help_sidebar_items) {
+        return help_sidebar_items_ascii;
     }
     return items;
 }
@@ -582,6 +598,7 @@ void init_default_config(void) {
     g_app_config.default_playback_speed = 1.0f;
     g_app_config.show_album_cover = 1;
     g_app_config.lyrics_alignment = 0;
+    g_app_config.sort_mode = SORT_DEFAULT;
     g_app_config.config_version = 0;
     g_app_config.remote_connection_count = 0;
     memset(g_app_config.remote_connections, 0, sizeof(g_app_config.remote_connections));
@@ -698,6 +715,18 @@ void load_config(void) {
         g_app_config.lyrics_alignment = (int)extract_json_int(json, "lyrics_alignment");
         if (g_app_config.lyrics_alignment < 0 || g_app_config.lyrics_alignment > 2) {
             g_app_config.lyrics_alignment = 0;
+        }
+    }
+    if (strstr(json, "\"audio_backend\"")) {
+        g_app_config.audio_backend = (int)extract_json_int(json, "audio_backend");
+        if (g_app_config.audio_backend < 0 || g_app_config.audio_backend > 2) {
+            g_app_config.audio_backend = AUDIO_BACKEND_AUTO;
+        }
+    }
+    if (strstr(json, "\"sort_mode\"")) {
+        g_app_config.sort_mode = (int)extract_json_int(json, "sort_mode");
+        if (g_app_config.sort_mode < SORT_DEFAULT || g_app_config.sort_mode > SORT_FILENAME) {
+            g_app_config.sort_mode = SORT_DEFAULT;
         }
     }
     g_playback_speed = g_app_config.default_playback_speed;
@@ -820,6 +849,8 @@ void save_config(void) {
     fprintf(f, "  \"default_playback_speed\": %.2f,\n", g_app_config.default_playback_speed);
     fprintf(f, "  \"show_album_cover\": %d,\n", g_app_config.show_album_cover);
     fprintf(f, "  \"lyrics_alignment\": %d,\n", g_app_config.lyrics_alignment);
+    fprintf(f, "  \"audio_backend\": %d,\n", g_app_config.audio_backend);
+    fprintf(f, "  \"sort_mode\": %d,\n", g_app_config.sort_mode);
 
     fprintf(f, "  \"config_version\": 1,\n");
     fprintf(f, "  \"remote_connection_count\": %d,\n", g_app_config.remote_connection_count);
@@ -1336,7 +1367,8 @@ void save_temp_playlist(void) {
 
     int saved_count = 0;
     for (int i = 0; i < snapshot_count; i++) {
-        if (playlist_get_track_path(i, tracks[saved_count], MAX_PATH_LEN) == 0) {
+        int idx = g_sort_state.active ? g_sort_state.sorted_indices[i] : i;
+        if (playlist_get_track_path(idx, tracks[saved_count], MAX_PATH_LEN) == 0) {
             saved_count++;
         }
     }
@@ -1400,7 +1432,8 @@ static int apply_restored_playlist(Playlist *restored,
     playlist_lock();
     g_playlist = *restored;
     playlist_unlock();
-    memset(&g_search_state, 0, sizeof(g_search_state));
+    search_clear();
+    recompute_sort_order();
     return loaded_count;
 }
 
@@ -1618,8 +1651,8 @@ void render_menu_hint_bar(void) {
     mvhline(max_y - 1, 0, ' ', max_x);
     mvprintw(max_y - 1, 2, "%s",
              use_english_ui()
-                 ? "F1:Home  F2:Settings  F3:History  F4:Playlists  F5:Favorites  F6:Info  F7:Lang  F8:Quit"
-                 : "F1:主页  F2:设置  F3:历史  F4:歌单  F5:收藏  F6:信息  F7:中/EN  F8:退出");
+                 ? "F1:Home  F2:Settings  F3:History  F4:Playlists  F5:Favorites  F6:Info  F7:Lang  F8:Help  F9:Quit"
+                 : "F1:主页  F2:设置  F3:历史  F4:歌单  F5:收藏  F6:信息  F7:中/EN  F8:帮助  F9:退出");
     attroff(COLOR_PAIR(COLOR_PAIR_BORDER));
     refresh();
 }
@@ -1949,7 +1982,9 @@ static const char *settings_options[] = {
     "默认循环模式",
     "默认倍速",
     "显示专辑图片",
-    "歌词对齐方式"
+    "歌词对齐方式",
+    "音频后端",
+    "排序方式"
 };
 static const char *settings_options_ascii[] = {
     "Playlist Foreground",
@@ -1975,9 +2010,11 @@ static const char *settings_options_ascii[] = {
     "Default Loop Mode",
     "Default Speed",
     "Show Album Cover",
-    "Lyrics Alignment"
+    "Lyrics Alignment",
+    "Audio Backend",
+    "Sort Mode"
 };
-#define SETTINGS_OPTION_COUNT 24
+#define SETTINGS_OPTION_COUNT 26
 
 enum {
     SETTINGS_IDX_THEME_COLOR_PAIR_0 = 0,
@@ -2003,7 +2040,9 @@ enum {
     SETTINGS_IDX_DEFAULT_LOOP = 20,
     SETTINGS_IDX_DEFAULT_SPEED = 21,
     SETTINGS_IDX_SHOW_ALBUM_COVER = 22,
-    SETTINGS_IDX_LYRICS_ALIGNMENT = 23
+    SETTINGS_IDX_LYRICS_ALIGNMENT = 23,
+    SETTINGS_IDX_AUDIO_BACKEND = 24,
+    SETTINGS_IDX_SORT_MODE = 25
 };
 
 typedef struct {
@@ -2041,7 +2080,9 @@ static const int settings_playback_option_indices[] = {
     SETTINGS_IDX_SHOW_ALBUM_COVER,
     SETTINGS_IDX_LYRICS_ALIGNMENT,
     SETTINGS_IDX_DEFAULT_LOOP,
-    SETTINGS_IDX_DEFAULT_SPEED
+    SETTINGS_IDX_DEFAULT_SPEED,
+    SETTINGS_IDX_AUDIO_BACKEND,
+    SETTINGS_IDX_SORT_MODE
 };
 
 static SettingsSectionSpec get_settings_section_spec_for_sidebar(int sidebar_idx) {
@@ -2188,6 +2229,28 @@ static void format_settings_option_line(int option_index, char *line, size_t lin
         snprintf(line, line_size, "%s%s%.2fx",
                  current_settings_options[option_index], separator,
                  g_app_config.default_playback_speed);
+    } else if (option_index == SETTINGS_IDX_AUDIO_BACKEND) {
+        const char *backend_str;
+        switch (g_app_config.audio_backend) {
+            case AUDIO_BACKEND_AUTO:  backend_str = use_english_ui() ? "Auto" : "自动"; break;
+            case AUDIO_BACKEND_PULSE: backend_str = "PulseAudio"; break;
+            case AUDIO_BACKEND_ALSA:  backend_str = "ALSA"; break;
+            default:                  backend_str = use_english_ui() ? "Auto" : "自动";
+        }
+        snprintf(line, line_size, "%s%s%s",
+                 current_settings_options[option_index], separator, backend_str);
+    } else if (option_index == SETTINGS_IDX_SORT_MODE) {
+        const char *sort_str;
+        switch (g_app_config.sort_mode) {
+            case SORT_DEFAULT:  sort_str = menu_text("默认", "Default"); break;
+            case SORT_TITLE:    sort_str = menu_text("标题", "Title"); break;
+            case SORT_ARTIST:   sort_str = menu_text("艺术家", "Artist"); break;
+            case SORT_ALBUM:    sort_str = menu_text("专辑", "Album"); break;
+            case SORT_FILENAME: sort_str = menu_text("文件名", "Filename"); break;
+            default:            sort_str = menu_text("默认", "Default");
+        }
+        snprintf(line, line_size, "%s%s%s",
+                 current_settings_options[option_index], separator, sort_str);
     } else {
         snprintf(line, line_size, "%s", current_settings_options[option_index]);
     }
@@ -2434,6 +2497,46 @@ static void adjust_or_toggle_settings_option(int option_index, int delta) {
             show_status_message(msg);
             break;
         }
+        case SETTINGS_IDX_AUDIO_BACKEND: {
+            int options[] = {AUDIO_BACKEND_AUTO, AUDIO_BACKEND_PULSE, AUDIO_BACKEND_ALSA};
+            int count = 3;
+            int has_pulse = audio_backend_is_available(AUDIO_BACKEND_PULSE);
+            int has_alsa = audio_backend_is_available(AUDIO_BACKEND_ALSA);
+            int current = 0;
+            for (int i = 0; i < count; i++) {
+                if (g_app_config.audio_backend == options[i]) {
+                    current = i;
+                    break;
+                }
+            }
+            int direction = (delta >= 0) ? 1 : -1;
+            int next = current;
+            int attempts = 0;
+            do {
+                next = (next + direction + count) % count;
+                attempts++;
+                if ((options[next] == AUDIO_BACKEND_PULSE && !has_pulse) ||
+                    (options[next] == AUDIO_BACKEND_ALSA && !has_alsa)) {
+                    continue;
+                }
+                break;
+            } while (attempts < count);
+            g_app_config.audio_backend = options[next];
+            save_config();
+            show_status_message(menu_text("音频后端将在下次启动时生效",
+                                          "Audio backend will take effect on next restart"));
+            break;
+        }
+        case SETTINGS_IDX_SORT_MODE:
+            if (delta < 0) {
+                g_app_config.sort_mode = (g_app_config.sort_mode - 1 + 5) % 5;
+            } else {
+                g_app_config.sort_mode = (g_app_config.sort_mode + 1) % 5;
+            }
+            save_config();
+            recompute_sort_order();
+            show_status_message(menu_text("排序方式已生效", "Sort mode applied"));
+            break;
         default:
             break;
     }
@@ -2453,7 +2556,8 @@ static void activate_settings_current_option(void) {
         g_settings_current_option == SETTINGS_IDX_SHOW_ALBUM_COVER ||
         g_settings_current_option == SETTINGS_IDX_LYRICS_ALIGNMENT ||
         g_settings_current_option == SETTINGS_IDX_DEFAULT_LOOP ||
-        g_settings_current_option == SETTINGS_IDX_DEFAULT_SPEED) {
+        g_settings_current_option == SETTINGS_IDX_DEFAULT_SPEED ||
+        g_settings_current_option == SETTINGS_IDX_SORT_MODE) {
         adjust_or_toggle_settings_option(g_settings_current_option, 0);
         return;
     }
@@ -3524,8 +3628,266 @@ void render_info_content(void) {
     mvprintw(start_y, content_start_x, "%s", menu_text("这里的信息为只读。", "This page is read-only."));
     
     attroff(COLOR_PAIR(COLOR_PAIR_BORDER));
-    
+
     refresh();
+}
+
+/* ──── 帮助页面 ──── */
+
+#define HELP_MAX_LINES 2000
+#define HELP_SEARCH_RESULTS 200
+
+static char *g_help_lines[HELP_MAX_LINES];
+static int g_help_line_count = 0;
+static int g_help_scroll_offset = 0;
+static int g_help_loaded = 0;
+
+static int g_help_search_results[HELP_SEARCH_RESULTS];
+static int g_help_search_count = 0;
+static int g_help_search_active = 0;
+static int g_help_search_selected = -1;
+
+void help_free_lines(void) {
+    for (int i = 0; i < g_help_line_count; i++) {
+        free(g_help_lines[i]);
+        g_help_lines[i] = NULL;
+    }
+    g_help_line_count = 0;
+    g_help_loaded = 0;
+}
+
+static void help_load_file(void) {
+    if (g_help_loaded) return;
+
+    help_free_lines();
+
+    const char *suffix = use_english_ui() ? "en" : "zh";
+    char path[MAX_PATH_LEN];
+    FILE *f = NULL;
+
+    snprintf(path, sizeof(path), "/usr/local/share/ter-music/help-quickstart-%s.txt", suffix);
+    f = fopen(path, "r");
+
+    if (!f) {
+        snprintf(path, sizeof(path), "/usr/share/ter-music/help-quickstart-%s.txt", suffix);
+        f = fopen(path, "r");
+    }
+
+    if (!f) {
+        snprintf(path, sizeof(path), "data/help-quickstart-%s.txt", suffix);
+        f = fopen(path, "r");
+    }
+
+    if (!f) return;
+
+    char buf[1024];
+    while (fgets(buf, sizeof(buf), f) && g_help_line_count < HELP_MAX_LINES) {
+        size_t len = strlen(buf);
+        if (len > 0 && buf[len - 1] == '\n') buf[len - 1] = '\0';
+        g_help_lines[g_help_line_count] = strdup(buf);
+        g_help_line_count++;
+    }
+    fclose(f);
+
+    g_help_loaded = 1;
+}
+
+void render_help_content(void) {
+    help_load_file();
+
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+
+    int menu_width = max_x / 4;
+    int content_start_x = menu_width + 2;
+    int start_y = 2;
+
+    int visible_lines = max_y - start_y - 5;
+    if (visible_lines < 1) visible_lines = 1;
+
+    int total_lines = g_help_line_count;
+
+    /* 若搜索结果激活且选中项存在，滚动到选中位置 */
+    if (g_help_search_active && g_help_search_count > 0 && g_help_search_selected >= 0) {
+        int target = g_help_search_results[g_help_search_selected];
+        g_help_scroll_offset = target - visible_lines / 2;
+        if (g_help_scroll_offset < 0) g_help_scroll_offset = 0;
+    }
+
+    /* 3 行底部缓冲 */
+    int max_offset = total_lines - visible_lines - 3;
+    if (max_offset < 0) max_offset = 0;
+    if (g_help_scroll_offset > max_offset) g_help_scroll_offset = max_offset;
+
+    attron(COLOR_PAIR(COLOR_PAIR_BORDER));
+
+    mvprintw(start_y, content_start_x, "%s",
+             use_english_ui() ? "Help [F8]" : "帮助 [F8]");
+    mvprintw(start_y + 1, content_start_x, "========================================");
+
+    for (int i = 0; i < visible_lines && (g_help_scroll_offset + i) < total_lines; i++) {
+        int line_idx = g_help_scroll_offset + i;
+        int row = start_y + 3 + i;
+
+        int is_match = 0;
+        if (g_help_search_active && g_help_search_count > 0) {
+            for (int j = 0; j < g_help_search_count; j++) {
+                if (g_help_search_results[j] == line_idx) {
+                    is_match = 1;
+                    break;
+                }
+            }
+        }
+
+        mvhline(row, content_start_x, ' ', max_x - content_start_x - 1);
+        if (is_match) attron(A_BOLD);
+        mvprintw(row, content_start_x, "%s", g_help_lines[line_idx]);
+        if (is_match) attroff(A_BOLD);
+    }
+
+    /* 底部提示行 */
+    int hint_row = max_y - 3;
+    mvhline(hint_row, content_start_x, ' ', max_x - content_start_x - 1);
+
+    char hint[256];
+    if (g_help_search_active && g_help_search_count > 0) {
+        snprintf(hint, sizeof(hint),
+                 use_english_ui()
+                     ? "Search: %d matches | n/N: next | Esc: clear search"
+                     : "搜索: %d 个匹配 | n/N: 下一个 | Esc: 清除搜索",
+                 g_help_search_count);
+    } else {
+        snprintf(hint, sizeof(hint),
+                 use_english_ui()
+                     ? "Up/Down: scroll 3 lines  |  /: search  |  Esc: back"
+                     : "上/下: 滚动3行  |  /: 搜索  |  Esc: 返回");
+    }
+
+    int display_end = g_help_scroll_offset + visible_lines;
+    if (display_end > total_lines) display_end = total_lines;
+
+    char pos[64];
+    snprintf(pos, sizeof(pos), "%s %d-%d / %d",
+             use_english_ui() ? "Line" : "行",
+             g_help_scroll_offset + 1, display_end, total_lines);
+
+    mvprintw(hint_row, content_start_x, "%s", hint);
+    mvprintw(hint_row, max_x - (int)strlen(pos) - 3, "%s", pos);
+
+    // 绘制滚动条
+    scrollbar_draw(stdscr, start_y + 3, visible_lines,
+                   total_lines, visible_lines, g_help_scroll_offset, max_x - 2);
+
+    attroff(COLOR_PAIR(COLOR_PAIR_BORDER));
+
+    refresh();
+}
+
+static void help_search_prompt(void) {
+    echo();
+    curs_set(1);
+
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+
+    int menu_width = max_x / 4;
+    int content_start_x = menu_width + 2;
+    int search_row = max_y - 3;
+
+    mvprintw(search_row, content_start_x, "%s",
+             use_english_ui() ? "Search: " : "搜索: ");
+    clrtoeol();
+    refresh();
+
+    char input[MAX_META_LEN];
+    memset(input, 0, sizeof(input));
+    int pos = 0;
+    int ch;
+
+    flushinp();
+
+    while ((ch = getch()) != '\n' && ch != KEY_ENTER && ch != 27 && pos < MAX_META_LEN - 1) {
+        if (ch == ERR) continue;
+        if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
+            if (pos > 0) {
+                pos--;
+                mvaddch(search_row, content_start_x + 8 + pos, ' ');
+                move(search_row, content_start_x + 8 + pos);
+                refresh();
+            }
+        } else if (ch >= 32 && ch < 127) {
+            input[pos++] = (char)ch;
+            addch(ch);
+            refresh();
+        }
+    }
+
+    input[pos] = '\0';
+    flushinp();
+    noecho();
+    curs_set(0);
+
+    if (ch == 27) {
+        g_help_search_active = 0;
+        g_help_search_count = 0;
+        render_help_content();
+        return;
+    }
+
+    if (strlen(input) > 0) {
+        g_help_search_count = search_lines(
+            (const char **)g_help_lines, g_help_line_count,
+            input, g_help_search_results, HELP_SEARCH_RESULTS);
+        g_help_search_active = 1;
+        g_help_search_selected = 0;
+
+        if (g_help_search_count > 0) {
+            g_help_scroll_offset = g_help_search_results[0] - 2;
+            if (g_help_scroll_offset < 0) g_help_scroll_offset = 0;
+        }
+    }
+
+    render_help_content();
+}
+
+static void handle_help_input(int ch) {
+    switch (ch) {
+        case KEY_UP:
+            g_help_scroll_offset -= 3;
+            if (g_help_scroll_offset < 0) g_help_scroll_offset = 0;
+            render_help_content();
+            break;
+
+        case KEY_DOWN:
+            g_help_scroll_offset += 3;
+            render_help_content();
+            break;
+
+        case '/':
+            help_search_prompt();
+            break;
+
+        case 'n':
+        case 'N':
+            if (g_help_search_active && g_help_search_count > 0) {
+                g_help_search_selected++;
+                if (g_help_search_selected >= g_help_search_count) {
+                    g_help_search_selected = 0;
+                }
+                render_help_content();
+            }
+            break;
+
+        case 27:
+            if (g_help_search_active) {
+                g_help_search_active = 0;
+                g_help_search_count = 0;
+                render_help_content();
+            } else {
+                exit_current_view();
+            }
+            break;
+    }
 }
 
 void switch_to_view(ViewMode view) {
@@ -3540,6 +3902,9 @@ void switch_to_view(ViewMode view) {
     g_playlist_selected_playlist = -1;
     g_playlist_track_offset = 0;
     g_favorites_content_offset = 0;
+    g_help_scroll_offset = 0;
+    g_help_search_active = 0;
+    g_help_search_count = 0;
     
     switch (view) {
         case VIEW_SETTINGS:
@@ -3570,6 +3935,12 @@ void switch_to_view(ViewMode view) {
             render_menu_frame("信息 [F6]");
             render_menu_sidebar(g_menu_selected_idx, info_sidebar_items, INFO_ITEM_COUNT);
             render_info_content();
+            render_menu_hint_bar();
+            break;
+        case VIEW_HELP:
+            render_menu_frame(use_english_ui() ? "Help [F8]" : "帮助 [F8]");
+            render_menu_sidebar(g_menu_selected_idx, help_sidebar_items, HELP_ITEM_COUNT);
+            render_help_content();
             render_menu_hint_bar();
             break;
         default:
@@ -3630,6 +4001,12 @@ static void rerender_active_view(void) {
             render_info_content();
             render_menu_hint_bar();
             break;
+        case VIEW_HELP:
+            render_menu_frame(use_english_ui() ? "Help [F8]" : "帮助 [F8]");
+            render_menu_sidebar(g_menu_selected_idx, help_sidebar_items, HELP_ITEM_COUNT);
+            render_help_content();
+            render_menu_hint_bar();
+            break;
         default:
             break;
     }
@@ -3638,6 +4015,7 @@ static void rerender_active_view(void) {
 void toggle_ui_language(void) {
     g_app_config.ui_language = (g_app_config.ui_language == UI_LANG_EN) ? UI_LANG_ZH : UI_LANG_EN;
     save_config();
+    help_free_lines();
     rerender_active_view();
 }
 
@@ -3666,6 +4044,9 @@ void handle_function_keys(int fkey) {
             toggle_ui_language();
             break;
         case KEY_F(8):
+            switch_to_view(VIEW_HELP);
+            break;
+        case KEY_F(9):
             cleanup();
             printf("%s\n", menu_text("ter-music 已正常退出。", "ter-music exited cleanly."));
             exit(0);
@@ -4270,7 +4651,7 @@ void handle_menu_input(int ch) {
         return;
     }
     
-    if (ch >= KEY_F(1) && ch <= KEY_F(8)) {
+    if (ch >= KEY_F(1) && ch <= KEY_F(9)) {
         handle_function_keys(ch);
         return;
     }
@@ -4290,6 +4671,9 @@ void handle_menu_input(int ch) {
             break;
         case VIEW_INFO:
             handle_info_input(ch);
+            break;
+        case VIEW_HELP:
+            handle_help_input(ch);
             break;
         default:
             break;

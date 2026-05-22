@@ -623,7 +623,9 @@ static void play_selected_or_current_track(void) {
         return;
     }
 
-    int target_index = (g_current_play_index >= 0) ? g_current_play_index : g_selected_index;
+    int target_index = (g_current_play_index >= 0)
+        ? g_current_play_index
+        : (g_sort_state.active ? g_sort_state.sorted_indices[g_selected_index] : g_selected_index);
     if (target_index >= 0 && target_index < playlist_total) {
         play_audio(target_index);
     }
