@@ -204,3 +204,10 @@ install(FILES resources/icons/hicolor/scalable/apps/${PROJECT_NAME}.svg
 install(FILES data/help-quickstart-zh.txt data/help-quickstart-en.txt
         DESTINATION share/ter-music
 )
+
+# Uninstall target — removes files listed in install_manifest.txt
+add_custom_target(uninstall
+    COMMAND ${CMAKE_COMMAND} -E echo "Uninstalling ${PROJECT_NAME}..."
+    COMMAND if [ -f ${CMAKE_BINARY_DIR}/install_manifest.txt ]\; then xargs rm -f < ${CMAKE_BINARY_DIR}/install_manifest.txt\; else echo "No install manifest. Run make install first."\; exit 1\; fi
+    COMMAND ${CMAKE_COMMAND} -E echo "Done."
+)
