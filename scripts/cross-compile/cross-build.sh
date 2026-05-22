@@ -148,22 +148,23 @@ if [ "$INTERACTIVE" = true ]; then
     docker run --rm -it \
         -v "$SCRIPT_DIR":/workspace \
         --workdir /workspace \
+        --user "$(id -u):$(id -g)" \
         "$IMAGE_NAME" \
         /bin/bash
 else
     log_info "在容器中运行构建脚本: $SCRIPT"
     log_info "目标架构: $TARGET_ARCH"
     log_info "构建参数: ${BUILD_SCRIPT_ARGS[*]}"
-    
+
     docker run --rm \
         -v "$SCRIPT_DIR":/workspace \
         --workdir /workspace \
+        --user "$(id -u):$(id -g)" \
         -e HOST_UID=$(id -u) \
         -e HOST_GID=$(id -g) \
-        --privileged \
         "$IMAGE_NAME" \
         ./scripts/build/$SCRIPT -a "$TARGET_ARCH" "${BUILD_SCRIPT_ARGS[@]}"
-    
+
     if [ $? -eq 0 ]; then
         log_info "构建完成！输出目录: ${SCRIPT_DIR}/build/"
     else

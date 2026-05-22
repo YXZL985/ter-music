@@ -672,18 +672,45 @@ build_rpm() {
 
 fix_ownership() {
     if [ -z "${HOST_UID:-}" ] || [ -z "${HOST_GID:-}" ]; then
+        log_info "HOST_UID/HOST_GID 未设置，跳过文件所有权修复"
         return 0
     fi
     log_info "修复文件所有权为 ${HOST_UID}:${HOST_GID}..."
-    chown -R "${HOST_UID}:${HOST_GID}" "${OUTPUT_DIR}" 2>/dev/null || true
+
+    local ok=0
+    local fail=0
+
+    if chown -R "${HOST_UID}:${HOST_GID}" "${OUTPUT_DIR}"; then
+        ok=$((ok + 1))
+    else
+        log_error "chown 失败: ${OUTPUT_DIR}"
+        fail=$((fail + 1))
+    fi
+
     local release_dir="${SCRIPT_DIR}/build/release"
     if [ -d "$release_dir" ]; then
-        chown -R "${HOST_UID}:${HOST_GID}" "$release_dir" 2>/dev/null || true
+        if chown -R "${HOST_UID}:${HOST_GID}" "$release_dir"; then
+            ok=$((ok + 1))
+        else
+            log_error "chown 失败: $release_dir"
+            fail=$((fail + 1))
+        fi
     fi
+
     if [ -d "${TEMP_DIR}" ]; then
-        chown -R "${HOST_UID}:${HOST_GID}" "${TEMP_DIR}" 2>/dev/null || true
+        if chown -R "${HOST_UID}:${HOST_GID}" "${TEMP_DIR}"; then
+            ok=$((ok + 1))
+        else
+            log_error "chown 失败: ${TEMP_DIR}"
+            fail=$((fail + 1))
+        fi
     fi
-    log_info "文件所有权修复完成"
+
+    if [ "$fail" -gt 0 ]; then
+        log_warn "文件所有权修复: $ok 成功, $fail 失败"
+    else
+        log_info "文件所有权修复完成 ($ok 个目录)"
+    fi
 }
 
 collect_results() {
