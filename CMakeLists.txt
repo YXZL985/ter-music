@@ -168,8 +168,10 @@ if(AVFILTER_FOUND)
 endif()
 
 # 添加预处理器定义
+set(TER_MUSIC_DATA_DIR "${CMAKE_INSTALL_PREFIX}/share/${PROJECT_NAME}")
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     _GNU_SOURCE
+    TER_MUSIC_DATA_DIR="${TER_MUSIC_DATA_DIR}"
 )
 
 if(DBUS_FOUND)
