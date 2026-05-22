@@ -18,6 +18,7 @@ scripts/
     ├── Dockerfile           # Docker 镜像定义（Debian 13 DEB + ARM64 交叉编译）
     ├── Dockerfile.deb       # Debian DEB 构建环境（支持 Debian 10/11/12/13）
     ├── Dockerfile.rpm       # Rocky Linux RPM 构建环境（支持 EL8/9/10）
+    ├── Dockerfile.deb-static    # 静态链接 DEB 构建环境（Debian 10，FFmpeg 从源码编译）
     ├── Dockerfile.rpm-static    # 静态链接 RPM 构建环境（Rocky Linux 8）
     └── docker-compose.yml   # Docker Compose 配置
 ```
@@ -76,6 +77,7 @@ packaging/
 - `-k, --keep-temp` - 保留临时文件
 - `--container` - **推荐** 在 Docker 容器中构建 DEB（解决跨发行版兼容问题）
 - `--debian-version VERSION` - 指定 Debian 版本：10、11、12 或 13（默认 12，需配合 --container）
+- `--static` - 静态链接 FFmpeg，消除 soname 依赖，单包兼容多个 Debian 版本
 
 **示例：**
 ```bash
@@ -84,6 +86,7 @@ packaging/
 ./scripts/build/build-deb.sh --with-source
 ./scripts/build/build-deb.sh --container              # 推荐：在容器中构建
 ./scripts/build/build-deb.sh --container --debian-version 10  # Debian 10 容器
+./scripts/build/build-deb.sh --static                 # 静态链接 FFmpeg，跨版本兼容
 ```
 
 ### 3. build-linyaps.sh - 构建 Linyaps 包
@@ -194,6 +197,14 @@ packaging/
 - 使用 USTC 镜像源加速国内构建
 - 支持 ARM64 交叉编译
 - **建议在 CI/CD 中使用此文件进行容器化构建，以确保构建环境一致性**
+
+### Dockerfile.deb-static
+
+用于静态链接 DEB 构建，基于 Debian 10（glibc 2.28，兼容范围最广）。
+- 从源码编译 FFmpeg 7.1（仅音频解码器），使用 aria2 16 线程加速下载
+- 静态链接 FFmpeg，动态链接其他系统库
+- 生成的 DEB 无 FFmpeg soname 依赖，单包兼容 Debian 10/11/12/13+
+- 搭配 `build-deb.sh --static` 使用
 
 ### Dockerfile.rpm
 
