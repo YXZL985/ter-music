@@ -9,7 +9,7 @@ set -e
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 SCRIPT_DIR="$(pwd)"
 IMAGE_NAME="ter-music-cross"
-DOCKERFILE="scripts/cross-compile/Dockerfile"
+DOCKERFILE="scripts/cross-compile/Dockerfile.deb"
 CONTAINER_NAME="ter-music-cross-build"
 
 # Colors for output
@@ -42,7 +42,7 @@ show_help() {
     -s, --script SCRIPT 指定构建脚本 (默认: build-deb.sh)
     -a, --arch ARCH     指定目标架构 (默认: arm64)
     -i, --interactive   进入容器的交互式 shell
-    -f, --dockerfile DOCKERFILE  指定 Dockerfile 路径 (默认: scripts/cross-compile/Dockerfile)
+    -f, --dockerfile DOCKERFILE  指定 Dockerfile 路径 (默认: scripts/cross-compile/Dockerfile.deb)
     -n, --image-name NAME        指定 Docker 镜像名 (默认: ter-music-cross)
     --build-arg KEY=VALUE        传递构建参数给 docker build
     --no-cache          构建镜像时不使用缓存

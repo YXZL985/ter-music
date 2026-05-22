@@ -15,7 +15,8 @@ scripts/
 │   └── build-rpm.sh         # 构建 RPM 包
 └── cross-compile/             # 交叉编译相关
     ├── cross-build.sh        # 交叉编译包装脚本
-    ├── Dockerfile           # Docker 镜像定义（Ubuntu + ARM64 交叉编译）
+    ├── Dockerfile           # Docker 镜像定义（Debian 13 DEB + ARM64 交叉编译）
+    ├── Dockerfile.deb       # Debian DEB 构建环境（支持 Debian 10/11/12/13）
     ├── Dockerfile.rpm       # Rocky Linux RPM 构建环境（支持 EL8/9/10）
     ├── Dockerfile.static    # 静态链接 RPM 构建环境（Rocky Linux 8）
     └── docker-compose.yml   # Docker Compose 配置
@@ -60,6 +61,8 @@ packaging/
 
 将 ter-music 打包成 Debian/Ubuntu 的 DEB 包。
 
+> **推荐使用**：建议优先使用 `--container` 选项在 Docker 容器中构建 DEB 包，可以保证构建环境一致性，避免因宿主系统库版本差异导致的兼容性问题。容器化构建会自动使用 USTC 镜像源加速国内构建。
+
 **用法：**
 ```bash
 ./scripts/build/build-deb.sh [选项]
@@ -71,12 +74,16 @@ packaging/
 - `--with-source` - 生成源码包
 - `--with-debuginfo` - 生成 debuginfo 包
 - `-k, --keep-temp` - 保留临时文件
+- `--container` - **推荐** 在 Docker 容器中构建 DEB（解决跨发行版兼容问题）
+- `--debian-version VERSION` - 指定 Debian 版本：10、11、12 或 13（默认 12，需配合 --container）
 
 **示例：**
 ```bash
 ./scripts/build/build-deb.sh
 ./scripts/build/build-deb.sh -v 1.2.3 -a arm64
 ./scripts/build/build-deb.sh --with-source
+./scripts/build/build-deb.sh --container              # 推荐：在容器中构建
+./scripts/build/build-deb.sh --container --debian-version 10  # Debian 10 容器
 ```
 
 ### 3. build-linyaps.sh - 构建 Linyaps 包
@@ -178,10 +185,15 @@ packaging/
 
 ### Dockerfile
 
-用于构建交叉编译环境的 Docker 镜像，基于 Debian 13 (Trixie)，包含：
-- 基本构建工具（gcc, cmake, make 等）
-- ARM64 交叉编译工具链
-- 各种打包工具（dpkg-dev, rpm-build, 等）
+用于构建交叉编译环境的 Docker 镜像，基于 Debian 13 (Trixie)，包含 DEB 打包工具和 ARM64 交叉编译工具链。
+
+### Dockerfile.deb
+
+用于在 Docker 容器中构建 DEB 包，支持 Debian 10/11/12/13 多个版本。
+- 通过 `DEBIAN_VERSION` build arg 指定 Debian 版本（默认 12）
+- 使用 USTC 镜像源加速国内构建
+- 支持 ARM64 交叉编译
+- **建议在 CI/CD 中使用此文件进行容器化构建，以确保构建环境一致性**
 
 ### Dockerfile.rpm
 
