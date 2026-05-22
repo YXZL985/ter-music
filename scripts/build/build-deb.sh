@@ -383,6 +383,22 @@ cleanup() {
     fi
 }
 
+fix_ownership() {
+    if [ -z "${HOST_UID:-}" ] || [ -z "${HOST_GID:-}" ]; then
+        return 0
+    fi
+    log_info "修复文件所有权为 ${HOST_UID}:${HOST_GID}..."
+    chown -R "${HOST_UID}:${HOST_GID}" "${OUTPUT_DIR}" 2>/dev/null || true
+    local release_dir="${SCRIPT_DIR}/build/release"
+    if [ -d "$release_dir" ]; then
+        chown -R "${HOST_UID}:${HOST_GID}" "$release_dir" 2>/dev/null || true
+    fi
+    if [ -d "${TEMP_DIR}" ]; then
+        chown -R "${HOST_UID}:${HOST_GID}" "${TEMP_DIR}" 2>/dev/null || true
+    fi
+    log_info "文件所有权修复完成"
+}
+
 show_summary() {
     local target_arch="$1"
     local output_dir="${OUTPUT_DIR}/${target_arch}"
@@ -561,6 +577,7 @@ main() {
 
     if build_via_dpkg "$version" "$target_arch" "$build_source" "$build_debuginfo" "$static_build"; then
         collect_results "$version" "$target_arch" "$build_source"
+        fix_ownership
         cleanup "$keep_temp"
         show_summary "$target_arch"
     else
