@@ -10,6 +10,9 @@
 #include <unistd.h>
 #include <ctype.h>
 #include <limits.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <iconv.h>
 #include <wchar.h>
 #include <locale.h>
 #include <pthread.h>
@@ -534,11 +537,99 @@ int is_audio_file(const char *filename) {
     return 0;
 }
 
+/* ---------- ID3 tag helpers ---------- */
+
+static int has_id3v2_tag(const char *path) {
+    unsigned char header[3];
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return 0;
+    ssize_t n = read(fd, header, 3);
+    close(fd);
+    return (n == 3 && header[0] == 'I' && header[1] == 'D' && header[2] == '3');
+}
+
+static int gbk_to_utf8(const char *input, size_t input_len,
+                        char *output, size_t output_size) {
+    iconv_t cd = iconv_open("UTF-8", "GBK");
+    if (cd == (iconv_t)-1) return -1;
+
+    char *in_ptr = (char *)input;
+    size_t in_left = input_len;
+    char *out_ptr = output;
+    size_t out_left = output_size - 1;
+
+    int ret = iconv(cd, &in_ptr, &in_left, &out_ptr, &out_left);
+    iconv_close(cd);
+    if (ret == (size_t)-1) return -1;
+
+    *out_ptr = '\0';
+    return 0;
+}
+
+/* Trim trailing spaces and nulls from a fixed-width ID3v1 field */
+static void trim_id3_field(const unsigned char *raw, int raw_len,
+                           char *out, size_t out_size) {
+    int end = raw_len - 1;
+    while (end >= 0 && (raw[end] == '\0' || raw[end] == ' ')) end--;
+
+    int len = (end + 1 < (int)out_size - 1) ? end + 1 : (int)out_size - 1;
+    if (len > 0) {
+        memcpy(out, raw, len);
+    }
+    out[len] = '\0';
+}
+
+/*
+ * Read ID3v1.1 tag from an MP3 file.
+ * ID3v1 layout (last 128 bytes of file):
+ *   0-2:   "TAG"
+ *   3-32:  Title      (30 bytes)
+ *   33-62: Artist     (30 bytes)
+ *   63-92: Album      (30 bytes)
+ *   93-124: Year+Comment+Genre (ignored)
+ *   125:   0=v1.0, non-zero=v1.1
+ *   126:   Track number (v1.1)
+ *   127:   Genre
+ *
+ * Returns 1 on success, 0 if no valid ID3v1 tag found.
+ */
+static int read_id3v1_tag(const char *path,
+                          char *title, size_t title_size,
+                          char *artist, size_t artist_size,
+                          char *album, size_t album_size) {
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return 0;
+
+    unsigned char raw[128];
+    lseek(fd, -128, SEEK_END);
+    ssize_t n = read(fd, raw, 128);
+    close(fd);
+    if (n != 128) return 0;
+    if (memcmp(raw, "TAG", 3) != 0) return 0;
+
+    trim_id3_field(raw + 3, 30, title, title_size);
+    if (title[0] && gbk_to_utf8(title, strlen(title), title, title_size) != 0) {
+        /* conversion failed, keep latin-1 fallback */
+    }
+
+    trim_id3_field(raw + 33, 30, artist, artist_size);
+    if (artist[0] && gbk_to_utf8(artist, strlen(artist), artist, artist_size) != 0) {
+        /* fallback — keep as-is */
+    }
+
+    trim_id3_field(raw + 63, 30, album, album_size);
+    if (album[0] && gbk_to_utf8(album, strlen(album), album, album_size) != 0) {
+        /* fallback — keep as-is */
+    }
+
+    return 1;
+}
+
 /**
  * 获取音频元数据
  * 从文件路径提取基本元数据信息
  * 注意：实际项目中应在此处调用 taglib 或其他库读取 ID3 标签
- * 此处若无真实标签，则默认标题为文件名，艺术家为“未知艺术家”
+ * 此处若无真实标签，则默认标题为文件名，艺术家为"未知艺术家"
  */
 void get_audio_metadata(const char *path, char *title, char *artist, char *album) {
     static const char *const title_keys[] = {"title", "TITLE"};
@@ -583,6 +674,22 @@ void get_audio_metadata(const char *path, char *title, char *artist, char *album
     }
 
     avformat_close_input(&fmt_ctx);
+
+    // MP3 文件仅有 ID3v1 时，FFmpeg 以 Latin-1 解码导致中文乱码，
+    // 手动读取 ID3v1 并用 GBK→UTF-8 转换覆盖 FFmpeg 的结果
+    const char *ext = strrchr(path, '.');
+    if (ext && (strcasecmp(ext, ".mp3") == 0 || strcmp(ext, ".MP3") == 0) && !has_id3v2_tag(path)) {
+        char id3_title[MAX_META_LEN] = "";
+        char id3_artist[MAX_META_LEN] = "";
+        char id3_album[MAX_META_LEN] = "";
+        if (read_id3v1_tag(path, id3_title, sizeof(id3_title),
+                           id3_artist, sizeof(id3_artist),
+                           id3_album, sizeof(id3_album))) {
+            if (id3_title[0]) strncpy(title, id3_title, MAX_META_LEN - 1);
+            if (id3_artist[0]) strncpy(artist, id3_artist, MAX_META_LEN - 1);
+            if (id3_album[0]) strncpy(album, id3_album, MAX_META_LEN - 1);
+        }
+    }
 }
 
 /**
