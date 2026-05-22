@@ -260,7 +260,7 @@ build_via_dpkg() {
         sed -i 's|-DCMAKE_BUILD_TYPE=Release|-DCMAKE_BUILD_TYPE=Release -DSTATIC_LINKING=ON|' \
             "${source_dir}/debian/rules"
         # Remove FFmpeg dev packages from Build-Depends (static libs provided via pkg-config)
-        sed -i '/^ libavcodec-dev,$/d; /^ libavfilter-dev,$/d; /^ libavformat-dev,$/d; /^ libavutil-dev,$/d; /^ libswresample-dev,$/d' \
+        sed -i '/^ libavcodec-dev,$/d; /^ libavfilter-dev,$/d; /^ libavformat-dev,$/d; /^ libavutil-dev,$/d; /^ libswresample-dev,$/d; /^ libswscale-dev,$/d' \
             "${source_dir}/debian/control"
         # Fix CMakeLists.txt: save/restore CMAKE_FIND_LIBRARY_SUFFIXES around FFmpeg block
         # so .a preference doesn't leak to ncurses/pthread find_library calls (prevents
