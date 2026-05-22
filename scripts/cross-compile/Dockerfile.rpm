@@ -58,7 +58,8 @@ RUN dnf install -y \
         pulseaudio-libs-devel \
         libcurl-devel \
         libpng-devel \
-        libjpeg-turbo-devel && \
+        libjpeg-turbo-devel \
+        dbus-devel && \
     dnf clean all
 
 WORKDIR /workspace
