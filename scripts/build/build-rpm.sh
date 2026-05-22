@@ -494,12 +494,12 @@ generate_spec_file() {
         # 静态构建时 FFmpeg 从源码编译，移除 spec 中的 BuildRequires
         ffmpeg_build_requires="# FFmpeg built from source (static)"
     else
-        ffmpeg_build_requires="BuildRequires:  pkgconfig(libavcodec) >= 4.0
-BuildRequires:  pkgconfig(libavformat) >= 4.0
-BuildRequires:  pkgconfig(libavutil) >= 4.0
-BuildRequires:  pkgconfig(libswresample) >= 4.0
-BuildRequires:  pkgconfig(libavfilter) >= 4.0
-BuildRequires:  pkgconfig(libswscale) >= 4.0"
+        ffmpeg_build_requires="BuildRequires:  pkgconfig(libavcodec)
+BuildRequires:  pkgconfig(libavformat)
+BuildRequires:  pkgconfig(libavutil)
+BuildRequires:  pkgconfig(libswresample)
+BuildRequires:  pkgconfig(libavfilter)
+BuildRequires:  pkgconfig(libswscale)"
     fi
 
     cat > "$spec_file" << EOF
