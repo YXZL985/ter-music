@@ -94,6 +94,7 @@ add_executable(${PROJECT_NAME}
     src/image_loader.c
     src/remote.c
     src/logger.c
+    src/search.c
 )
 
 # 包含头文件目录
@@ -196,4 +197,9 @@ install(FILES resources/icons/hicolor/128x128/apps/${PROJECT_NAME}.png
 )
 install(FILES resources/icons/hicolor/scalable/apps/${PROJECT_NAME}.svg
     DESTINATION share/icons/hicolor/scalable/apps
+)
+
+# 安装帮助文档
+install(FILES data/help-quickstart-zh.txt data/help-quickstart-en.txt
+        DESTINATION share/ter-music
 )

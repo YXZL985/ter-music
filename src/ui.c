@@ -3,6 +3,7 @@
 #include "../include/lyrics.h"
 #include "../include/menu_views.h"
 #include "../include/braille_art.h"
+#include "../include/search.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -905,17 +906,17 @@ static int get_lyric_index_from_window_row(int window_y, int *lyric_index, doubl
 int get_menu_hint_fkey_from_column(int screen_x) {
     static const char *menu_labels_zh[] = {
         "F1:主页", "F2:设置", "F3:历史", "F4:歌单",
-        "F5:收藏", "F6:信息", "F7:中/EN", "F8:退出"
+        "F5:收藏", "F6:信息", "F7:中/EN", "F8:帮助", "F9:退出"
     };
     static const char *menu_labels_en[] = {
         "F1:Home", "F2:Settings", "F3:History", "F4:Playlists",
-        "F5:Favorites", "F6:Info", "F7:Lang", "F8:Quit"
+        "F5:Favorites", "F6:Info", "F7:Lang", "F8:Help", "F9:Quit"
     };
 
     const char **labels = use_english_ui() ? menu_labels_en : menu_labels_zh;
     int col = 2;
 
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 9; i++) {
         int width = utf8_str_width(labels[i]);
         if (screen_x >= col && screen_x < col + width) {
             return KEY_F(i + 1);
@@ -2392,144 +2393,6 @@ static void prompt_append_folder() {
     prompt_folder_input(1);
 }
 
-static void perform_search(const char *query);
-
-static void search_prompt() {
-    if (!win_controls || !playlist_is_loaded() || playlist_count() == 0) {
-        if (!playlist_is_loaded() || playlist_count() == 0) {
-            update_controls_status(ui_text("播放列表为空，无法搜索", "Playlist is empty"));
-        }
-        return;
-    }
-
-    echo();
-    curs_set(1);
-
-    int max_y, max_x;
-    getmaxyx(win_controls, max_y, max_x);
-
-    mvwprintw(win_controls, 4, 2, "%s", ui_text("搜索歌曲: ", "Search: "));
-    wclrtoeol(win_controls);
-    wrefresh(win_controls);
-
-    char input[MAX_META_LEN];
-    memset(input, 0, sizeof(input));
-    int pos = 0;
-    int ch;
-
-    flushinp();
-
-    while ((ch = getch()) != '\n' && ch != KEY_ENTER && ch != 27 && pos < MAX_META_LEN - 1) {
-        if (ch == ERR) {
-            media_session_tick();
-            continue;
-        }
-        if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
-            if (pos > 0) {
-                int cx = getcurx(win_controls);
-                int cy = getcury(win_controls);
-
-                unsigned char last_c = (unsigned char)input[pos - 1];
-                int bytes_to_remove = 1;
-                if (last_c >= 0x80) {
-                    if ((last_c & 0xE0) == 0xC0) bytes_to_remove = 2;
-                    else if ((last_c & 0xF0) == 0xE0) bytes_to_remove = 3;
-                    else if ((last_c & 0xF8) == 0xF0) bytes_to_remove = 4;
-                    else if ((last_c & 0xC0) == 0x80) {
-                        bytes_to_remove = 2;
-                        while (pos - bytes_to_remove >= 0 &&
-                               (unsigned char)input[pos - bytes_to_remove] >= 0x80 &&
-                               (unsigned char)input[pos - bytes_to_remove] < 0xC0) {
-                            bytes_to_remove++;
-                        }
-                    }
-                    if (bytes_to_remove > pos) bytes_to_remove = pos;
-                    pos -= bytes_to_remove;
-
-                    if ((last_c & 0xF0) == 0xE0 || (last_c & 0xE0) == 0xC0) {
-                        move(cy, cx - 2);
-                    } else {
-                        move(cy, cx - 1);
-                    }
-                } else {
-                    pos--;
-                    move(cy, cx - 1);
-                }
-                clrtoeol();
-                wrefresh(win_controls);
-            }
-        } else if (ch >= 0x20 && ch <= 0x7E) {
-            input[pos++] = (char)ch;
-            waddch(win_controls, ch);
-            wrefresh(win_controls);
-        } else if ((ch & 0xC0) == 0x80 || ch >= 0x80) {
-            if (pos < MAX_META_LEN - 1) {
-                input[pos++] = (char)ch;
-                if ((ch & 0xE0) == 0xC0 || (ch & 0xF0) == 0xE0) {
-                    waddch(win_controls, ch);
-                    wrefresh(win_controls);
-                }
-            }
-        } else {
-            input[pos++] = (char)ch;
-            waddch(win_controls, ch);
-            wrefresh(win_controls);
-        }
-    }
-
-    input[pos] = '\0';
-    flushinp();
-
-    noecho();
-    curs_set(0);
-
-    mvwprintw(win_controls, 4, 2, "                    ");
-    wclrtoeol(win_controls);
-    wrefresh(win_controls);
-
-    if (ch == 27) {
-        update_controls_status(ui_text("搜索已取消", "Search cancelled"));
-        return;
-    }
-
-    if (strlen(input) > 0) {
-        perform_search(input);
-    } else {
-        g_search_state.active = 0;
-        render_playlist_content();
-        update_controls_status(ui_text("搜索已取消", "Search cancelled"));
-    }
-}
-
-static void perform_search(const char *query) {
-    int playlist_total = playlist_count();
-
-    memset(&g_search_state, 0, sizeof(g_search_state));
-    g_search_state.selected_index = 0;
-
-    for (int i = 0; i < playlist_total && g_search_state.result_count < MAX_SEARCH_RESULTS; i++) {
-        if (track_matches_query(i, query)) {
-            g_search_state.result_indices[g_search_state.result_count++] = i;
-        }
-    }
-
-    if (g_search_state.result_count > 0) {
-        g_search_state.active = 1;
-    } else {
-        g_search_state.active = 0;
-    }
-
-    log_info("ui", "Search '%s': %d results out of %d tracks", query, g_search_state.result_count, playlist_total);
-
-    render_playlist_content();
-
-    char msg[64];
-    snprintf(msg, sizeof(msg), "%s: %d %s",
-             ui_text("搜索完成", "Search completed"),
-             g_search_state.result_count,
-             ui_text("个结果", "results"));
-    update_controls_status(msg);
-}
 
 /**
  * 主事件循环
@@ -2593,7 +2456,7 @@ void run_event_loop() {
             uint64_t now = get_ui_time_ms();
             if (now - esc_pending_time > ESC_TIMEOUT_MS) {
                 esc_pending = 0;
-            } else if (ch >= '1' && ch <= '8') {
+            } else if (ch >= '1' && ch <= '9') {
                 int fnum = ch - '1';
                 handle_function_keys(KEY_F(1 + fnum));
                 esc_pending = 0;
@@ -2630,8 +2493,8 @@ void run_event_loop() {
             continue;
         }
         
-        // 处理功能键（F1-F8）
-        if (ch >= KEY_F(1) && ch <= KEY_F(8)) {
+        // 处理功能键（F1-F9）
+        if (ch >= KEY_F(1) && ch <= KEY_F(9)) {
             log_debug("ui", "Function key F%d pressed", ch - KEY_F(0));
             handle_function_keys(ch);
             continue;

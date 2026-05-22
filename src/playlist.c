@@ -1,4 +1,5 @@
 #include "../include/defs.h"
+#include "../include/search.h"
 #include "../include/pinyin_table.h"
 #include "../include/remote.h"
 #include <stdio.h>
@@ -35,7 +36,6 @@ int g_control_focus = 0;
 // 当前选中的控件索引 (0:上一曲，1:播放/暂停，2:下一曲，3:停止，4:循环，5:音量，6:进度条)
 int g_current_control_idx = 1;
 
-SearchState g_search_state = {0};
 SortState g_sort_state = {0};
 
 static pthread_mutex_t g_playlist_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -340,7 +340,7 @@ void reset_playlist_state(void) {
     playlist_lock();
     memset(&g_playlist, 0, sizeof(g_playlist));
     playlist_unlock();
-    memset(&g_search_state, 0, sizeof(g_search_state));
+    search_clear();
     memset(&g_sort_state, 0, sizeof(g_sort_state));
 }
 
@@ -631,7 +631,7 @@ int load_single_file(const char *file_path) {
     playlist_lock();
     g_playlist = *next;
     playlist_unlock();
-    memset(&g_search_state, 0, sizeof(g_search_state));
+    search_clear();
 
     free(next);
     recompute_sort_order();
@@ -678,7 +678,7 @@ int load_playlist(const char *path) {
     playlist_lock();
     g_playlist = *next;
     playlist_unlock();
-    memset(&g_search_state, 0, sizeof(g_search_state));
+    search_clear();
 
     int total = next->count;
     free(next);
@@ -729,7 +729,7 @@ int append_playlist(const char *path) {
         playlist_lock();
         g_playlist = *next;
         playlist_unlock();
-        memset(&g_search_state, 0, sizeof(g_search_state));
+        search_clear();
     }
 
     free(next);
@@ -784,7 +784,7 @@ int load_remote_playlist(const RemoteConnectionConfig *conn, const char *subpath
     playlist_lock();
     g_playlist = *next;
     playlist_unlock();
-    memset(&g_search_state, 0, sizeof(g_search_state));
+    search_clear();
 
     int total = next->count;
     free(next);

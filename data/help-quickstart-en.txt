@@ -1,0 +1,120 @@
+ter-music Quick Start Guide
+===========================
+
+1. Starting
+-----------
+  ter-music [options]
+
+  Options:
+    -o, --open <path>  Open a music directory or audio file at startup
+    -d, --debug        Enable debug logging
+    -h, --help         Show help message
+
+  Examples:
+    ter-music -o ~/Music
+    ter-music -o /path/to/song.mp3
+    ter-music ftp://user:pass@host/path/to/music
+
+2. Layout Overview
+------------------
+  +-------------------+-------------------+
+  | Playlist Pane     | Lyrics Panel      |
+  | (Left main area)  | (Right, toggleable)|
+  |                   |                   |
+  | Control Bar (bottom)                  |
+  | [Play/Pause/Next/ |                   |
+  |  Prev/Volume/Mode] |                   |
+  +-------------------+-------------------+
+  | F1:Home F2:Settings ... F8:Help F9:Quit|
+  +----------------------------------------+
+
+3. Basic Controls
+-----------------
+  Enter         Play selected track
+  Space/Double-click  Also plays
+  ↑/↓           Navigate list
+  ←/→           Switch focus between controls
+  Tab           Toggle between playlist and controls
+  /             Search tracks (main view)
+
+  Playback:
+  p             Play/Pause
+  s or → (playing) Stop
+  n             Next track
+  b or ← (playing) Previous track
+  ]             Seek forward 5 seconds
+  [             Seek backward 5 seconds
+  +/=           Increase volume
+  -/_           Decrease volume
+  m             Mute toggle
+  >             Increase speed (0.75x -> 3.0x)
+  <             Decrease speed
+
+  Loop modes (press l to cycle):
+    Sequential -> Single Repeat -> List Repeat -> Shuffle
+
+4. Function Menu (F-Keys)
+--------------------------
+  F1  Home (return to main view)
+  F2  Settings (theme, paths, playback, etc.)
+  F3  History (browse directories and playback history)
+  F4  Playlists (manage and create playlists)
+  F5  Favorites (view and manage favorite tracks)
+  F6  Info (version and project info)
+  F7  Lang (toggle UI language)
+  F8  Help (this page)
+  F9  Quit
+
+5. Search
+---------
+  Press / in the main view to enter search mode.
+  Type keywords and press Enter to filter results.
+  Navigate with ↑/↓, press Enter to play.
+  Press Esc to cancel.
+  Supports pinyin search (e.g., typing "zhou" finds "Jay Chou").
+
+6. Lyrics
+---------
+  .lrc files in the same directory are loaded automatically.
+  Toggle the lyrics panel in Settings.
+  Supports alignment: left, center, right.
+
+7. Remote Playback
+------------------
+  Supports SMB/SFTP/FTP/WebDAV/HTTP protocols.
+  Configure connections in Settings -> Remote Devices.
+  Remote URL can also be passed directly on the command line:
+    ter-music ftp://user:password@host/path/
+
+8. Playlist Management
+----------------------
+  Press F4 to open playlist manager.
+  Create, rename, and delete playlists.
+  Press 'a' in the main view to add the current track to a playlist.
+
+9. Favorites
+------------
+  Press 'f' on a selected track to add it to favorites.
+  Press F5 to view and manage your favorites.
+
+10. Sorting
+-----------
+  In Settings -> Playback, you can change the sort mode:
+    Default (by addition order)
+    By Title
+    By Artist
+    By Album
+    By Filename
+  The playlist reorders immediately after changing the sort mode.
+
+11. Album Art
+-------------
+  Enable album cover display in Settings.
+  Covers are rendered as braille dot art in the terminal.
+
+12. Tips & Tricks
+-----------------
+  Press ? or h in the main view for keyboard shortcut help.
+  The UI adapts automatically when the terminal is resized.
+  Playback state is saved on exit (can be disabled in Settings).
+  Ctrl+C exits safely.

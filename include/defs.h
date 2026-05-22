@@ -41,7 +41,8 @@ typedef enum {
     VIEW_HISTORY = 2,
     VIEW_PLAYLIST = 3,
     VIEW_FAVORITES = 4,
-    VIEW_INFO = 5
+    VIEW_INFO = 5,
+    VIEW_HELP = 6
 } ViewMode;
 
 typedef enum {
