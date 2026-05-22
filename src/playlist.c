@@ -36,6 +36,7 @@ int g_control_focus = 0;
 int g_current_control_idx = 1;
 
 SearchState g_search_state = {0};
+SortState g_sort_state = {0};
 
 static pthread_mutex_t g_playlist_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -340,6 +341,7 @@ void reset_playlist_state(void) {
     memset(&g_playlist, 0, sizeof(g_playlist));
     playlist_unlock();
     memset(&g_search_state, 0, sizeof(g_search_state));
+    memset(&g_sort_state, 0, sizeof(g_sort_state));
 }
 
 static int playlist_contains_track_in(const Playlist *playlist, const char *path) {
@@ -630,8 +632,9 @@ int load_single_file(const char *file_path) {
     g_playlist = *next;
     playlist_unlock();
     memset(&g_search_state, 0, sizeof(g_search_state));
-    
+
     free(next);
+    recompute_sort_order();
     return 1;
 }
 
@@ -680,6 +683,7 @@ int load_playlist(const char *path) {
     int total = next->count;
     free(next);
     log_info("playlist", "load_playlist: loaded %d tracks from '%s'", total, path);
+    recompute_sort_order();
     return total;
 }
 
@@ -730,6 +734,7 @@ int append_playlist(const char *path) {
 
     free(next);
     log_info("playlist", "append_playlist: added %d new tracks (total=%d)", added, playlist_count());
+    recompute_sort_order();
     return added;
 }
 
@@ -784,7 +789,75 @@ int load_remote_playlist(const RemoteConnectionConfig *conn, const char *subpath
     int total = next->count;
     free(next);
     log_info("playlist", "Remote playlist: loaded %d tracks", total);
+    recompute_sort_order();
     return total;
+}
+
+static int g_sort_comparison_field = SORT_DEFAULT;
+
+static int sort_comparator(const void *a, const void *b) {
+    int idx_a = *(const int *)a;
+    int idx_b = *(const int *)b;
+    Track ta, tb;
+    get_track_metadata(idx_a, &ta);
+    get_track_metadata(idx_b, &tb);
+
+    const char *fa, *fb;
+    switch (g_sort_comparison_field) {
+        case SORT_TITLE:
+            fa = ta.title;
+            fb = tb.title;
+            break;
+        case SORT_ARTIST:
+            fa = ta.artist;
+            fb = tb.artist;
+            break;
+        case SORT_ALBUM:
+            fa = ta.album;
+            fb = tb.album;
+            break;
+        case SORT_FILENAME:
+            fa = strrchr(ta.path, '/');
+            fa = fa ? fa + 1 : ta.path;
+            fb = strrchr(tb.path, '/');
+            fb = fb ? fb + 1 : tb.path;
+            break;
+        default:
+            return 0;
+    }
+
+    int cmp = strcasecmp(fa, fb);
+    if (cmp != 0) return cmp;
+    return idx_a - idx_b;  // stable: preserve original order for equal values
+}
+
+void recompute_sort_order(void) {
+    playlist_lock();
+    int count = g_playlist.count;
+    int mode = g_app_config.sort_mode;
+    playlist_unlock();
+
+    if (mode == SORT_DEFAULT || count <= 0) {
+        g_sort_state.active = 0;
+        request_ui_refresh(UI_DIRTY_PLAYLIST);
+        return;
+    }
+
+    // Pre-load metadata for all tracks to warm the LRU cache before qsort
+    Track tmp;
+    for (int i = 0; i < count; i++) {
+        get_track_metadata(i, &tmp);
+    }
+
+    for (int i = 0; i < count; i++) {
+        g_sort_state.sorted_indices[i] = i;
+    }
+
+    g_sort_comparison_field = mode;
+    qsort(g_sort_state.sorted_indices, count, sizeof(int), sort_comparator);
+    g_sort_state.active = 1;
+
+    request_ui_refresh(UI_DIRTY_PLAYLIST);
 }
 
 void clear_metadata_cache(void) {

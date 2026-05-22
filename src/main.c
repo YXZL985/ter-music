@@ -116,6 +116,17 @@ static int load_startup_playlist(const char *path, char *final_path, size_t fina
         if (g_selected_index < 0) {
             g_selected_index = 0;
         }
+        // 排序激活时，将物理索引转换为视觉位置
+        if (g_sort_state.active) {
+            int visual = 0;
+            for (int i = 0; i < g_playlist.count; i++) {
+                if (g_sort_state.sorted_indices[i] == g_selected_index) {
+                    visual = i;
+                    break;
+                }
+            }
+            g_selected_index = visual;
+        }
 
         snprintf(final_path, final_path_size, "%s", dir_buf);
         return 1;
@@ -163,6 +174,17 @@ static int restore_saved_playback_session(void) {
     g_selected_index = track_index;
     g_initial_seek_position = g_app_config.last_played_position;
     play_audio(track_index);
+    // 排序激活时，将物理索引转换为视觉位置
+    if (g_sort_state.active) {
+        int visual = 0;
+        for (int i = 0; i < g_playlist.count; i++) {
+            if (g_sort_state.sorted_indices[i] == track_index) {
+                visual = i;
+                break;
+            }
+        }
+        g_selected_index = visual;
+    }
     return 1;
 }
 
@@ -490,7 +512,8 @@ int main(int argc, char *argv[]) {
         if (!resumed_playback && playlist_count() > 0 &&
             (g_app_config.auto_play_on_start || opened_single_file)) {
             log_info("main", "Auto-playing first track");
-            play_audio(g_selected_index);
+            int first_idx = g_sort_state.active ? g_sort_state.sorted_indices[0] : 0;
+            play_audio(first_idx);
         }
         if (attempted_resume_load &&
             !resumed_playback &&

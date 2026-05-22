@@ -582,6 +582,7 @@ void init_default_config(void) {
     g_app_config.default_playback_speed = 1.0f;
     g_app_config.show_album_cover = 1;
     g_app_config.lyrics_alignment = 0;
+    g_app_config.sort_mode = SORT_DEFAULT;
     g_app_config.config_version = 0;
     g_app_config.remote_connection_count = 0;
     memset(g_app_config.remote_connections, 0, sizeof(g_app_config.remote_connections));
@@ -706,6 +707,12 @@ void load_config(void) {
             g_app_config.audio_backend = AUDIO_BACKEND_AUTO;
         }
     }
+    if (strstr(json, "\"sort_mode\"")) {
+        g_app_config.sort_mode = (int)extract_json_int(json, "sort_mode");
+        if (g_app_config.sort_mode < SORT_DEFAULT || g_app_config.sort_mode > SORT_FILENAME) {
+            g_app_config.sort_mode = SORT_DEFAULT;
+        }
+    }
     g_playback_speed = g_app_config.default_playback_speed;
 
     g_app_config.resume_last_playback = g_app_config.resume_last_playback ? 1 : 0;
@@ -827,6 +834,7 @@ void save_config(void) {
     fprintf(f, "  \"show_album_cover\": %d,\n", g_app_config.show_album_cover);
     fprintf(f, "  \"lyrics_alignment\": %d,\n", g_app_config.lyrics_alignment);
     fprintf(f, "  \"audio_backend\": %d,\n", g_app_config.audio_backend);
+    fprintf(f, "  \"sort_mode\": %d,\n", g_app_config.sort_mode);
 
     fprintf(f, "  \"config_version\": 1,\n");
     fprintf(f, "  \"remote_connection_count\": %d,\n", g_app_config.remote_connection_count);
@@ -1343,7 +1351,8 @@ void save_temp_playlist(void) {
 
     int saved_count = 0;
     for (int i = 0; i < snapshot_count; i++) {
-        if (playlist_get_track_path(i, tracks[saved_count], MAX_PATH_LEN) == 0) {
+        int idx = g_sort_state.active ? g_sort_state.sorted_indices[i] : i;
+        if (playlist_get_track_path(idx, tracks[saved_count], MAX_PATH_LEN) == 0) {
             saved_count++;
         }
     }
@@ -1408,6 +1417,7 @@ static int apply_restored_playlist(Playlist *restored,
     g_playlist = *restored;
     playlist_unlock();
     memset(&g_search_state, 0, sizeof(g_search_state));
+    recompute_sort_order();
     return loaded_count;
 }
 
@@ -1957,7 +1967,8 @@ static const char *settings_options[] = {
     "默认倍速",
     "显示专辑图片",
     "歌词对齐方式",
-    "音频后端"
+    "音频后端",
+    "排序方式"
 };
 static const char *settings_options_ascii[] = {
     "Playlist Foreground",
@@ -1984,9 +1995,10 @@ static const char *settings_options_ascii[] = {
     "Default Speed",
     "Show Album Cover",
     "Lyrics Alignment",
-    "Audio Backend"
+    "Audio Backend",
+    "Sort Mode"
 };
-#define SETTINGS_OPTION_COUNT 25
+#define SETTINGS_OPTION_COUNT 26
 
 enum {
     SETTINGS_IDX_THEME_COLOR_PAIR_0 = 0,
@@ -2013,7 +2025,8 @@ enum {
     SETTINGS_IDX_DEFAULT_SPEED = 21,
     SETTINGS_IDX_SHOW_ALBUM_COVER = 22,
     SETTINGS_IDX_LYRICS_ALIGNMENT = 23,
-    SETTINGS_IDX_AUDIO_BACKEND = 24
+    SETTINGS_IDX_AUDIO_BACKEND = 24,
+    SETTINGS_IDX_SORT_MODE = 25
 };
 
 typedef struct {
@@ -2052,7 +2065,8 @@ static const int settings_playback_option_indices[] = {
     SETTINGS_IDX_LYRICS_ALIGNMENT,
     SETTINGS_IDX_DEFAULT_LOOP,
     SETTINGS_IDX_DEFAULT_SPEED,
-    SETTINGS_IDX_AUDIO_BACKEND
+    SETTINGS_IDX_AUDIO_BACKEND,
+    SETTINGS_IDX_SORT_MODE
 };
 
 static SettingsSectionSpec get_settings_section_spec_for_sidebar(int sidebar_idx) {
@@ -2209,6 +2223,18 @@ static void format_settings_option_line(int option_index, char *line, size_t lin
         }
         snprintf(line, line_size, "%s%s%s",
                  current_settings_options[option_index], separator, backend_str);
+    } else if (option_index == SETTINGS_IDX_SORT_MODE) {
+        const char *sort_str;
+        switch (g_app_config.sort_mode) {
+            case SORT_DEFAULT:  sort_str = menu_text("默认", "Default"); break;
+            case SORT_TITLE:    sort_str = menu_text("标题", "Title"); break;
+            case SORT_ARTIST:   sort_str = menu_text("艺术家", "Artist"); break;
+            case SORT_ALBUM:    sort_str = menu_text("专辑", "Album"); break;
+            case SORT_FILENAME: sort_str = menu_text("文件名", "Filename"); break;
+            default:            sort_str = menu_text("默认", "Default");
+        }
+        snprintf(line, line_size, "%s%s%s",
+                 current_settings_options[option_index], separator, sort_str);
     } else {
         snprintf(line, line_size, "%s", current_settings_options[option_index]);
     }
@@ -2485,6 +2511,16 @@ static void adjust_or_toggle_settings_option(int option_index, int delta) {
                                           "Audio backend will take effect on next restart"));
             break;
         }
+        case SETTINGS_IDX_SORT_MODE:
+            if (delta < 0) {
+                g_app_config.sort_mode = (g_app_config.sort_mode - 1 + 5) % 5;
+            } else {
+                g_app_config.sort_mode = (g_app_config.sort_mode + 1) % 5;
+            }
+            save_config();
+            recompute_sort_order();
+            show_status_message(menu_text("排序方式已生效", "Sort mode applied"));
+            break;
         default:
             break;
     }
@@ -2504,7 +2540,8 @@ static void activate_settings_current_option(void) {
         g_settings_current_option == SETTINGS_IDX_SHOW_ALBUM_COVER ||
         g_settings_current_option == SETTINGS_IDX_LYRICS_ALIGNMENT ||
         g_settings_current_option == SETTINGS_IDX_DEFAULT_LOOP ||
-        g_settings_current_option == SETTINGS_IDX_DEFAULT_SPEED) {
+        g_settings_current_option == SETTINGS_IDX_DEFAULT_SPEED ||
+        g_settings_current_option == SETTINGS_IDX_SORT_MODE) {
         adjust_or_toggle_settings_option(g_settings_current_option, 0);
         return;
     }

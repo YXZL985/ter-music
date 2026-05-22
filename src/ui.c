@@ -741,6 +741,19 @@ static int get_playlist_index_from_window_row(int window_y, int *display_index, 
         return 1;
     }
 
+    if (g_sort_state.active) {
+        if (clicked_display_index < 0 || clicked_display_index >= playlist_count()) {
+            return 0;
+        }
+        if (display_index) {
+            *display_index = clicked_display_index;
+        }
+        if (actual_index) {
+            *actual_index = g_sort_state.sorted_indices[clicked_display_index];
+        }
+        return 1;
+    }
+
     if (clicked_display_index < 0 || clicked_display_index >= playlist_count()) {
         return 0;
     }
@@ -951,12 +964,12 @@ static int handle_main_view_mouse_event(const MEVENT *event) {
         g_control_focus = 0;
         if (g_search_state.active) {
             g_search_state.selected_index = display_index;
-            g_selected_index = actual_index;
             play_audio(actual_index);
             g_search_state.active = 0;
+            g_selected_index = g_sort_state.active ? 0 : actual_index;
             render_playlist_content();
         } else {
-            g_selected_index = actual_index;
+            g_selected_index = display_index;
             play_audio(actual_index);
         }
         render_controls();
@@ -1690,15 +1703,27 @@ void render_playlist_content() {
             }
         }
 
-        preload_visible_tracks(start_idx, start_idx + visible_lines - 1);
-        
+        if (g_sort_state.active && !g_search_state.active) {
+            // 排序激活时，按排序后的实际索引预加载元数据缓存
+            int loaded = 0;
+            Track tmp;
+            for (int vi = start_idx; vi < start_idx + visible_lines && vi < total_tracks && loaded < 2; vi++) {
+                get_track_metadata(g_sort_state.sorted_indices[vi], &tmp);
+                loaded++;
+            }
+        } else {
+            preload_visible_tracks(start_idx, start_idx + visible_lines - 1);
+        }
+
         for (int i = 0; i < visible_lines && (start_idx + i) < total_tracks; i++) {
             int idx = start_idx + i;
             int actual_idx = idx;
             Track t;
-            
+
             if (g_search_state.active) {
                 actual_idx = g_search_state.result_indices[idx];
+            } else if (g_sort_state.active) {
+                actual_idx = g_sort_state.sorted_indices[idx];
             }
             
             get_track_metadata(actual_idx, &t);
@@ -1760,6 +1785,9 @@ void render_playlist_content() {
         if (playlist_total > 0) {
             Track t;
             int index = g_current_play_index >= 0 ? g_current_play_index : g_selected_index;
+            if (g_sort_state.active && !g_search_state.active && g_current_play_index < 0) {
+                index = g_sort_state.sorted_indices[g_selected_index];
+            }
             if (index < 0) {
                 index = 0;
             }
@@ -2804,12 +2832,16 @@ void run_event_loop() {
                     case 10:
                         if (g_search_state.active && g_search_state.result_count > 0) {
                             int original_index = g_search_state.result_indices[g_search_state.selected_index];
-                            g_selected_index = original_index;
                             play_audio(original_index);
                             g_search_state.active = 0;
+                            g_selected_index = g_sort_state.active ? 0 : original_index;
                             render_playlist_content();
                         } else {
-                            play_audio(g_selected_index);
+                            int play_idx = g_selected_index;
+                            if (g_sort_state.active) {
+                                play_idx = g_sort_state.sorted_indices[g_selected_index];
+                            }
+                            play_audio(play_idx);
                         }
                         break;
                     case 'O':
@@ -2826,7 +2858,13 @@ void run_event_loop() {
                     case 'F':
                         if (playlist_count() > 0) {
                             Track t;
-                            get_track_metadata(g_selected_index, &t);
+                            int track_idx = g_selected_index;
+                            if (g_search_state.active) {
+                                track_idx = g_search_state.result_indices[g_search_state.selected_index];
+                            } else if (g_sort_state.active) {
+                                track_idx = g_sort_state.sorted_indices[g_selected_index];
+                            }
+                            get_track_metadata(track_idx, &t);
                             int result = add_to_favorites(&t);
                             if (result == 0) {
                                 update_controls_status(ui_text("已添加到收藏", "Added to favorites"));
@@ -2854,7 +2892,13 @@ void run_event_loop() {
                     case 'A':
                         if (playlist_count() > 0 && g_playlist_manager.count > 0) {
                             Track t;
-                            get_track_metadata(g_selected_index, &t);
+                            int track_idx = g_selected_index;
+                            if (g_search_state.active) {
+                                track_idx = g_search_state.result_indices[g_search_state.selected_index];
+                            } else if (g_sort_state.active) {
+                                track_idx = g_sort_state.sorted_indices[g_selected_index];
+                            }
+                            get_track_metadata(track_idx, &t);
                             Track *tp = &t;
 
                             int max_y, max_x;
@@ -3003,6 +3047,9 @@ static void activate_current_control(void) {
                         int target_index = (g_current_play_index >= 0)
                             ? g_current_play_index
                             : g_selected_index;
+                        if (g_sort_state.active && g_current_play_index < 0) {
+                            target_index = g_sort_state.sorted_indices[g_selected_index];
+                        }
                         if (target_index >= 0 && target_index < playlist_total) {
                             play_audio(target_index);
                         }

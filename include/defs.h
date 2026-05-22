@@ -22,6 +22,14 @@ typedef enum {
 } LoopMode;
 
 typedef enum {
+    SORT_DEFAULT = 0,
+    SORT_TITLE   = 1,
+    SORT_ARTIST  = 2,
+    SORT_ALBUM   = 3,
+    SORT_FILENAME = 4
+} SortMode;
+
+typedef enum {
     PLAY_STATE_STOPPED = 0,
     PLAY_STATE_PLAYING = 1,
     PLAY_STATE_PAUSED = 2
@@ -195,6 +203,7 @@ typedef struct {
     int show_album_cover;
     int lyrics_alignment;  // 0=居左(Left), 1=居中(Center), 2=居右(Right)
     int audio_backend;     // 0=Auto, 1=PulseAudio, 2=ALSA
+    int sort_mode;         // SortMode value, 0=default (no sort)
     int config_version;
     RemoteConnectionConfig remote_connections[MAX_REMOTE_CONNECTIONS];
     int remote_connection_count;
@@ -217,6 +226,11 @@ typedef struct {
     int selected_index;
     int result_offset;
 } SearchState;
+
+typedef struct {
+    int sorted_indices[MAX_TRACKS];
+    int active;
+} SortState;
 
 extern Playlist g_playlist;
 extern int g_selected_index;
@@ -252,6 +266,7 @@ extern int g_lyric_cursor_index;
 extern int g_active_backend;
 
 extern SearchState g_search_state;
+extern SortState g_sort_state;
 extern float g_playback_speed;
 
 void toggle_playback_speed(void);
@@ -322,6 +337,7 @@ void update_rainbow_colors(void);
 int get_track_metadata(int index, Track *out);
 void preload_visible_tracks(int start, int end);
 void clear_metadata_cache(void);
+void recompute_sort_order(void);
 
 int extract_album_cover(const char *audio_path, char *output_path, size_t output_size);
 int get_current_album_cover_path(char *path, size_t path_size);

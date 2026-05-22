@@ -2209,6 +2209,18 @@ static void remote_progress_refresh(void) {
 }
 
 /**
+ * 在排序激活时，将曲目索引（物理位置）转换为视觉位置（屏幕行号）
+ */
+static int visual_position_of(int track_index) {
+    if (!g_sort_state.active) return track_index;
+    for (int i = 0; i < g_playlist.count; i++) {
+        if (g_sort_state.sorted_indices[i] == track_index)
+            return i;
+    }
+    return track_index;
+}
+
+/**
  * 播放指定索引的音频文件
  * 如果已有播放线程在运行，则先停止当前播放
  */
@@ -2236,7 +2248,6 @@ void play_audio(int index) {
 
     if (g_play_thread_active) {
         log_debug("audio", "Pending play_audio(%d) - thread already active, scheduling switch", index);
-        g_selected_index = index;
         g_pending_playback_index = index;
         g_play_thread_running = 0;
         g_seek_request = 0;
@@ -2250,7 +2261,6 @@ void play_audio(int index) {
 
     g_pending_playback_index = -1;
     g_current_play_index = index;
-    g_selected_index = index;
     g_play_thread_active = 1;
     g_play_thread_running = 1;
     g_play_thread_finished = 0;
@@ -2485,6 +2495,14 @@ void next_track() {
     int next_index;
     if (g_loop_mode == LOOP_RANDOM) {
         next_index = rand() % playlist_total;
+    } else if (g_sort_state.active) {
+        // 排序激活时按视觉顺序跳转
+        int visual_pos = (g_current_play_index >= 0)
+            ? visual_position_of(g_current_play_index)
+            : g_selected_index;
+        int next_visual = (visual_pos + 1) % playlist_total;
+        next_index = g_sort_state.sorted_indices[next_visual];
+        g_selected_index = next_visual;
     } else {
         if (g_current_play_index >= 0) {
             next_index = g_current_play_index + 1;
@@ -2496,7 +2514,7 @@ void next_track() {
             next_index = 0;
         }
     }
-    
+
     play_audio(next_index);
 }
 
@@ -2510,10 +2528,18 @@ void prev_track() {
     if (playlist_total == 0) {
         return;
     }
-    
+
     int prev_index;
     if (g_loop_mode == LOOP_RANDOM) {
         prev_index = rand() % playlist_total;
+    } else if (g_sort_state.active) {
+        // 排序激活时按视觉顺序跳转
+        int visual_pos = (g_current_play_index >= 0)
+            ? visual_position_of(g_current_play_index)
+            : g_selected_index;
+        int prev_visual = (visual_pos - 1 + playlist_total) % playlist_total;
+        prev_index = g_sort_state.sorted_indices[prev_visual];
+        g_selected_index = prev_visual;
     } else {
         if (g_current_play_index >= 0) {
             prev_index = g_current_play_index - 1;
@@ -2525,7 +2551,7 @@ void prev_track() {
             prev_index = playlist_total - 1;
         }
     }
-    
+
     play_audio(prev_index);
 }
 
