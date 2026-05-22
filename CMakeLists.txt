@@ -95,6 +95,7 @@ add_executable(${PROJECT_NAME}
     src/remote.c
     src/logger.c
     src/search.c
+    src/scrollbar.c
 )
 
 # 包含头文件目录

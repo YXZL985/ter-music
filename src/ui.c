@@ -4,6 +4,7 @@
 #include "../include/menu_views.h"
 #include "../include/braille_art.h"
 #include "../include/search.h"
+#include "../include/scrollbar.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1809,6 +1810,13 @@ void render_playlist_content() {
                 mvwprintw(win_playlist, 1, 2, "%s",
                          ui_text("当前目录下没有音频文件。", "No audio files found here."));
             }
+        }
+
+        // 绘制滚动条
+        {
+            int sb_col = w - 2;
+            scrollbar_draw(win_playlist, 1, visible_lines,
+                           total_tracks, visible_lines, start_idx, sb_col);
         }
 
         // --- 新增：在播放列表底部绘制状态栏 ---

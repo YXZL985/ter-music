@@ -11,6 +11,7 @@
 
 #include "../include/defs.h"
 #include "../include/search.h"
+#include "../include/scrollbar.h"
 #include "../include/lyrics.h"
 #include "../include/menu_views.h"
 #include "../include/remote.h"
@@ -3767,6 +3768,10 @@ void render_help_content(void) {
 
     mvprintw(hint_row, content_start_x, "%s", hint);
     mvprintw(hint_row, max_x - (int)strlen(pos) - 3, "%s", pos);
+
+    // 绘制滚动条
+    scrollbar_draw(stdscr, start_y + 3, visible_lines,
+                   total_lines, visible_lines, g_help_scroll_offset, max_x - 2);
 
     attroff(COLOR_PAIR(COLOR_PAIR_BORDER));
 

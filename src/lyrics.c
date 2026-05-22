@@ -1,5 +1,6 @@
 #include "../include/lyrics.h"
 #include "../include/defs.h"
+#include "../include/scrollbar.h"
 #include "../include/remote.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -1264,5 +1265,10 @@ void render_lyrics(void) {
     }
     
     pthread_mutex_unlock(&g_lyrics.lock);
+
+    // 绘制滚动条
+    scrollbar_draw(win_lyrics, content_top, visible_lines,
+                   g_lyrics.count, visible_lines, start_idx, w - 2);
+
     wrefresh(win_lyrics);
 }
