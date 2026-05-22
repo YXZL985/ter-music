@@ -22,7 +22,7 @@ RUN sed -e 's|^mirrorlist=|#mirrorlist=|g' \
     dnf install -y \
         https://mirrors.ustc.edu.cn/epel/epel-release-latest-8.noarch.rpm && \
     dnf install -y \
-        cmake pkgconfig rpm-build wget git \
+        cmake pkgconfig rpm-build wget aria2 git \
         ncurses-devel libcurl-devel libjpeg-turbo-devel libpng-devel \
         pulseaudio-libs-devel dbus-devel && \
     dnf clean all
@@ -30,7 +30,8 @@ RUN sed -e 's|^mirrorlist=|#mirrorlist=|g' \
 # Build FFmpeg as static libraries (audio-only, minimal footprint)
 # Disables video/encoding/network/external deps so the static build
 # has no transitive .so dependencies beyond glibc/libm/libpthread.
-RUN curl -L https://ffmpeg.org/releases/ffmpeg-7.1.tar.gz | tar xz && \
+RUN aria2c -x 16 -s 16 -k 1M https://ffmpeg.org/releases/ffmpeg-7.1.tar.gz && \
+    tar xzf ffmpeg-7.1.tar.gz && \
     cd ffmpeg-7.1 && \
     ./configure \
         --enable-static --disable-shared \
