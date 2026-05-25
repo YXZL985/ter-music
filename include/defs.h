@@ -6,6 +6,7 @@
 #include <pthread.h>
 #include "progress.h"
 #include "logger.h"
+#include "ape_tag.h"
 #include <time.h>
 
 #define APP_NAME "ter-music"
@@ -347,6 +348,8 @@ int get_track_metadata(int index, Track *out);
 void preload_visible_tracks(int start, int end);
 void clear_metadata_cache(void);
 void recompute_sort_order(void);
+
+int parse_ape_tags(const char *path, APEItem *items, int max_items);
 
 int extract_album_cover(const char *audio_path, char *output_path, size_t output_size);
 int get_current_album_cover_path(char *path, size_t path_size);

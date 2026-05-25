@@ -100,6 +100,7 @@ add_executable(${PROJECT_NAME}
     src/logger.c
     src/search.c
     src/scrollbar.c
+    src/ape_tag.c
 )
 
 # 包含头文件目录
