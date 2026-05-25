@@ -169,7 +169,6 @@ void search_prompt(void) {
         return;
     }
 
-    echo();
     curs_set(1);
 
     int max_y, max_x;
@@ -177,78 +176,45 @@ void search_prompt(void) {
 
     mvwprintw(win_controls, 4, 2, "%s",
               use_english_ui() ? "Search: " : "搜索歌曲: ");
+    int input_start_col = getcurx(win_controls);
     wclrtoeol(win_controls);
     wrefresh(win_controls);
 
     char input[MAX_META_LEN];
     memset(input, 0, sizeof(input));
-    int pos = 0;
     int ch;
 
     flushinp();
 
-    while ((ch = getch()) != '\n' && ch != KEY_ENTER && ch != 27 && pos < MAX_META_LEN - 1) {
+    while ((ch = getch()) != '\n' && ch != KEY_ENTER && ch != 27 && strlen(input) < MAX_META_LEN - 1) {
         if (ch == ERR) {
             media_session_tick();
             continue;
         }
         if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
-            if (pos > 0) {
-                int cx = getcurx(win_controls);
-                int cy = getcury(win_controls);
-
-                unsigned char last_c = (unsigned char)input[pos - 1];
-                int bytes_to_remove = 1;
-                if (last_c >= 0x80) {
-                    if ((last_c & 0xE0) == 0xC0) bytes_to_remove = 2;
-                    else if ((last_c & 0xF0) == 0xE0) bytes_to_remove = 3;
-                    else if ((last_c & 0xF8) == 0xF0) bytes_to_remove = 4;
-                    else if ((last_c & 0xC0) == 0x80) {
-                        bytes_to_remove = 2;
-                        while (pos - bytes_to_remove >= 0 &&
-                               (unsigned char)input[pos - bytes_to_remove] >= 0x80 &&
-                               (unsigned char)input[pos - bytes_to_remove] < 0xC0) {
-                            bytes_to_remove++;
-                        }
-                    }
-                    if (bytes_to_remove > pos) bytes_to_remove = pos;
-                    pos -= bytes_to_remove;
-
-                    if ((last_c & 0xF0) == 0xE0 || (last_c & 0xE0) == 0xC0) {
-                        move(cy, cx - 2);
-                    } else {
-                        move(cy, cx - 1);
-                    }
-                } else {
-                    pos--;
-                    move(cy, cx - 1);
-                }
-                clrtoeol();
+            if (strlen(input) > 0) {
+                size_t len = strlen(input) - 1;
+                while (len > 0 && ((unsigned char)input[len] & 0xC0) == 0x80)
+                    len--;
+                input[len] = '\0';
+                wmove(win_controls, 4, input_start_col);
+                wclrtoeol(win_controls);
+                wprintw(win_controls, "%s", input);
                 wrefresh(win_controls);
             }
-        } else if (ch >= 0x20 && ch <= 0x7E) {
-            input[pos++] = (char)ch;
-            waddch(win_controls, ch);
-            wrefresh(win_controls);
-        } else if ((ch & 0xC0) == 0x80 || ch >= 0x80) {
-            if (pos < MAX_META_LEN - 1) {
-                input[pos++] = (char)ch;
-                if ((ch & 0xE0) == 0xC0 || (ch & 0xF0) == 0xE0) {
-                    waddch(win_controls, ch);
-                    wrefresh(win_controls);
-                }
-            }
-        } else {
-            input[pos++] = (char)ch;
-            waddch(win_controls, ch);
+        } else if (ch >= 32) {
+            size_t len = strlen(input);
+            input[len] = (char)ch;
+            input[len + 1] = '\0';
+            wmove(win_controls, 4, input_start_col);
+            wclrtoeol(win_controls);
+            wprintw(win_controls, "%s", input);
             wrefresh(win_controls);
         }
     }
 
-    input[pos] = '\0';
     flushinp();
 
-    noecho();
     curs_set(0);
 
     mvwprintw(win_controls, 4, 2, "                    ");

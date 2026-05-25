@@ -3768,14 +3768,14 @@ void render_help_content(void) {
     if (g_help_search_active && g_help_search_count > 0) {
         snprintf(hint, sizeof(hint),
                  use_english_ui()
-                     ? "Search: %d matches | n/N: next | Esc: clear search"
-                     : "搜索: %d 个匹配 | n/N: 下一个 | Esc: 清除搜索",
+                     ? "Search: %d matches | n/N: next | Left: sidebar"
+                     : "搜索: %d 个匹配 | n/N: 下一个 | 左键: 侧栏",
                  g_help_search_count);
     } else {
         snprintf(hint, sizeof(hint),
                  use_english_ui()
-                     ? "Up/Down: scroll 3 lines  |  /: search  |  Esc: back"
-                     : "上/下: 滚动3行  |  /: 搜索  |  Esc: 返回");
+                     ? "Up/Down: scroll 3 lines  |  /: search  |  Left: sidebar"
+                     : "上/下: 滚动3行  |  /: 搜索  |  左键: 侧栏");
     }
 
     int display_end = g_help_scroll_offset + visible_lines;
@@ -3799,7 +3799,6 @@ void render_help_content(void) {
 }
 
 static void help_search_prompt(void) {
-    echo();
     curs_set(1);
 
     int max_y, max_x;
@@ -3811,35 +3810,40 @@ static void help_search_prompt(void) {
 
     mvprintw(search_row, content_start_x, "%s",
              use_english_ui() ? "Search: " : "搜索: ");
+    int input_start_x = getcurx(stdscr);
     clrtoeol();
     refresh();
 
     char input[MAX_META_LEN];
     memset(input, 0, sizeof(input));
-    int pos = 0;
     int ch;
 
     flushinp();
 
-    while ((ch = getch()) != '\n' && ch != KEY_ENTER && ch != 27 && pos < MAX_META_LEN - 1) {
+    while ((ch = getch()) != '\n' && ch != KEY_ENTER && ch != 27 && strlen(input) < MAX_META_LEN - 1) {
         if (ch == ERR) continue;
         if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
-            if (pos > 0) {
-                pos--;
-                mvaddch(search_row, content_start_x + 8 + pos, ' ');
-                move(search_row, content_start_x + 8 + pos);
+            if (strlen(input) > 0) {
+                size_t len = strlen(input) - 1;
+                while (len > 0 && ((unsigned char)input[len] & 0xC0) == 0x80)
+                    len--;
+                input[len] = '\0';
+                move(search_row, input_start_x);
+                clrtoeol();
+                printw("%s", input);
                 refresh();
             }
-        } else if (ch >= 32 && ch < 127) {
-            input[pos++] = (char)ch;
-            addch(ch);
+        } else if (ch >= 32) {
+            size_t len = strlen(input);
+            input[len] = (char)ch;
+            input[len + 1] = '\0';
+            move(search_row, input_start_x);
+            clrtoeol();
+            printw("%s", input);
             refresh();
         }
     }
 
-    input[pos] = '\0';
-    flushinp();
-    noecho();
     curs_set(0);
 
     if (ch == 27) {
@@ -3867,14 +3871,60 @@ static void help_search_prompt(void) {
 
 static void handle_help_input(int ch) {
     switch (ch) {
+        case KEY_LEFT:
+            if (g_focus_area == FOCUS_CONTENT) {
+                g_focus_area = FOCUS_SIDEBAR;
+                render_menu_sidebar(g_menu_selected_idx, help_sidebar_items, HELP_ITEM_COUNT);
+                render_help_content();
+            }
+            break;
+
+        case KEY_RIGHT:
+        case '\n':
+        case KEY_ENTER:
+            if (g_focus_area == FOCUS_SIDEBAR) {
+                if (g_menu_selected_idx == HELP_ITEM_COUNT - 1) {
+                    exit_current_view();
+                } else {
+                    g_focus_area = FOCUS_CONTENT;
+                    render_menu_sidebar(g_menu_selected_idx, help_sidebar_items, HELP_ITEM_COUNT);
+                    render_help_content();
+                }
+            }
+            break;
+
         case KEY_UP:
-            g_help_scroll_offset -= 3;
-            if (g_help_scroll_offset < 0) g_help_scroll_offset = 0;
+            if (g_focus_area == FOCUS_SIDEBAR) {
+                if (g_menu_selected_idx > 0)
+                    g_menu_selected_idx--;
+                else
+                    g_menu_selected_idx = HELP_ITEM_COUNT - 1;
+                render_menu_sidebar(g_menu_selected_idx, help_sidebar_items, HELP_ITEM_COUNT);
+            } else if (g_help_search_active && g_help_search_count > 0) {
+                if (g_help_search_selected > 0)
+                    g_help_search_selected--;
+                else
+                    g_help_search_selected = g_help_search_count - 1;
+            } else {
+                g_help_scroll_offset -= 3;
+                if (g_help_scroll_offset < 0) g_help_scroll_offset = 0;
+            }
             render_help_content();
             break;
 
         case KEY_DOWN:
-            g_help_scroll_offset += 3;
+            if (g_focus_area == FOCUS_SIDEBAR) {
+                g_menu_selected_idx++;
+                if (g_menu_selected_idx >= HELP_ITEM_COUNT)
+                    g_menu_selected_idx = 0;
+                render_menu_sidebar(g_menu_selected_idx, help_sidebar_items, HELP_ITEM_COUNT);
+            } else if (g_help_search_active && g_help_search_count > 0) {
+                g_help_search_selected++;
+                if (g_help_search_selected >= g_help_search_count)
+                    g_help_search_selected = 0;
+            } else {
+                g_help_scroll_offset += 3;
+            }
             render_help_content();
             break;
 
@@ -3893,15 +3943,6 @@ static void handle_help_input(int ch) {
             }
             break;
 
-        case 27:
-            if (g_help_search_active) {
-                g_help_search_active = 0;
-                g_help_search_count = 0;
-                render_help_content();
-            } else {
-                exit_current_view();
-            }
-            break;
     }
 }
 
@@ -3976,7 +4017,7 @@ void exit_current_view(void) {
     render_lyrics();
 }
 
-static void rerender_active_view(void) {
+void rerender_active_view(void) {
     if (g_current_view == VIEW_MAIN) {
         render_playlist_content();
         render_controls();

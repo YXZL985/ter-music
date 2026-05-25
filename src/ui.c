@@ -2521,17 +2521,25 @@ void run_event_loop() {
             esc_pending = 0;
             // 如果是新的 ESC，重新开始
             if (ch == 27) {
-                esc_pending = 1;
-                esc_pending_time = get_ui_time_ms();
-                continue;
+                if (g_current_view != VIEW_MAIN) {
+                    esc_pending = 0;  // 菜单视图中退出 pending 状态，让 ESC 继续传递到视图处理器
+                } else {
+                    esc_pending = 1;
+                    esc_pending_time = get_ui_time_ms();
+                    continue;
+                }
             }
             // 否则 fall through 处理当前字符
         }
         
         if (ch == 27) {
-            esc_pending = 1;
-            esc_pending_time = get_ui_time_ms();
-            continue;
+            if (g_current_view != VIEW_MAIN) {
+                /* 菜单视图中不拦截 ESC，让其落入下方 g_current_view != VIEW_MAIN 派发 */
+            } else {
+                esc_pending = 1;
+                esc_pending_time = get_ui_time_ms();
+                continue;
+            }
         }
 
         if (ch == KEY_MOUSE) {
@@ -2573,6 +2581,21 @@ void run_event_loop() {
             }
         }
         
+        // 窗口大小改变：先于视图派发处理，确保所有视图都能正确重置布局
+        if (ch == KEY_RESIZE) {
+            delwin(win_playlist);
+            delwin(win_controls);
+            delwin(win_lyrics);
+            clear();
+            create_layout();
+            if (g_current_view != VIEW_MAIN) {
+                rerender_active_view();
+            } else {
+                request_ui_refresh(UI_DIRTY_PLAYLIST | UI_DIRTY_CONTROLS | UI_DIRTY_LYRICS);
+            }
+            continue;
+        }
+
         // 新增：如果在菜单视图模式下，优先处理菜单输入
         if (g_current_view != VIEW_MAIN) {
             handle_menu_input(ch);
@@ -2913,18 +2936,6 @@ void run_event_loop() {
                         break;
                 }
             }
-        }
-        
-        if (ch == KEY_RESIZE) {
-            // 终端窗口大小改变，重新创建布局
-            // 先删除旧窗口再重新创建，避免内存泄漏和显示错乱
-            delwin(win_playlist);
-            delwin(win_controls);
-            delwin(win_lyrics);
-            clear();
-            create_layout();
-            request_ui_refresh(UI_DIRTY_PLAYLIST | UI_DIRTY_CONTROLS | UI_DIRTY_LYRICS);
-            continue;
         }
     }
 }
