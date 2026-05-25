@@ -269,7 +269,9 @@ build_via_dpkg() {
     # modifications from static linking patches against the .orig.tar.gz
     if [ "$build_source" = "true" ]; then
         log_info "Phase 1: 生成源码包..."
-        local src_dpkg_args=(--build=source --no-sign)
+        # Use -d to skip build-deps check — static build container intentionally
+        # lacks FFmpeg dev packages (FFmpeg built from source)
+        local src_dpkg_args=(--build=source --no-sign -d)
 
         if [ -n "$target_arch" ] && is_cross_compiling "$target_arch" ]; then
             local dpkg_arch
