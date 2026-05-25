@@ -576,12 +576,45 @@ static int gbk_to_utf8(const char *input, size_t input_len,
  *
  * Idempotent: valid UTF-8 text (containing CJK or other high-range
  * codepoints) is left unchanged; ASCII-only text is also unchanged.
+ *
+ * Also handles raw GBK bytes (e.g. from APE tag parser): detects
+ * non-UTF-8 input and falls back to direct GBK→UTF-8 conversion.
  */
 static void try_gbk_fixup(char *buf, size_t buf_size) {
     if (!buf || buf[0] == '\0' || buf_size < 2) return;
 
     size_t len = strlen(buf);
     if (len == 0) return;
+
+    // Check if input is valid UTF-8. If not, it's likely raw GBK bytes
+    // (e.g. from APE tags) — try direct GBK→UTF-8 conversion.
+    {
+        int is_valid_utf8 = 1;
+        for (size_t i = 0; i < len; ) {
+            unsigned char c = (unsigned char)buf[i];
+            if (c < 0x80) {
+                i += 1;
+            } else if ((c & 0xE0) == 0xC0) {
+                if (c < 0xC2 || i + 1 >= len || (buf[i+1] & 0xC0) != 0x80)
+                    { is_valid_utf8 = 0; break; }
+                i += 2;
+            } else if ((c & 0xF0) == 0xE0) {
+                if (i + 2 >= len || (buf[i+1] & 0xC0) != 0x80 || (buf[i+2] & 0xC0) != 0x80)
+                    { is_valid_utf8 = 0; break; }
+                i += 3;
+            } else if ((c & 0xF8) == 0xF0) {
+                if (c > 0xF4 || i + 3 >= len || (buf[i+1] & 0xC0) != 0x80 || (buf[i+2] & 0xC0) != 0x80 || (buf[i+3] & 0xC0) != 0x80)
+                    { is_valid_utf8 = 0; break; }
+                i += 4;
+            } else {
+                is_valid_utf8 = 0; break;
+            }
+        }
+        if (!is_valid_utf8) {
+            gbk_to_utf8(buf, len, buf, buf_size);
+            return;
+        }
+    }
 
     // Decode UTF-8 codepoints and collect Latin-1 bytes.
     // If we encounter any codepoint > 0xFF, the text is already
