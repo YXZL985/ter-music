@@ -378,6 +378,7 @@ collect_results() {
         for f in "${build_root}"/*.dsc "${build_root}"/*.debian.tar.* "${build_root}"/*.orig.tar.*; do
             [ -f "$f" ] || continue
             cp "$f" "${SOURCE_OUTPUT_DIR}/"
+            copy_to_release "$f"
             log_info "已复制源码包: $(basename "$f")"
         done
     fi
