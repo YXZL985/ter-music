@@ -375,12 +375,10 @@ collect_results() {
     # Collect source packages
     if [ "$build_source" = "true" ]; then
         mkdir -p "${SOURCE_OUTPUT_DIR}"
-        local src_patterns=("*.dsc" "*.debian.tar.*" "*.orig.tar.*" "*.buildinfo" "*.changes")
-        for pattern in "${src_patterns[@]}"; do
-            while IFS= read -r -d '' f; do
-                cp "$f" "${SOURCE_OUTPUT_DIR}/"
-                log_info "已复制源码包: $(basename "$f")"
-            done < <(find "${build_root}" -maxdepth 1 -name "$pattern" -type f -print0 2>/dev/null || true)
+        for f in "${build_root}"/*.dsc "${build_root}"/*.debian.tar.* "${build_root}"/*.orig.tar.*; do
+            [ -f "$f" ] || continue
+            cp "$f" "${SOURCE_OUTPUT_DIR}/"
+            log_info "已复制源码包: $(basename "$f")"
         done
     fi
 
