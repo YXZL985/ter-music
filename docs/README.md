@@ -648,7 +648,9 @@ Ter-Music adopts a modular design, main modules include:
 - **main.c**: Program entry, command-line argument processing
 - **ui.c**: User interface rendering, event handling, layout management
 - **audio.c**: Audio decoding, FFmpeg initialization, playback control
-- **playlist.c**: Playlist loading, directory scanning, metadata reading
+- **playlist.c**: Playlist loading, directory scanning, metadata reading (FFmpeg + native APEv2 tags)
+- **ape_tag.c**: Native APEv2 tag parser for enhanced metadata extraction (FFmpeg + native APEv2 tags)
+- **ape_tag.c**: Native APEv2 tag parser for enhanced metadata extraction
 - **progress.c**: Playback progress tracking, progress operations such as seeking to specified time
 - **lyrics.c**: Lyrics loading, parsing, synchronized display
 - **menu_views.c**: Multi-view management, settings, history, favorites, playlist management
