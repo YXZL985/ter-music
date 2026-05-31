@@ -8,10 +8,10 @@ pkgver() {
 }
 pkgrel=1
 pkgdesc="Terminal based music player"
-arch=('x86_64' 'i686')
+arch=('x86_64')
 url="https://github.com/YXZL985/ter-music"
 license=('GPL')
-depends=('ffmpeg' 'ncurses' 'libpng' 'libjpeg' 'libao' 'libmad' 'libid3tag' 'libcurl')
+depends=('ffmpeg' 'ncurses' 'libpng' 'libjpeg' 'libao' 'libmad' 'libid3tag' 'curl')
 makedepends=('cmake' 'make' 'gcc' 'git' 'pkg-config')
 source=("ter-music::git+https://github.com/YXZL985/ter-music.git#branch=master")
 sha256sums=('SKIP')
