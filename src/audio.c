@@ -20,6 +20,7 @@
 // 音频后端头文件 — 运行时通过 dlopen/dlsym 加载，不编译时硬链接
 #include "dyn_pulse.h"
 #include "dyn_alsa.h"
+#include "dyn_pipewire.h"
 #include <dlfcn.h>
 
 // FFmpeg 头文件
@@ -46,6 +47,7 @@
 // 函数指针表全局实例定义
 struct pulseaudio_funcs P = {0};
 struct alsa_funcs A = {0};
+struct pipewire_funcs PW = {0};
 
 // 音频后端全局变量 — 始终定义，运行时检查是否加载成功
 static pa_mainloop *pa_ml = NULL;
@@ -58,6 +60,21 @@ static int alsa_ready = 0;
 
 static int pulse_loaded = 0;  // 运行时 PA dlopen 成功标志
 static int alsa_loaded = 0;   // 运行时 ALSA dlopen 成功标志
+static int pipewire_loaded = 0; // 运行时 PipeWire dlopen 成功标志
+
+/* PipeWire 运行时状态 */
+static struct pw_thread_loop *pw_loop = NULL;
+static struct pw_main_loop *pw_mainloop = NULL;
+static struct pw_context *pw_ctx = NULL;
+static struct pw_core *pw_core = NULL;
+static struct pw_stream *pw_s = NULL;
+static struct spa_hook pw_stream_listener;
+static int pw_stream_ready = 0;
+static int pw_stream_connecting = 0;  /* 阻止 process 过早回调 */
+static int pw_channels = 2;
+static int pw_sample_rate = 44100;
+static int pw_write_underrun = 0;
+static pthread_mutex_t pw_state_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 int g_active_backend = AUDIO_BACKEND_AUTO;
 
@@ -144,6 +161,14 @@ static uint64_t audio_now_ms(void) {
 #define PCM_QUEUE_CAPACITY 24
 #define PCM_QUEUE_MIN_PREFILL_MS 180
 #define PCM_QUEUE_MAX_PREFILL_MS 420
+
+/* PipeWire 环形缓冲区（线程安全：单生产者-单消费者） */
+#define PW_RING_SIZE (1024 * 1024)          /* 1 MB 环形缓冲区 */
+static uint8_t pw_ring_data[PW_RING_SIZE];
+static volatile int pw_ring_write_pos = 0;
+static volatile int pw_ring_read_pos = 0;
+static pthread_mutex_t pw_ring_mutex = PTHREAD_MUTEX_INITIALIZER;
+#define PW_RING_MASK (PW_RING_SIZE - 1)
 
 typedef struct {
     int32_t *data;
@@ -458,7 +483,8 @@ static void pcm_queue_consume(PCMQueue *queue) {
 }
 
 static void apply_volume_to_samples(int32_t *samples, int sample_count) {
-    if (g_active_backend == AUDIO_BACKEND_PULSE) {
+    if (g_active_backend == AUDIO_BACKEND_PULSE ||
+        g_active_backend == AUDIO_BACKEND_PIPEWIRE) {
         (void)samples;
         (void)sample_count;
         return;
@@ -499,6 +525,9 @@ static int consume_volume_sync_request(int *volume_out, int force) {
     return should_sync;
 }
 
+/* Forward declarations for PipeWire backend functions */
+static void pw_sync_volume(int volume);
+
 static void audio_backend_sync_volume(int force) {
     int volume = 100;
     if (!consume_volume_sync_request(&volume, force)) {
@@ -529,6 +558,12 @@ static void audio_backend_sync_volume(int force) {
         P.operation_unref(op);
         return;
     }
+
+    if (pipewire_loaded && g_active_backend == AUDIO_BACKEND_PIPEWIRE) {
+        pw_sync_volume(volume);
+        return;
+    }
+
     (void)force;
     (void)volume;
 }
@@ -687,9 +722,524 @@ void alsa_unload(void) {
     A.loaded = 0;
 }
 
+/* ------------------------------------------------------------------- */
+/*  PipeWire 动态加载                                                   */
+/* ------------------------------------------------------------------- */
+#define PIPEWIRE_SONAME "libpipewire-0.3.so.0"
+
+#define PIPEWIRE_LOAD(name) do { \
+    *(void **)(&PW.name) = dlsym(PW.handle, "pw_" #name); \
+    if (!PW.name) { \
+        fprintf(stderr, "dlsym(pw_" #name ") failed: %s\n", dlerror()); \
+        dlclose(PW.handle); \
+        PW.handle = NULL; \
+        return -1; \
+    } \
+} while(0)
+
+int pipewire_load(void) {
+    if (PW.loaded) return 0;
+    PW.handle = dlopen(PIPEWIRE_SONAME, RTLD_LAZY | RTLD_LOCAL);
+    if (!PW.handle) return -1;
+
+    PIPEWIRE_LOAD(init);
+    PIPEWIRE_LOAD(deinit);
+
+    PIPEWIRE_LOAD(main_loop_new);
+    PIPEWIRE_LOAD(main_loop_destroy);
+    PIPEWIRE_LOAD(main_loop_run);
+    PIPEWIRE_LOAD(main_loop_quit);
+
+    PIPEWIRE_LOAD(thread_loop_new);
+    PIPEWIRE_LOAD(thread_loop_destroy);
+    PIPEWIRE_LOAD(thread_loop_start);
+    PIPEWIRE_LOAD(thread_loop_stop);
+    PIPEWIRE_LOAD(thread_loop_lock);
+    PIPEWIRE_LOAD(thread_loop_unlock);
+    PIPEWIRE_LOAD(thread_loop_signal);
+    PIPEWIRE_LOAD(thread_loop_get_loop);
+
+    PIPEWIRE_LOAD(context_new);
+    PIPEWIRE_LOAD(context_destroy);
+    PIPEWIRE_LOAD(context_connect);
+
+    PIPEWIRE_LOAD(core_disconnect);
+
+    PIPEWIRE_LOAD(properties_new);
+    PIPEWIRE_LOAD(properties_free);
+    PIPEWIRE_LOAD(properties_set);
+    PIPEWIRE_LOAD(properties_get);
+
+    PIPEWIRE_LOAD(stream_new);
+    PIPEWIRE_LOAD(stream_new_simple);
+    PIPEWIRE_LOAD(stream_destroy);
+    PIPEWIRE_LOAD(stream_connect);
+    PIPEWIRE_LOAD(stream_disconnect);
+    PIPEWIRE_LOAD(stream_dequeue_buffer);
+    PIPEWIRE_LOAD(stream_queue_buffer);
+    PIPEWIRE_LOAD(stream_set_active);
+    PIPEWIRE_LOAD(stream_set_control);
+    PIPEWIRE_LOAD(stream_flush);
+    PIPEWIRE_LOAD(stream_get_state);
+    PIPEWIRE_LOAD(stream_add_listener);
+    PIPEWIRE_LOAD(stream_set_error);
+    PIPEWIRE_LOAD(stream_update_params);
+
+    PW.init(NULL, NULL);
+    PW.loaded = 1;
+    return 0;
+}
+
+void pipewire_unload(void) {
+    if (PW.loaded) {
+        PW.deinit();
+        PW.loaded = 0;
+    }
+    if (PW.handle) {
+        dlclose(PW.handle);
+        PW.handle = NULL;
+    }
+}
+
+/* ------------------------------------------------------------------- */
+/*  SPA Pod Builder (inline — builds audio format without libspa)      */
+/* ------------------------------------------------------------------- */
+
+/*
+   Builds a SPA_PARAM_Format object pod for S32LE audio.
+   Binary layout (136 bytes for stereo 44100):
+
+   [spa_pod: body_size=128, type=Object]            8 bytes
+   [object_body: body_type=Format(4), padding=0]    8 bytes
+   prop mediaType:    key=0,  flags=0, pod(Id=2), val=1  +pad => 24
+   prop mediaSubtype: key=1,  flags=0, pod(Id=2), val=1  +pad => 24
+   prop format:       key=2,  flags=0, pod(Id=2), val=S32 +pad => 24
+   prop rate:         key=3,  flags=0, pod(Int=3), val=R  +pad => 24
+   prop channels:     key=4,  flags=0, pod(Int=3), val=C  +pad => 24
+   ----------------------------------------------------------------
+   Total: 136 bytes, pod.body_size=128
+*/
+int build_audio_format_pod(void *dst, int sample_rate, int channels) {
+    uint32_t *p = (uint32_t *)dst;
+    /* 每属性固定 24 字节，5 属性 = 120 字节，加上 16 字节对象头 */
+    uint32_t body_size = 128;  /* after spa_pod header */
+    uint32_t audio_format = SPA_AUDIO_FORMAT_S32;
+
+#define POD_SET(w)   do { *p++ = (uint32_t)(w); } while(0)
+
+    /* spa_pod header */
+    POD_SET(body_size);               /* size */
+    POD_SET(SPA_TYPE_Object);         /* type */
+
+    /* object body */
+    POD_SET(SPA_PARAM_Format);        /* body_type */
+    POD_SET(0);                       /* padding */
+
+    /* prop 0: mediaType = audio */
+    POD_SET(SPA_FORMAT_mediaType);
+    POD_SET(0);
+    POD_SET(4);  POD_SET(SPA_TYPE_Id);  POD_SET(SPA_MEDIA_TYPE_audio);  POD_SET(0);
+
+    /* prop 1: mediaSubtype = raw */
+    POD_SET(SPA_FORMAT_mediaSubtype);
+    POD_SET(0);
+    POD_SET(4);  POD_SET(SPA_TYPE_Id);  POD_SET(SPA_MEDIA_SUBTYPE_raw);  POD_SET(0);
+
+    /* prop 2: format = S32 */
+    POD_SET(SPA_FORMAT_AUDIO_format);
+    POD_SET(0);
+    POD_SET(4);  POD_SET(SPA_TYPE_Id);  POD_SET(audio_format);  POD_SET(0);
+
+    /* prop 3: sample rate */
+    POD_SET(SPA_FORMAT_AUDIO_rate);
+    POD_SET(0);
+    POD_SET(4);  POD_SET(SPA_TYPE_Int);  POD_SET((uint32_t)sample_rate);  POD_SET(0);
+
+    /* prop 4: channels */
+    POD_SET(SPA_FORMAT_AUDIO_channels);
+    POD_SET(0);
+    POD_SET(4);  POD_SET(SPA_TYPE_Int);  POD_SET((uint32_t)channels);  POD_SET(0);
+
+#undef POD_SET
+
+    /* Total bytes written = 34 × 4 = 136 */
+    return 136;
+}
+
+/* ------------------------------------------------------------------- */
+/*  PipeWire 环形缓冲区操作（线程安全，SPSC）                           */
+/* ------------------------------------------------------------------- */
+
+static int pw_ring_bytes_writable(void) {
+    int write = pw_ring_write_pos;
+    int read  = pw_ring_read_pos;
+    int used = write - read;
+    if (used < 0) used += PW_RING_SIZE;
+    return PW_RING_SIZE - 1 - used;  /* 始终留一个空位 */
+}
+
+static int pw_ring_bytes_available(void) {
+    int write = pw_ring_write_pos;
+    int read  = pw_ring_read_pos;
+    int used = write - read;
+    if (used < 0) used += PW_RING_SIZE;
+    return used;
+}
+
+static int pw_ring_write(const uint8_t *data, int bytes) {
+    int written = 0;
+    pthread_mutex_lock(&pw_ring_mutex);
+    int avail = pw_ring_bytes_writable();
+    if (avail <= 0) {
+        pthread_mutex_unlock(&pw_ring_mutex);
+        return 0;
+    }
+    if (bytes > avail) bytes = avail;
+
+    int write = pw_ring_write_pos;
+    int first = PW_RING_SIZE - (write & PW_RING_MASK);
+    if (first > bytes) first = bytes;
+    memcpy(&pw_ring_data[write & PW_RING_MASK], data, (size_t)first);
+    if (first < bytes) {
+        memcpy(pw_ring_data, data + first, (size_t)(bytes - first));
+    }
+    pw_ring_write_pos = write + bytes;
+    written = bytes;
+    pthread_mutex_unlock(&pw_ring_mutex);
+    return written;
+}
+
+static int pw_ring_read(uint8_t *data, int bytes) {
+    int read_bytes = 0;
+    pthread_mutex_lock(&pw_ring_mutex);
+    int avail = pw_ring_bytes_available();
+    if (avail <= 0) {
+        pthread_mutex_unlock(&pw_ring_mutex);
+        return 0;
+    }
+    if (bytes > avail) bytes = avail;
+
+    int read = pw_ring_read_pos;
+    int first = PW_RING_SIZE - (read & PW_RING_MASK);
+    if (first > bytes) first = bytes;
+    memcpy(data, &pw_ring_data[read & PW_RING_MASK], (size_t)first);
+    if (first < bytes) {
+        memcpy(data + first, pw_ring_data, (size_t)(bytes - first));
+    }
+    pw_ring_read_pos = read + bytes;
+    read_bytes = bytes;
+    pthread_mutex_unlock(&pw_ring_mutex);
+    return read_bytes;
+}
+
+static void pw_ring_reset(void) {
+    pthread_mutex_lock(&pw_ring_mutex);
+    pw_ring_write_pos = 0;
+    pw_ring_read_pos = 0;
+    pthread_mutex_unlock(&pw_ring_mutex);
+}
+
+/* ------------------------------------------------------------------- */
+/*  PipeWire 后端接口函数                                               */
+/* ------------------------------------------------------------------- */
+
+static void pw_cleanup_stream_locked(void);
+static void pw_stream_state_change_locked(int ready);
+
+/* Callback: state changed (called from PW thread loop). */
+static void pw_stream_on_state_changed(void *userdata,
+                                        enum pw_stream_state old,
+                                        enum pw_stream_state state,
+                                        const char *error) {
+    (void)userdata;
+    (void)old;
+    pthread_mutex_lock(&pw_state_mutex);
+    if (state == PW_STREAM_STATE_PAUSED ||
+        state == PW_STREAM_STATE_STREAMING) {
+        pw_stream_ready = 1;
+        pw_stream_connecting = 0;
+    } else if (state == PW_STREAM_STATE_ERROR) {
+        fprintf(stderr, "PipeWire stream error: %s\n", error ? error : "unknown");
+        pw_stream_ready = 0;
+        pw_stream_connecting = 0;
+    }
+    pthread_mutex_unlock(&pw_state_mutex);
+}
+
+/* Callback: process (called from PW thread loop when graph needs data). */
+static void pw_stream_on_process(void *userdata) {
+    (void)userdata;
+
+    pthread_mutex_lock(&pw_state_mutex);
+    int still_connecting = pw_stream_connecting;
+    pthread_mutex_unlock(&pw_state_mutex);
+    if (still_connecting) return;
+
+    struct pw_buffer *buf = NULL;
+    if (PW.stream_dequeue_buffer(pw_s, &buf) < 0 || !buf) {
+        return;
+    }
+
+    struct spa_buffer *spa_buf = buf->buffer;
+    if (spa_buf->n_datas < 1) {
+        PW.stream_queue_buffer(pw_s, buf);
+        return;
+    }
+
+    struct spa_data *data = SPA_BUFFER_DATA(spa_buf, 0);
+    uint8_t *dst = (uint8_t *)data->data;
+    int max_bytes = (int)data->maxsize;
+
+    int copied = pw_ring_read(dst, max_bytes);
+
+    if (copied <= 0) {
+        memset(dst, 0, (size_t)max_bytes);
+        data->chunk->offset = 0;
+        data->chunk->stride = (uint32_t)(pw_channels * (int)sizeof(int32_t));
+        data->chunk->size = (uint32_t)max_bytes;
+        PW.stream_queue_buffer(pw_s, buf);
+        pw_write_underrun = 1;
+        return;
+    }
+
+    data->chunk->offset = 0;
+    data->chunk->stride = (uint32_t)(pw_channels * (int)sizeof(int32_t));
+    data->chunk->size = (uint32_t)copied;
+
+    PW.stream_queue_buffer(pw_s, buf);
+}
+
+static void pw_stream_on_param_changed(void *userdata, uint32_t id, const struct spa_pod *param) {
+    (void)userdata; (void)id; (void)param;
+}
+
+/* PipeWire 1.6 的事件版本是 2（包含 io_changed） */
+#define PW_STREAM_EVENTS_VERSION 2
+
+static const struct pw_stream_events pw_stream_callbacks = {
+    .version = PW_STREAM_EVENTS_VERSION,
+    .destroy = NULL,
+    .state_changed = pw_stream_on_state_changed,
+    .param_changed = pw_stream_on_param_changed,
+    .process = pw_stream_on_process,
+    .drained = NULL,
+    .control_info = NULL,
+    .io_changed = NULL,
+};
+
+static int pw_prepare_stream(int sample_rate, int channels) {
+    pw_channels = channels;
+    pw_sample_rate = sample_rate;
+    pw_stream_ready = 0;
+    pw_stream_connecting = 1;
+    pw_write_underrun = 0;
+    pw_ring_reset();
+
+    unsigned int latency_usec = (unsigned int)get_configured_latency_ms() * 1000U;
+    unsigned int buf_size = (unsigned int)((uint64_t)sample_rate * (uint64_t)channels *
+                                           (uint64_t)sizeof(int32_t) * latency_usec / 1000000U);
+    if (buf_size < 65536) buf_size = 65536;
+    if (buf_size > PW_RING_SIZE / 2) buf_size = PW_RING_SIZE / 2;
+
+    /* 创建线程循环 */
+    pw_loop = PW.thread_loop_new("ter-music-pw", NULL);
+    if (!pw_loop) {
+        update_controls_status(audio_text("无法创建 PipeWire 线程循环", "Cannot create PW thread loop"));
+        return -1;
+    }
+    pw_mainloop = PW.thread_loop_get_loop(pw_loop);
+
+    /* 创建上下文 */
+    pw_ctx = PW.context_new(pw_mainloop, NULL, 0);
+    if (!pw_ctx) {
+        update_controls_status(audio_text("无法创建 PipeWire 上下文", "Cannot create PW context"));
+        PW.thread_loop_destroy(pw_loop);
+        pw_loop = NULL; pw_mainloop = NULL;
+        return -1;
+    }
+
+    /* 连接到 PipeWire 守护进程 */
+    pw_core = PW.context_connect(pw_ctx, NULL, 0);
+    if (!pw_core) {
+        update_controls_status(audio_text("无法连接到 PipeWire", "Cannot connect to PipeWire"));
+        PW.context_destroy(pw_ctx); pw_ctx = NULL;
+        PW.thread_loop_destroy(pw_loop);
+        pw_loop = NULL; pw_mainloop = NULL;
+        return -1;
+    }
+
+    /* 创建流 */
+    pw_s = PW.stream_new(pw_core, "ter-music", NULL);
+    if (!pw_s) {
+        update_controls_status(audio_text("无法创建 PipeWire 流", "Cannot create PW stream"));
+        PW.core_disconnect(pw_core); pw_core = NULL;
+        PW.context_destroy(pw_ctx); pw_ctx = NULL;
+        PW.thread_loop_destroy(pw_loop);
+        pw_loop = NULL; pw_mainloop = NULL;
+        return -1;
+    }
+
+    /* 注册事件回调 */
+    PW.stream_add_listener(pw_s, &pw_stream_listener, &pw_stream_callbacks, NULL);
+
+    /* 构建音频格式 SPA Pod */
+    uint8_t pod_buf[256];
+    int pod_len = build_audio_format_pod(pod_buf, sample_rate, channels);
+    (void)pod_len;
+    const struct spa_pod *params[1];
+    params[0] = (const struct spa_pod *)pod_buf;
+
+    /* 连接流 */
+    uint32_t flags = PW_STREAM_FLAG_AUTOCONNECT |
+                     PW_STREAM_FLAG_MAP_BUFFERS |
+                     PW_STREAM_FLAG_RT_PROCESS;
+    if (PW.stream_connect(pw_s, PW_DIRECTION_OUTPUT, 0, flags, params, 1) < 0) {
+        update_controls_status(audio_text("无法连接 PipeWire 流", "Cannot connect PW stream"));
+        PW.stream_destroy(pw_s); pw_s = NULL;
+        PW.core_disconnect(pw_core); pw_core = NULL;
+        PW.context_destroy(pw_ctx); pw_ctx = NULL;
+        PW.thread_loop_destroy(pw_loop);
+        pw_loop = NULL; pw_mainloop = NULL;
+        return -1;
+    }
+
+    /* 启动线程循环 */
+    if (PW.thread_loop_start(pw_loop) < 0) {
+        update_controls_status(audio_text("无法启动 PipeWire 线程", "Cannot start PW thread"));
+        PW.stream_destroy(pw_s); pw_s = NULL;
+        PW.core_disconnect(pw_core); pw_core = NULL;
+        PW.context_destroy(pw_ctx); pw_ctx = NULL;
+        PW.thread_loop_destroy(pw_loop);
+        pw_loop = NULL; pw_mainloop = NULL;
+        return -1;
+    }
+
+    /* 等待流就绪（带超时） */
+    int timeout_ms = 5000;
+    while (timeout_ms > 0) {
+        pthread_mutex_lock(&pw_state_mutex);
+        int ready = pw_stream_ready;
+        pthread_mutex_unlock(&pw_state_mutex);
+        if (ready) break;
+        usleep(1000);
+        timeout_ms--;
+    }
+
+    pthread_mutex_lock(&pw_state_mutex);
+    int is_ready = pw_stream_ready;
+    pthread_mutex_unlock(&pw_state_mutex);
+
+    if (!is_ready) {
+        update_controls_status(audio_text("PipeWire 流未就绪", "PW stream not ready"));
+        PW.thread_loop_stop(pw_loop);
+        PW.stream_destroy(pw_s); pw_s = NULL;
+        PW.core_disconnect(pw_core); pw_core = NULL;
+        PW.context_destroy(pw_ctx); pw_ctx = NULL;
+        PW.thread_loop_destroy(pw_loop);
+        pw_loop = NULL; pw_mainloop = NULL;
+        return -1;
+    }
+
+    return 0;
+}
+
+static void pw_cleanup_stream_locked(void) {
+    if (pw_s) {
+        PW.thread_loop_stop(pw_loop);
+        PW.stream_destroy(pw_s);
+        pw_s = NULL;
+    }
+    if (pw_core) {
+        PW.core_disconnect(pw_core);
+        pw_core = NULL;
+    }
+    if (pw_ctx) {
+        PW.context_destroy(pw_ctx);
+        pw_ctx = NULL;
+    }
+    if (pw_loop) {
+        PW.thread_loop_destroy(pw_loop);
+        pw_loop = NULL;
+        pw_mainloop = NULL;
+    }
+    pw_stream_ready = 0;
+    pw_stream_connecting = 0;
+    pw_ring_reset();
+}
+
+static void pw_cleanup_stream(void) {
+    pw_cleanup_stream_locked();
+}
+
+static void pw_flush_stream(void) {
+    if (pw_s) {
+        pthread_mutex_lock(&pw_state_mutex);
+        int ready = pw_stream_ready;
+        pthread_mutex_unlock(&pw_state_mutex);
+        if (ready) {
+            PW.stream_flush(pw_s, 0);
+        }
+    }
+    pw_ring_reset();
+}
+
+static int pw_write_samples(const int32_t *samples, int frame_count);
+static void pw_pause_stream(void);
+static void pw_resume_stream(void);
+static void pw_sync_volume(int volume);
+
+static int pw_write_samples(const int32_t *samples, int frame_count) {
+    if (!samples || frame_count <= 0) return 0;
+    int bytes = frame_count * pw_channels * (int)sizeof(int32_t);
+    int total_written = 0;
+
+    while (total_written < bytes) {
+        int chunk = bytes - total_written;
+        if (chunk > 65536) chunk = 65536;
+
+        int written = pw_ring_write((const uint8_t *)samples + total_written, chunk);
+        if (written <= 0) {
+            if (!g_play_thread_running) return 0;
+            usleep(1000);
+            continue;
+        }
+        total_written += written;
+    }
+    return 0;
+}
+
+static void pw_pause_stream(void) {
+    pthread_mutex_lock(&pw_state_mutex);
+    int ready = pw_stream_ready;
+    pthread_mutex_unlock(&pw_state_mutex);
+    if (ready) PW.stream_set_active(pw_s, 0);
+}
+
+static void pw_resume_stream(void) {
+    pthread_mutex_lock(&pw_state_mutex);
+    int ready = pw_stream_ready;
+    pthread_mutex_unlock(&pw_state_mutex);
+    if (ready) PW.stream_set_active(pw_s, 1);
+}
+
+static void pw_sync_volume(int volume) {
+    pthread_mutex_lock(&pw_state_mutex);
+    int ready = pw_stream_ready;
+    pthread_mutex_unlock(&pw_state_mutex);
+    if (ready) {
+        float vol_linear = (float)volume / 100.0f;
+        PW.stream_set_control(pw_s, PW_STREAM_CONTROL_VOLUME, 0, vol_linear);
+    }
+}
+
+static int pw_prepare_stream(int sample_rate, int channels);
+static void pw_cleanup_stream(void);
+static void pw_flush_stream(void);
+
 int audio_backend_is_available(int backend) {
     if (backend == AUDIO_BACKEND_PULSE) return pulse_loaded;
     if (backend == AUDIO_BACKEND_ALSA)  return alsa_loaded;
+    if (backend == AUDIO_BACKEND_PIPEWIRE) return pipewire_loaded;
     return 0;
 }
 
@@ -1121,6 +1671,10 @@ static int audio_backend_prepare_stream(int sample_rate, int channels) {
         return 0;
     }
 
+    if (pipewire_loaded && g_active_backend == AUDIO_BACKEND_PIPEWIRE) {
+        return pw_prepare_stream(sample_rate, channels);
+    }
+
     update_controls_status(audio_text("没有可用的音频后端", "No audio backend available"));
     return -1;
 }
@@ -1142,6 +1696,10 @@ static void audio_backend_cleanup_stream(void) {
         alsa_pcm = NULL;
         return;
     }
+    if (pipewire_loaded && g_active_backend == AUDIO_BACKEND_PIPEWIRE) {
+        pw_cleanup_stream();
+        return;
+    }
 }
 
 static void audio_backend_flush_stream(void) {
@@ -1161,6 +1719,10 @@ static void audio_backend_flush_stream(void) {
     if (alsa_loaded && g_active_backend == AUDIO_BACKEND_ALSA && alsa_pcm) {
         A.pcm_drop(alsa_pcm);
         A.pcm_prepare(alsa_pcm);
+        return;
+    }
+    if (pipewire_loaded && g_active_backend == AUDIO_BACKEND_PIPEWIRE) {
+        pw_flush_stream();
         return;
     }
 }
@@ -1230,6 +1792,10 @@ static int audio_backend_write_samples(const int32_t *samples, int frame_count) 
         return 0;
     }
 
+    if (pipewire_loaded && g_active_backend == AUDIO_BACKEND_PIPEWIRE) {
+        return pw_write_samples(samples, frame_count);
+    }
+
     return -1;
 }
 
@@ -1248,6 +1814,10 @@ static void audio_backend_pause_stream(void) {
         A.pcm_pause(alsa_pcm, 1);
         return;
     }
+    if (pipewire_loaded && g_active_backend == AUDIO_BACKEND_PIPEWIRE) {
+        pw_pause_stream();
+        return;
+    }
 }
 
 static void audio_backend_resume_stream(void) {
@@ -1263,6 +1833,10 @@ static void audio_backend_resume_stream(void) {
     }
     if (alsa_loaded && g_active_backend == AUDIO_BACKEND_ALSA && alsa_pcm) {
         A.pcm_pause(alsa_pcm, 0);
+        return;
+    }
+    if (pipewire_loaded && g_active_backend == AUDIO_BACKEND_PIPEWIRE) {
+        pw_resume_stream();
         return;
     }
 }
@@ -1302,6 +1876,11 @@ void audio_backend_shutdown(void) {
         alsa_pcm = NULL;
     }
     alsa_ready = 0;
+    if (pipewire_loaded) {
+        pw_cleanup_stream();
+        pipewire_unload();
+        pipewire_loaded = 0;
+    }
 }
 
 void init_audio_device() {
@@ -1321,6 +1900,36 @@ void init_audio_device() {
     } else {
         alsa_loaded = 0;
         log_info("audio", "ALSA library not available");
+    }
+    if (pipewire_load() == 0) {
+        pipewire_loaded = 1;
+        log_info("audio", "PipeWire library loaded");
+    } else {
+        pipewire_loaded = 0;
+        log_info("audio", "PipeWire library not available");
+    }
+
+    /* 优先级策略：PipeWire > PulseAudio > ALSA */
+    if (g_active_backend == AUDIO_BACKEND_AUTO || g_active_backend == AUDIO_BACKEND_PIPEWIRE) {
+        if (pipewire_loaded) {
+            log_info("audio", "Trying PipeWire backend");
+            if (pw_prepare_stream(44100, 2) == 0) {
+                /* 快速测试成功后立即清理，实际流在 play_audio_thread 中创建 */
+                pw_cleanup_stream();
+                g_active_backend = AUDIO_BACKEND_PIPEWIRE;
+                log_info("audio", "PipeWire backend selected");
+                printf("%s\n", audio_text("当前使用 PipeWire 音频后端", "Using PipeWire backend"));
+                return;
+            }
+            /* 连接失败 — 清理并回退 */
+            pw_cleanup_stream();
+            pipewire_unload();
+            pipewire_loaded = 0;
+            log_info("audio", "PipeWire connection failed, falling back");
+        } else if (g_active_backend == AUDIO_BACKEND_PIPEWIRE) {
+            log_error("audio", "PipeWire library could not be loaded");
+            return;
+        }
     }
 
     if (g_active_backend == AUDIO_BACKEND_AUTO || g_active_backend == AUDIO_BACKEND_PULSE) {

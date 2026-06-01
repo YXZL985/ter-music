@@ -436,7 +436,7 @@ static void clamp_config_values(AppConfig *cfg)
     if (cfg->lyrics_alignment < 0 || cfg->lyrics_alignment > 2)
         cfg->lyrics_alignment = 0;
 
-    if (cfg->audio_backend < AUDIO_BACKEND_AUTO || cfg->audio_backend > AUDIO_BACKEND_ALSA)
+    if (cfg->audio_backend < AUDIO_BACKEND_AUTO || cfg->audio_backend > AUDIO_BACKEND_PIPEWIRE)
         cfg->audio_backend = AUDIO_BACKEND_AUTO;
 
     if (cfg->sort_mode < SORT_DEFAULT || cfg->sort_mode > SORT_FILENAME)

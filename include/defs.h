@@ -116,9 +116,10 @@ typedef struct {
 #define MAX_REMOTE_CONNECTIONS 20
 #define MAX_REMOTE_NAME_LEN 64
 
-#define AUDIO_BACKEND_AUTO  0
-#define AUDIO_BACKEND_PULSE 1
-#define AUDIO_BACKEND_ALSA  2
+#define AUDIO_BACKEND_AUTO      0
+#define AUDIO_BACKEND_PULSE     1
+#define AUDIO_BACKEND_ALSA      2
+#define AUDIO_BACKEND_PIPEWIRE  3
 
 #define CONFIG_CURRENT_VERSION 2
 
@@ -235,7 +236,7 @@ typedef struct {
     float default_playback_speed;
     int show_album_cover;
     int lyrics_alignment;  // 0=居左(Left), 1=居中(Center), 2=居右(Right)
-    int audio_backend;     // 0=Auto, 1=PulseAudio, 2=ALSA
+    int audio_backend;     // 0=Auto, 1=PulseAudio, 2=ALSA, 3=PipeWire
     int sort_mode;         // SortMode value, 0=default (no sort)
     int config_version;
     RemoteConnectionConfig remote_connections[MAX_REMOTE_CONNECTIONS];

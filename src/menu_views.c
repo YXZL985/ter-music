@@ -1444,10 +1444,11 @@ static void format_settings_option_line(int option_index, char *line, size_t lin
     } else if (option_index == SETTINGS_IDX_AUDIO_BACKEND) {
         const char *backend_str;
         switch (g_app_config.audio_backend) {
-            case AUDIO_BACKEND_AUTO:  backend_str = use_english_ui() ? "Auto" : "自动"; break;
-            case AUDIO_BACKEND_PULSE: backend_str = "PulseAudio"; break;
-            case AUDIO_BACKEND_ALSA:  backend_str = "ALSA"; break;
-            default:                  backend_str = use_english_ui() ? "Auto" : "自动";
+            case AUDIO_BACKEND_AUTO:     backend_str = use_english_ui() ? "Auto" : "自动"; break;
+            case AUDIO_BACKEND_PULSE:    backend_str = "PulseAudio"; break;
+            case AUDIO_BACKEND_ALSA:     backend_str = "ALSA"; break;
+            case AUDIO_BACKEND_PIPEWIRE: backend_str = "PipeWire"; break;
+            default:                     backend_str = use_english_ui() ? "Auto" : "自动";
         }
         snprintf(line, line_size, "%s%s%s",
                  current_settings_options[option_index], separator, backend_str);
@@ -1710,10 +1711,12 @@ static void adjust_or_toggle_settings_option(int option_index, int delta) {
             break;
         }
         case SETTINGS_IDX_AUDIO_BACKEND: {
-            int options[] = {AUDIO_BACKEND_AUTO, AUDIO_BACKEND_PULSE, AUDIO_BACKEND_ALSA};
-            int count = 3;
+            int options[] = {AUDIO_BACKEND_AUTO, AUDIO_BACKEND_PIPEWIRE,
+                             AUDIO_BACKEND_PULSE, AUDIO_BACKEND_ALSA};
+            int count = 4;
+            int has_pw    = audio_backend_is_available(AUDIO_BACKEND_PIPEWIRE);
             int has_pulse = audio_backend_is_available(AUDIO_BACKEND_PULSE);
-            int has_alsa = audio_backend_is_available(AUDIO_BACKEND_ALSA);
+            int has_alsa  = audio_backend_is_available(AUDIO_BACKEND_ALSA);
             int current = 0;
             for (int i = 0; i < count; i++) {
                 if (g_app_config.audio_backend == options[i]) {
@@ -1727,7 +1730,8 @@ static void adjust_or_toggle_settings_option(int option_index, int delta) {
             do {
                 next = (next + direction + count) % count;
                 attempts++;
-                if ((options[next] == AUDIO_BACKEND_PULSE && !has_pulse) ||
+                if ((options[next] == AUDIO_BACKEND_PIPEWIRE && !has_pw) ||
+                    (options[next] == AUDIO_BACKEND_PULSE && !has_pulse) ||
                     (options[next] == AUDIO_BACKEND_ALSA && !has_alsa)) {
                     continue;
                 }
