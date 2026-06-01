@@ -24,3 +24,4 @@ override_dh_shlibdeps:
 	sed -i 's/libjpeg62-turbo[^,]*/libjpeg62-turbo (>= 1.3.1) | libjpeg62/g' debian/*.substvars
 	# Add OR-alternatives for libpng16 — Debian uses libpng16-16, Ubuntu 24.04+ uses libpng16-16t64
 	sed -i 's/libpng16-16[^,]*/libpng16-16 (>= 1.6.2-1) | libpng16-16t64/g' debian/*.substvars
+	# libxml2 soname is stable (libxml2.so.2) across Debian/Ubuntu — no substitution needed

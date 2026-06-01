@@ -274,6 +274,7 @@ check_dependencies() {
             "libcurl4-openssl-dev"
             "libpng-dev"
             "libjpeg-dev"
+            "libxml2-dev"
         )
 
         for lib in "${deb_dev_libs[@]}"; do
@@ -291,6 +292,7 @@ check_dependencies() {
                 "pulseaudio-libs-devel"
                 "libpng-devel"
                 "libjpeg-turbo-devel"
+                "libxml2-devel"
                 "libcurl-devel"
             )
         else
@@ -300,6 +302,7 @@ check_dependencies() {
                 "pulseaudio-libs-devel"
                 "libpng-devel"
                 "libjpeg-turbo-devel"
+                "libxml2-devel"
                 "libcurl-devel"
             )
         fi
@@ -517,6 +520,7 @@ Source0:        %{name}-%{version}.tar.gz
 BuildRequires:  gcc, make, cmake, pkg-config
 BuildRequires:  pkgconfig(libcurl)
 ${ffmpeg_build_requires}
+BuildRequires:  pkgconfig(libxml-2.0)
 BuildRequires:  pkgconfig(libpulse) >= 10.0
 BuildRequires:  pkgconfig(ncursesw) >= 6.0
 BuildRequires:  pkgconfig(libpng) >= 1.6

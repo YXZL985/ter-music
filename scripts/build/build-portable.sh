@@ -124,13 +124,13 @@ check_cross_compile_deps() {
     if [ ! -d "$pkg_config_dir" ] && [ ! -d "/usr/${arch_prefix}/lib/pkgconfig" ]; then
         log_warn "未找到 ${arch_prefix} 的 pkgconfig 目录"
         log_warn "请确保已安装目标架构的开发库，例如:"
-        log_warn "  sudo apt install libpng-dev:arm64 libjpeg-dev:arm64"
+        log_warn "  sudo apt install libpng-dev:arm64 libjpeg-dev:arm64 libxml2-dev:arm64"
     fi
 
     # 检查关键开发库是否存在
     local missing_libs=()
     if [ -d "$pkg_config_dir" ]; then
-        for lib in libpng libjpeg libcurl; do
+        for lib in libpng libjpeg libxml2 libcurl; do
             if ! pkg-config --exists --variable pc_path pkg-config 2>/dev/null | grep -q "$arch_prefix"; then
                 :
             fi
@@ -209,7 +209,7 @@ show_help() {
       sudo apt update
       sudo apt install libncurses-dev:arm64 libavcodec-dev:arm64 libavfilter-dev:arm64 \
                        libavformat-dev:arm64 libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64 \
-                       libpng-dev:arm64 libjpeg-dev:arm64 libcurl4-openssl-dev:arm64
+                       libpng-dev:arm64 libjpeg-dev:arm64 libxml2-dev:arm64 libcurl4-openssl-dev:arm64
 
 示例:
     $0                                          自动检测版本和架构，直接从源码构建

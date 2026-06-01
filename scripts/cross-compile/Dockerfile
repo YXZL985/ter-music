@@ -49,6 +49,7 @@ RUN apt-get update && apt-get install -y \
     libswscale-dev \
     libpng-dev \
     libjpeg-dev \
+    libxml2-dev \
     libncurses-dev \
     libpulse-dev \
     libdbus-1-dev \
@@ -82,6 +83,7 @@ RUN dpkg --add-architecture arm64 && \
     libswscale-dev:arm64 \
     libpng-dev:arm64 \
     libjpeg-dev:arm64 \
+    libxml2-dev:arm64 \
     libcurl4-openssl-dev:arm64 \
     libpulse-dev:arm64 \
     pkg-config \

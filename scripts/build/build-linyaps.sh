@@ -418,6 +418,7 @@ buildext:
       - liblapack3
       - libpng-dev
       - libjpeg-dev
+      - libxml2-dev
       - libcurl4-openssl-dev
     depends:
       - libavformat60
@@ -432,6 +433,7 @@ buildext:
       - libgfortran5
       - libpng16-16
       - libjpeg62-turbo
+      - libxml2
       - libcurl4
       - libswscale7
       - libmpg123-0

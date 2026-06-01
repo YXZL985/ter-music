@@ -1,24 +1,25 @@
 pkgbase = ter-music-cn
-	pkgdesc = Terminal based music player
-	pkgver = 1.11.1
-	pkgrel = 1
-	url = https://github.com/YXZL985/ter-music
-	arch = x86_64
-	license = GPL
-	makedepends = cmake
-	makedepends = make
-	makedepends = gcc
-	makedepends = git
-	makedepends = pkg-config
-	depends = ffmpeg
-	depends = ncurses
-	depends = libpng
-	depends = libjpeg
-	depends = libao
-	depends = libmad
-	depends = libid3tag
-	depends = curl
-	source = ter-music::git+https://github.com/YXZL985/ter-music.git#branch=master
-	sha256sums = SKIP
+		pkgdesc = Terminal based music player
+		pkgver = 1.11.1
+		pkgrel = 1
+		url = https://github.com/YXZL985/ter-music
+		arch = x86_64
+		license = GPL
+		makedepends = cmake
+		makedepends = make
+		makedepends = gcc
+		makedepends = git
+		makedepends = pkg-config
+		depends = ffmpeg
+		depends = ncurses
+		depends = libxml2
+		depends = libpng
+		depends = libjpeg
+		depends = libao
+		depends = libmad
+		depends = libid3tag
+		depends = curl
+		source = ter-music::git+https://github.com/YXZL985/ter-music.git#branch=master
+		sha256sums = SKIP
 
 pkgname = ter-music-cn

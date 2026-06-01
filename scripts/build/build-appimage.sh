@@ -131,7 +131,7 @@ check_cross_compile_deps() {
     fi
     
     # 检查常用开发库
-    local required_libs=("libpng" "libjpeg" "libcurl")
+    local required_libs=("libpng" "libjpeg" "libxml2" "libcurl")
     for lib in "${required_libs[@]}"; do
         if [ -d "$pkg_config_dir" ]; then
             if ! pkg-config --exists --silence-errors "$lib" 2>/dev/null && \
@@ -150,7 +150,7 @@ check_cross_compile_deps() {
         done
         echo ""
         log_warn "请确保已安装目标架构的开发库，例如:"
-        echo "  sudo apt install libpng-dev:arm64 libjpeg-dev:arm64"
+        echo "  sudo apt install libpng-dev:arm64 libjpeg-dev:arm64 libxml2-dev:arm64"
     fi
     
     log_info "交叉编译工具链检查通过"
@@ -210,7 +210,7 @@ show_help() {
     需要安装目标架构开发库:
       sudo dpkg --add-architecture arm64
       sudo apt update
-      sudo apt install libncurses-dev:arm64 libpng-dev:arm64 libjpeg-dev:arm64 libcurl4-openssl-dev:arm64 \
+      sudo apt install libncurses-dev:arm64 libpng-dev:arm64 libjpeg-dev:arm64 libxml2-dev:arm64 libcurl4-openssl-dev:arm64 \
                        libavcodec-dev:arm64 libavfilter-dev:arm64 \
                        libavformat-dev:arm64 libswresample-dev:arm64 libavutil-dev:arm64 libpulse-dev:arm64
 

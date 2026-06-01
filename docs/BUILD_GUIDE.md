@@ -341,6 +341,7 @@ sudo pacman -U ter-music-cn-*.pkg.tar.zst
 - `ncurses-devel`
 - `libpng-devel`
 - `libjpeg-turbo-devel`
+- `libxml2-devel`
 - `libcurl-devel`
 - Docker（容器构建模式时必需）
 
@@ -388,6 +389,7 @@ sudo pacman -U ter-music-cn-*.pkg.tar.zst
 - `libcurl4-openssl-dev`
 - `libpng-dev`
 - `libjpeg-dev`
+- `libxml2-dev`
 - `libdbus-1-dev`
 - FFmpeg 开发库：`libavcodec-dev`、`libavformat-dev`、`libavutil-dev`、`libswresample-dev`、`libswscale-dev`、`libavfilter-dev`
 - Docker（容器或静态构建模式时必需）
@@ -403,6 +405,7 @@ sudo pacman -U ter-music-cn-*.pkg.tar.zst
 - `ffmpeg`
 - `pulseaudio`
 - `ncurses`
+- `libxml2`
 - `libao`
 - `libmad`
 - `libid3tag`
@@ -475,7 +478,7 @@ docker-compose -f docker-compose.cross.yml run --rm cross-build ./build-deb.sh -
 **容器环境包含：**
 - Ubuntu 22.04 基础系统
 - ARM64 交叉编译工具链（gcc, g++, binutils）
-- ARM64 架构的开发库（libavcodec, libavformat, libswresample, libavutil, libavfilter, libpng, libjpeg, libpulse, ncurses）
+- ARM64 架构的开发库（libavcodec, libavformat, libswresample, libavutil, libavfilter, libpng, libjpeg, libxml2, libpulse, ncurses）
 - 各种包格式构建工具（dpkg-dev, rpm, squashfs-tools 等）
 
 ### Dockerfile.rpm — RHEL 容器构建
@@ -529,7 +532,7 @@ sudo apt update
 # 安装目标架构的开发库
 sudo apt install libncurses-dev:arm64 libavcodec-dev:arm64 libavformat-dev:arm64 \
                  libswresample-dev:arm64 libswscale-dev:arm64 libavutil-dev:arm64 libavfilter-dev:arm64 \
-                 libpng-dev:arm64 libjpeg-dev:arm64 libpulse-dev:arm64
+                 libpng-dev:arm64 libjpeg-dev:arm64 libxml2-dev:arm64 libpulse-dev:arm64
 ```
 
 ⚠️ **警告**：在主机上添加多架构支持可能会卸载某些 amd64 软件包，导致系统不稳定！建议在测试环境或虚拟机中执行。
@@ -622,7 +625,7 @@ file bin/ter-music
 ### RPM 包安装失败
 如果遇到依赖问题，请确保系统已安装所有必要的开发包：
 ```bash
-sudo dnf install ffmpeg-free-devel pulseaudio-libs-devel ncurses-devel libcurl-devel
+sudo dnf install ffmpeg-free-devel pulseaudio-libs-devel ncurses-devel libcurl-devel libxml2-devel libpng-devel libjpeg-turbo-devel
 ```
 
 **跨发行版构建的 RPM（在 Debian 上构建）**：如果在非 RHEL 系统上构建了 RPM，安装到 RHEL 时可能出现 FFmpeg soname 或 glibc 版本不匹配问题。解决方案：
