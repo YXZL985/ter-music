@@ -53,6 +53,7 @@ RUN apt-get update && apt-get install -y \
     libncurses-dev \
     libpulse-dev \
     libdbus-1-dev \
+    libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # DEB packaging tools
@@ -86,6 +87,7 @@ RUN dpkg --add-architecture arm64 && \
     libxml2-dev:arm64 \
     libcurl4-openssl-dev:arm64 \
     libpulse-dev:arm64 \
+    libsqlite3-dev:arm64 \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 

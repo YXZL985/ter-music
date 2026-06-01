@@ -2,6 +2,7 @@
 #include "../include/media_session.h"
 #include "../include/lyrics.h"
 #include "../include/menu_views.h"
+#include "../include/library.h"
 #include "../include/braille_art.h"
 #include "../include/search.h"
 #include "../include/scrollbar.h"
@@ -2968,6 +2969,7 @@ void cleanup() {
     stop_audio();
     wait_for_playback_thread_shutdown();
     media_session_shutdown();
+    library_shutdown();
 
     if (win_playlist) {
         delwin(win_playlist);

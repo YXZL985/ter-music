@@ -47,6 +47,10 @@ pkg_check_modules(ALSA alsa)
 pkg_check_modules(DBUS dbus-1)
 pkg_check_modules(LIBCURL libcurl)
 pkg_check_modules(LIBXML2 REQUIRED libxml-2.0)
+# SQLite3 — required dependency
+# Install libsqlite3-dev (Debian) or sqlite-devel (RHEL) before building
+pkg_check_modules(SQLITE3 REQUIRED sqlite3)
+message(STATUS "Found SQLite3: ${SQLITE3_LIBRARIES} (pkg-config)")
 
 if(PULSE_FOUND)
     set(AUDIO_BACKEND_INCLUDE_DIRS ${PULSE_INCLUDE_DIRS})
@@ -104,6 +108,7 @@ add_executable(${PROJECT_NAME}
     src/ape_tag.c
     src/config_xml.c
     src/config_migration.c
+    src/library.c
 )
 
 # 包含头文件目录
@@ -119,6 +124,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${PNG_INCLUDE_DIRS}
     ${JPEG_INCLUDE_DIRS}
     ${LIBXML2_INCLUDE_DIRS}
+    ${SQLITE3_INCLUDE_DIRS}
 )
 
 if(DBUS_FOUND)
@@ -147,6 +153,7 @@ target_link_libraries(${PROJECT_NAME}
     ${JPEG_LIBRARIES}
     ${NCURSESW_LIBRARY}
     ${LIBXML2_LIBRARIES}
+    ${SQLITE3_LIBRARIES}
     m
     ${PTHREAD_LIBRARY}
     ${CMAKE_DL_LIBS}
@@ -168,6 +175,7 @@ target_compile_options(${PROJECT_NAME} PRIVATE
     ${PNG_CFLAGS_OTHER}
     ${JPEG_CFLAGS_OTHER}
     ${LIBXML2_CFLAGS_OTHER}
+    ${SQLITE3_CFLAGS_OTHER}
 )
 
 if(DBUS_FOUND)
@@ -221,6 +229,7 @@ install(FILES data/help-quickstart-zh.txt data/help-quickstart-en.txt
 # Uninstall target — removes files listed in install_manifest.txt
 add_custom_target(uninstall
     COMMAND ${CMAKE_COMMAND} -E echo "Uninstalling ${PROJECT_NAME}..."
-    COMMAND if [ -f ${CMAKE_BINARY_DIR}/install_manifest.txt ]\; then xargs rm -f < ${CMAKE_BINARY_DIR}/install_manifest.txt\; else echo "No install manifest. Run make install first."\; exit 1\; fi
+    COMMAND sh -c "if [ -f '${CMAKE_BINARY_DIR}/install_manifest.txt' ]; then xargs rm -f < '${CMAKE_BINARY_DIR}/install_manifest.txt'; else echo 'No install manifest. Run make install first.'; exit 1; fi"
     COMMAND ${CMAKE_COMMAND} -E echo "Done."
+    VERBATIM
 )

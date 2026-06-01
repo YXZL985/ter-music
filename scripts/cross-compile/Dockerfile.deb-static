@@ -41,6 +41,7 @@ RUN apt-get update && apt-get install -y \
     libxml2-dev \
     libpulse-dev \
     libdbus-1-dev \
+    libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Build FFmpeg as static libraries (audio-only, minimal footprint)

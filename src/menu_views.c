@@ -18,6 +18,7 @@
 #include "../include/crypto.h"
 #include "../include/config_xml.h"
 #include "../include/config_migration.h"
+#include "../include/library.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -653,7 +654,12 @@ void save_config(void)
 {
     log_debug("menu_views", "Saving config to '%s'", config_file);
     g_app_config.config_version = CONFIG_CURRENT_VERSION;
-    config_save_to_xml(config_file, &g_app_config);
+    /* Atomic write: write to temp file first, then rename */
+    char tmp_path[MAX_PATH_LEN];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", config_file);
+    if (config_save_to_xml(tmp_path, &g_app_config) == 0) {
+        rename(tmp_path, config_file);
+    }
 }
 
 void reload_config(void)
@@ -737,21 +743,24 @@ void load_history(void) {
 }
 
 void save_history(void) {
-    FILE *f = fopen(history_file, "w");
+    /* Atomic write: write to temp file first, then rename */
+    char tmp_path[MAX_PATH_LEN];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", history_file);
+    FILE *f = fopen(tmp_path, "w");
     if (!f) return;
-    
+
     fprintf(f, "{\n  \"history\": [\n");
-    
+
     for (int i = 0; i < g_play_history.count; i++) {
         HistoryEntry *e = &g_play_history.entries[i];
         char escaped_path[MAX_PATH_LEN * 2];
         char escaped_title[MAX_META_LEN * 2];
         char escaped_artist[MAX_META_LEN * 2];
-        
+
         escape_json_string(e->path, escaped_path, sizeof(escaped_path));
         escape_json_string(e->title, escaped_title, sizeof(escaped_title));
         escape_json_string(e->artist, escaped_artist, sizeof(escaped_artist));
-        
+
         fprintf(f, "    {\n");
         fprintf(f, "      \"path\": \"%s\",\n", escaped_path);
         fprintf(f, "      \"title\": \"%s\",\n", escaped_title);
@@ -759,10 +768,11 @@ void save_history(void) {
         fprintf(f, "      \"play_time\": %ld\n", (long)e->play_time);
         fprintf(f, "    }%s\n", (i < g_play_history.count - 1) ? "," : "");
     }
-    
+
     fprintf(f, "  ],\n  \"count\": %d\n}\n", g_play_history.count);
-    
+
     fclose(f);
+    rename(tmp_path, history_file);
 }
 
 void load_favorites(void) {
@@ -835,23 +845,26 @@ void load_favorites(void) {
 }
 
 void save_favorites(void) {
-    FILE *f = fopen(favorites_file, "w");
+    /* Atomic write: write to temp file first, then rename */
+    char tmp_path[MAX_PATH_LEN];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", favorites_file);
+    FILE *f = fopen(tmp_path, "w");
     if (!f) return;
-    
+
     fprintf(f, "{\n  \"favorites\": [\n");
-    
+
     for (int i = 0; i < g_favorites.count; i++) {
         Track *t = &g_favorites.tracks[i];
         char escaped_path[MAX_PATH_LEN * 2];
         char escaped_title[MAX_META_LEN * 2];
         char escaped_artist[MAX_META_LEN * 2];
         char escaped_album[MAX_META_LEN * 2];
-        
+
         escape_json_string(t->path, escaped_path, sizeof(escaped_path));
         escape_json_string(t->title, escaped_title, sizeof(escaped_title));
         escape_json_string(t->artist, escaped_artist, sizeof(escaped_artist));
         escape_json_string(t->album, escaped_album, sizeof(escaped_album));
-        
+
         fprintf(f, "    {\n");
         fprintf(f, "      \"path\": \"%s\",\n", escaped_path);
         fprintf(f, "      \"title\": \"%s\",\n", escaped_title);
@@ -859,10 +872,11 @@ void save_favorites(void) {
         fprintf(f, "      \"album\": \"%s\"\n", escaped_album);
         fprintf(f, "    }%s\n", (i < g_favorites.count - 1) ? "," : "");
     }
-    
+
     fprintf(f, "  ],\n  \"count\": %d\n}\n", g_favorites.count);
-    
+
     fclose(f);
+    rename(tmp_path, favorites_file);
 }
 
 void load_dir_history(void) {
@@ -930,26 +944,30 @@ void load_dir_history(void) {
 }
 
 void save_dir_history(void) {
-    FILE *f = fopen(dir_history_file, "w");
+    /* Atomic write: write to temp file first, then rename */
+    char tmp_path[MAX_PATH_LEN];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", dir_history_file);
+    FILE *f = fopen(tmp_path, "w");
     if (!f) return;
-    
+
     fprintf(f, "{\n  \"directories\": [\n");
-    
+
     for (int i = 0; i < g_dir_history.count; i++) {
         DirHistoryEntry *e = &g_dir_history.entries[i];
         char escaped_path[MAX_PATH_LEN * 2];
-        
+
         escape_json_string(e->path, escaped_path, sizeof(escaped_path));
-        
+
         fprintf(f, "    {\n");
         fprintf(f, "      \"path\": \"%s\",\n", escaped_path);
         fprintf(f, "      \"open_time\": %ld\n", (long)e->open_time);
         fprintf(f, "    }%s\n", (i < g_dir_history.count - 1) ? "," : "");
     }
-    
+
     fprintf(f, "  ],\n  \"count\": %d\n}\n", g_dir_history.count);
-    
+
     fclose(f);
+    rename(tmp_path, dir_history_file);
 }
 
 void add_dir_history_entry(const char *path) {
@@ -1071,13 +1089,13 @@ void load_all_playlists(void) {
 void save_all_playlists(void) {
     for (int i = 0; i < g_playlist_manager.count; i++) {
         UserPlaylist *pl = &g_playlist_manager.playlists[i];
-        
+
         char filename[MAX_PLAYLIST_NAME_LEN + 8];
         char safe_name[MAX_PLAYLIST_NAME_LEN];
-        
+
         int j = 0;
         for (const char *p = pl->name; *p && j < MAX_PLAYLIST_NAME_LEN - 1; p++) {
-            if ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || 
+            if ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
                 (*p >= '0' && *p <= '9') || *p == '_' || *p == '-') {
                 safe_name[j++] = *p;
             } else if (*p == ' ') {
@@ -1085,40 +1103,43 @@ void save_all_playlists(void) {
             }
         }
         safe_name[j] = '\0';
-        
+
         if (j == 0) {
             snprintf(safe_name, sizeof(safe_name), "playlist_%d", i);
         }
-        
+
         snprintf(filename, sizeof(filename), "%s.json", safe_name);
-        
+
         char filepath[MAX_PATH_LEN];
         snprintf(filepath, sizeof(filepath), "%s/%s", playlists_dir, filename);
-        
-        FILE *f = fopen(filepath, "w");
+
+        /* Atomic write: write to temp file first, then rename */
+        char tmppath[MAX_PATH_LEN];
+        snprintf(tmppath, sizeof(tmppath), "%s.tmp", filepath);
+        FILE *f = fopen(tmppath, "w");
         if (!f) continue;
-        
+
         char escaped_name[MAX_PLAYLIST_NAME_LEN * 2];
         escape_json_string(pl->name, escaped_name, sizeof(escaped_name));
-        
+
         fprintf(f, "{\n");
         fprintf(f, "  \"name\": \"%s\",\n", escaped_name);
         fprintf(f, "  \"created_time\": %ld,\n", (long)pl->created_time);
         fprintf(f, "  \"modified_time\": %ld,\n", (long)pl->modified_time);
         fprintf(f, "  \"tracks\": [\n");
-        
+
         for (int k = 0; k < pl->track_count; k++) {
             Track *t = &pl->tracks[k];
             char escaped_path[MAX_PATH_LEN * 2];
             char escaped_title[MAX_META_LEN * 2];
             char escaped_artist[MAX_META_LEN * 2];
             char escaped_album[MAX_META_LEN * 2];
-            
+
             escape_json_string(t->path, escaped_path, sizeof(escaped_path));
             escape_json_string(t->title, escaped_title, sizeof(escaped_title));
             escape_json_string(t->artist, escaped_artist, sizeof(escaped_artist));
             escape_json_string(t->album, escaped_album, sizeof(escaped_album));
-            
+
             fprintf(f, "    {\n");
             fprintf(f, "      \"path\": \"%s\",\n", escaped_path);
             fprintf(f, "      \"title\": \"%s\",\n", escaped_title);
@@ -1126,12 +1147,13 @@ void save_all_playlists(void) {
             fprintf(f, "      \"album\": \"%s\"\n", escaped_album);
             fprintf(f, "    }%s\n", (k < pl->track_count - 1) ? "," : "");
         }
-        
+
         fprintf(f, "  ],\n");
         fprintf(f, "  \"track_count\": %d\n", pl->track_count);
         fprintf(f, "}\n");
-        
+
         fclose(f);
+        rename(tmppath, filepath);
     }
 }
 
@@ -1165,7 +1187,10 @@ void save_temp_playlist(void) {
         return;
     }
 
-    FILE *f = fopen(temp_playlist_file, "w");
+    /* Atomic write: write to temp file first, then rename */
+    char tmp_path[MAX_PATH_LEN];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", temp_playlist_file);
+    FILE *f = fopen(tmp_path, "w");
     if (!f) {
         free(tracks);
         return;
@@ -1183,6 +1208,7 @@ void save_temp_playlist(void) {
     }
 
     fclose(f);
+    rename(tmp_path, temp_playlist_file);
     free(tracks);
 }
 
@@ -1574,6 +1600,8 @@ void init_all_persistent_data(void) {
     load_favorites();
     load_dir_history();
     load_all_playlists();
+    /* Initialize SQLite library database (optional — library mode may not be available) */
+    library_init();
 }
 
 void show_status_message(const char *msg) {

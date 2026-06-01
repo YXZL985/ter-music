@@ -60,7 +60,8 @@ RUN dnf install -y \
         libcurl-devel \
         libpng-devel \
         libjpeg-turbo-devel \
-        dbus-devel && \
+        dbus-devel \
+        sqlite-devel && \
     dnf clean all
 
 WORKDIR /workspace
