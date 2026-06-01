@@ -33,18 +33,11 @@ void render_playlist_manager_content(void);
 void handle_function_keys(int fkey);
 
 void add_history_entry(Track *track);
-void load_history(void);
-void save_history(void);
-
-void load_favorites(void);
-void save_favorites(void);
 
 int add_to_favorites(Track *track);
 int remove_from_favorites(int index);
 
 void add_dir_history_entry(const char *path);
-void load_dir_history(void);
-void save_dir_history(void);
 void clear_dir_history(void);
 
 void load_config(void);
@@ -52,13 +45,6 @@ void save_config(void);
 void init_default_config(void);
 void reload_config(void);
 
-/* @deprecated v1 JSON format — kept for migration only */
-char* extract_json_string(const char *json, const char *key, char *output, size_t output_size);
-long  extract_json_int(const char *json, const char *key);
-double extract_json_float(const char *json, const char *key);
-
-void load_all_playlists(void);
-void save_all_playlists(void);
 int create_user_playlist(const char *name);
 int delete_user_playlist(int index);
 int add_track_to_playlist(int playlist_idx, Track *track);
@@ -66,6 +52,11 @@ int remove_track_from_playlist(int playlist_idx, int track_idx);
 int rename_user_playlist(int index, const char *new_name);
 
 void ensure_config_dir_exists(void);
+
+/* JSON parser helpers — used by config_migration.c for v1→v2 config upgrade only */
+char* extract_json_string(const char *json, const char *key, char *output, size_t output_size);
+long  extract_json_int(const char *json, const char *key);
+double extract_json_float(const char *json, const char *key);
 void init_all_persistent_data(void);
 
 void save_temp_playlist(void);

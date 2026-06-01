@@ -28,6 +28,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <ctype.h>
+#include <stdbool.h>
 #include <math.h>
 
 extern WINDOW *win_playlist;
@@ -54,11 +55,6 @@ FocusArea g_focus_area = FOCUS_SIDEBAR;
 
 static char config_dir[MAX_PATH_LEN];
 static char config_file[MAX_PATH_LEN];
-static char history_file[MAX_PATH_LEN];
-static char favorites_file[MAX_PATH_LEN];
-static char dir_history_file[MAX_PATH_LEN];
-static char playlists_dir[MAX_PATH_LEN];
-static char temp_playlist_file[MAX_PATH_LEN];
 
 static char g_status_message[256] = "";
 static time_t g_status_message_time = 0;
@@ -261,26 +257,23 @@ static const char *resolve_menu_title(const char *title) {
     return title;
 }
 
-// @deprecated v1 JSON format — kept for migration only
+/* ========== JSON parser helpers ==========
+ * Used only by config_migration.c for the v1 (JSON) → v2 (XML) config upgrade.
+ * Not used for music data persistence (which uses SQLite exclusively). */
+
 char* extract_json_string(const char *json, const char *key, char *output, size_t output_size) {
     char search_key[128];
     snprintf(search_key, sizeof(search_key), "\"%s\"", key);
-    
+
     const char *pos = strstr(json, search_key);
-    if (!pos) {
-        output[0] = '\0';
-        return output;
-    }
-    
+    if (!pos) { output[0] = '\0'; return output; }
+
     pos = strchr(pos, ':');
-    if (!pos) {
-        output[0] = '\0';
-        return output;
-    }
-    
+    if (!pos) { output[0] = '\0'; return output; }
+
     pos++;
     while (*pos == ' ' || *pos == '\t' || *pos == '\n' || *pos == '\r') pos++;
-    
+
     if (*pos == '"') {
         pos++;
         size_t i = 0;
@@ -310,189 +303,31 @@ char* extract_json_string(const char *json, const char *key, char *output, size_
         }
         output[i] = '\0';
     }
-    
     return output;
 }
 
-// @deprecated v1 JSON format — kept for migration only
 long extract_json_int(const char *json, const char *key) {
     char search_key[128];
     snprintf(search_key, sizeof(search_key), "\"%s\"", key);
-
     const char *pos = strstr(json, search_key);
     if (!pos) return 0;
-
     pos = strchr(pos, ':');
     if (!pos) return 0;
-
     pos++;
     while (*pos == ' ' || *pos == '\t' || *pos == '\n' || *pos == '\r') pos++;
-
     return atol(pos);
 }
 
-// @deprecated v1 JSON format — kept for migration only
 double extract_json_float(const char *json, const char *key) {
     char search_key[128];
     snprintf(search_key, sizeof(search_key), "\"%s\"", key);
-
     const char *pos = strstr(json, search_key);
     if (!pos) return 0.0;
-
     pos = strchr(pos, ':');
     if (!pos) return 0.0;
-
     pos++;
     while (*pos == ' ' || *pos == '\t' || *pos == '\n' || *pos == '\r') pos++;
-
     return atof(pos);
-}
-
-static void escape_json_string(const char *src, char *dest, size_t dest_size) {
-    size_t j = 0;
-    for (size_t i = 0; src[i] && j < dest_size - 1; i++) {
-        char c = src[i];
-        if (c == '"' || c == '\\') {
-            if (j < dest_size - 2) {
-                dest[j++] = '\\';
-                dest[j++] = c;
-            }
-        } else if (c == '\n') {
-            if (j < dest_size - 2) {
-                dest[j++] = '\\';
-                dest[j++] = 'n';
-            }
-        } else if (c == '\t') {
-            if (j < dest_size - 2) {
-                dest[j++] = '\\';
-                dest[j++] = 't';
-            }
-        } else {
-            dest[j++] = c;
-        }
-    }
-    dest[j] = '\0';
-}
-
-static const char *parse_json_string_value(const char *json, char *output, size_t output_size) {
-    if (!json || !output || output_size == 0) {
-        return NULL;
-    }
-
-    while (*json == ' ' || *json == '\t' || *json == '\n' || *json == '\r') {
-        json++;
-    }
-    if (*json != '"') {
-        output[0] = '\0';
-        return NULL;
-    }
-
-    json++;
-    size_t i = 0;
-    while (*json && *json != '"' && i < output_size - 1) {
-        if (*json == '\\' && *(json + 1)) {
-            json++;
-            switch (*json) {
-                case 'n': output[i++] = '\n'; break;
-                case 't': output[i++] = '\t'; break;
-                case '"': output[i++] = '"'; break;
-                case '\\': output[i++] = '\\'; break;
-                default: output[i++] = *json; break;
-            }
-            json++;
-        } else {
-            output[i++] = *json++;
-        }
-    }
-    output[i] = '\0';
-
-    if (*json == '"') {
-        json++;
-    }
-
-    return json;
-}
-
-#define TEMP_PLAYLIST_MAGIC "TER_MUSIC_TEMP_PLAYLIST_V2"
-
-static int hex_digit_value(char c) {
-    if (c >= '0' && c <= '9') {
-        return c - '0';
-    }
-    if (c >= 'a' && c <= 'f') {
-        return c - 'a' + 10;
-    }
-    if (c >= 'A' && c <= 'F') {
-        return c - 'A' + 10;
-    }
-    return -1;
-}
-
-static void trim_line_end(char *line) {
-    if (!line) {
-        return;
-    }
-
-    size_t len = strlen(line);
-    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
-        line[--len] = '\0';
-    }
-}
-
-static void escape_temp_playlist_field(const char *src, char *dest, size_t dest_size) {
-    static const char hex[] = "0123456789ABCDEF";
-    size_t j = 0;
-
-    if (!dest || dest_size == 0) {
-        return;
-    }
-
-    dest[0] = '\0';
-    if (!src) {
-        return;
-    }
-
-    for (size_t i = 0; src[i] && j < dest_size - 1; i++) {
-        unsigned char c = (unsigned char)src[i];
-        if (c == '%' || c < 0x20) {
-            if (j + 3 >= dest_size) {
-                break;
-            }
-            dest[j++] = '%';
-            dest[j++] = hex[(c >> 4) & 0x0F];
-            dest[j++] = hex[c & 0x0F];
-        } else {
-            dest[j++] = (char)c;
-        }
-    }
-
-    dest[j] = '\0';
-}
-
-static int unescape_temp_playlist_field(const char *src, char *dest, size_t dest_size) {
-    size_t j = 0;
-
-    if (!src || !dest || dest_size == 0) {
-        return -1;
-    }
-
-    while (*src && j < dest_size - 1) {
-        if (*src == '%') {
-            int hi = hex_digit_value(*(src + 1));
-            int lo = hex_digit_value(*(src + 2));
-            if (hi < 0 || lo < 0) {
-                return -1;
-            }
-            dest[j++] = (char)((hi << 4) | lo);
-            src += 3;
-            continue;
-        }
-
-        dest[j++] = *src++;
-    }
-
-    dest[j] = '\0';
-    return 0;
 }
 
 static void extract_parent_directory_for_playlist(const char *path, char *dest, size_t dest_size) {
@@ -522,17 +357,10 @@ void ensure_config_dir_exists(void) {
     const char *home = getenv("HOME");
     if (!home) return;
 
-    uid_t uid = getuid();
     snprintf(config_dir, sizeof(config_dir), "%s/.config/ter-music", home);
     snprintf(config_file, sizeof(config_file), "%s/config.xml", config_dir);
-    snprintf(history_file, sizeof(history_file), "%s/history.json", config_dir);
-    snprintf(favorites_file, sizeof(favorites_file), "%s/favorites.json", config_dir);
-    snprintf(dir_history_file, sizeof(dir_history_file), "%s/dir_history.json", config_dir);
-    snprintf(playlists_dir, sizeof(playlists_dir), "%s/playlists", config_dir);
-    snprintf(temp_playlist_file, sizeof(temp_playlist_file), "/tmp/ter-music-%d-temp-playlist.json", (int)uid);
 
     mkdir(config_dir, 0755);
-    mkdir(playlists_dir, 0755);
 }
 
 void init_default_config(void) {
@@ -675,319 +503,30 @@ void reload_config(void)
 }
 
 void load_history(void) {
-    FILE *f = fopen(history_file, "r");
-    if (!f) return;
-    
-    fseek(f, 0, SEEK_END);
-    long fsize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    
-    char *json = malloc(fsize + 1);
-    if (!json) {
-        fclose(f);
-        return;
-    }
-    
-    fread(json, 1, fsize, f);
-    json[fsize] = '\0';
-    fclose(f);
-    
     g_play_history.count = 0;
-    
-    const char *pos = strstr(json, "\"history\"");
-    if (!pos) {
-        free(json);
-        return;
-    }
-    
-    pos = strchr(pos, '[');
-    if (!pos) {
-        free(json);
-        return;
-    }
-    
-    const char *end = strchr(pos, ']');
-    if (!end) {
-        free(json);
-        return;
-    }
-    
-    while (pos < end && g_play_history.count < MAX_HISTORY_COUNT) {
-        const char *obj_start = strchr(pos, '{');
-        if (!obj_start || obj_start > end) break;
-        
-        const char *obj_end = strchr(obj_start, '}');
-        if (!obj_end || obj_end > end) break;
-        
-        size_t obj_len = obj_end - obj_start + 1;
-        char *obj = malloc(obj_len + 1);
-        if (!obj) break;
-        
-        strncpy(obj, obj_start, obj_len);
-        obj[obj_len] = '\0';
-        
-        extract_json_string(obj, "path", g_play_history.entries[g_play_history.count].path, MAX_PATH_LEN);
-        extract_json_string(obj, "title", g_play_history.entries[g_play_history.count].title, MAX_META_LEN);
-        extract_json_string(obj, "artist", g_play_history.entries[g_play_history.count].artist, MAX_META_LEN);
-        decode_html_entities(g_play_history.entries[g_play_history.count].title);
-        decode_html_entities(g_play_history.entries[g_play_history.count].artist);
-        g_play_history.entries[g_play_history.count].play_time = (time_t)extract_json_int(obj, "play_time");
-        
-        g_play_history.count++;
-        free(obj);
-        
-        pos = obj_end + 1;
-    }
-    
-    free(json);
-
-    /* If SQLite has history data, prefer it over JSON */
-    if (library_is_available() && library_history_get_count() > 0) {
-        g_play_history.count = 0;
+    if (library_is_available()) {
         g_play_history.count = library_history_get_all(g_play_history.entries, MAX_HISTORY_COUNT);
     }
 }
 
-void save_history(void) {
-    /* Always write JSON as backup (for downgrade compatibility) */
-    /* Atomic write: write to temp file first, then rename */
-    char tmp_path[MAX_PATH_LEN];
-    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", history_file);
-    FILE *f = fopen(tmp_path, "w");
-    if (!f) return;
-
-    fprintf(f, "{\n  \"history\": [\n");
-
-    for (int i = 0; i < g_play_history.count; i++) {
-        HistoryEntry *e = &g_play_history.entries[i];
-        char escaped_path[MAX_PATH_LEN * 2];
-        char escaped_title[MAX_META_LEN * 2];
-        char escaped_artist[MAX_META_LEN * 2];
-
-        escape_json_string(e->path, escaped_path, sizeof(escaped_path));
-        escape_json_string(e->title, escaped_title, sizeof(escaped_title));
-        escape_json_string(e->artist, escaped_artist, sizeof(escaped_artist));
-
-        fprintf(f, "    {\n");
-        fprintf(f, "      \"path\": \"%s\",\n", escaped_path);
-        fprintf(f, "      \"title\": \"%s\",\n", escaped_title);
-        fprintf(f, "      \"artist\": \"%s\",\n", escaped_artist);
-        fprintf(f, "      \"play_time\": %ld\n", (long)e->play_time);
-        fprintf(f, "    }%s\n", (i < g_play_history.count - 1) ? "," : "");
-    }
-
-    fprintf(f, "  ],\n  \"count\": %d\n}\n", g_play_history.count);
-
-    fclose(f);
-    rename(tmp_path, history_file);
-}
-
 void load_favorites(void) {
-    FILE *f = fopen(favorites_file, "r");
-    if (!f) return;
-    
-    fseek(f, 0, SEEK_END);
-    long fsize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    
-    char *json = malloc(fsize + 1);
-    if (!json) {
-        fclose(f);
-        return;
-    }
-    
-    fread(json, 1, fsize, f);
-    json[fsize] = '\0';
-    fclose(f);
-    
     g_favorites.count = 0;
-    
-    const char *pos = strstr(json, "\"favorites\"");
-    if (!pos) {
-        free(json);
-        return;
-    }
-    
-    pos = strchr(pos, '[');
-    if (!pos) {
-        free(json);
-        return;
-    }
-    
-    const char *end = strchr(pos, ']');
-    if (!end) {
-        free(json);
-        return;
-    }
-    
-    while (pos < end && g_favorites.count < MAX_FAVORITES_COUNT) {
-        const char *obj_start = strchr(pos, '{');
-        if (!obj_start || obj_start > end) break;
-        
-        const char *obj_end = strchr(obj_start, '}');
-        if (!obj_end || obj_end > end) break;
-        
-        size_t obj_len = obj_end - obj_start + 1;
-        char *obj = malloc(obj_len + 1);
-        if (!obj) break;
-        
-        strncpy(obj, obj_start, obj_len);
-        obj[obj_len] = '\0';
-        
-        extract_json_string(obj, "path", g_favorites.tracks[g_favorites.count].path, MAX_PATH_LEN);
-        extract_json_string(obj, "title", g_favorites.tracks[g_favorites.count].title, MAX_META_LEN);
-        extract_json_string(obj, "artist", g_favorites.tracks[g_favorites.count].artist, MAX_META_LEN);
-        extract_json_string(obj, "album", g_favorites.tracks[g_favorites.count].album, MAX_META_LEN);
-        decode_html_entities(g_favorites.tracks[g_favorites.count].title);
-        decode_html_entities(g_favorites.tracks[g_favorites.count].artist);
-        decode_html_entities(g_favorites.tracks[g_favorites.count].album);
-        
-        g_favorites.count++;
-        free(obj);
-        
-        pos = obj_end + 1;
-    }
-    
-    free(json);
-
-    /* If SQLite has favorites data, prefer it over JSON */
-    if (library_is_available() && library_favorites_get_count() > 0) {
-        g_favorites.count = 0;
+    if (library_is_available()) {
         g_favorites.count = library_favorites_get_all(g_favorites.tracks, MAX_FAVORITES_COUNT);
     }
 }
 
-void save_favorites(void) {
-    /* Always write JSON as backup (for downgrade compatibility) */
-    /* Atomic write: write to temp file first, then rename */
-    char tmp_path[MAX_PATH_LEN];
-    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", favorites_file);
-    FILE *f = fopen(tmp_path, "w");
-    if (!f) return;
-
-    fprintf(f, "{\n  \"favorites\": [\n");
-
-    for (int i = 0; i < g_favorites.count; i++) {
-        Track *t = &g_favorites.tracks[i];
-        char escaped_path[MAX_PATH_LEN * 2];
-        char escaped_title[MAX_META_LEN * 2];
-        char escaped_artist[MAX_META_LEN * 2];
-        char escaped_album[MAX_META_LEN * 2];
-
-        escape_json_string(t->path, escaped_path, sizeof(escaped_path));
-        escape_json_string(t->title, escaped_title, sizeof(escaped_title));
-        escape_json_string(t->artist, escaped_artist, sizeof(escaped_artist));
-        escape_json_string(t->album, escaped_album, sizeof(escaped_album));
-
-        fprintf(f, "    {\n");
-        fprintf(f, "      \"path\": \"%s\",\n", escaped_path);
-        fprintf(f, "      \"title\": \"%s\",\n", escaped_title);
-        fprintf(f, "      \"artist\": \"%s\",\n", escaped_artist);
-        fprintf(f, "      \"album\": \"%s\"\n", escaped_album);
-        fprintf(f, "    }%s\n", (i < g_favorites.count - 1) ? "," : "");
-    }
-
-    fprintf(f, "  ],\n  \"count\": %d\n}\n", g_favorites.count);
-
-    fclose(f);
-    rename(tmp_path, favorites_file);
-}
-
 void load_dir_history(void) {
-    FILE *f = fopen(dir_history_file, "r");
-    if (!f) return;
-    
-    fseek(f, 0, SEEK_END);
-    long fsize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    
-    char *json = malloc(fsize + 1);
-    if (!json) {
-        fclose(f);
-        return;
-    }
-    
-    fread(json, 1, fsize, f);
-    json[fsize] = '\0';
-    fclose(f);
-    
     g_dir_history.count = 0;
-    
-    const char *pos = strstr(json, "\"directories\"");
-    if (!pos) {
-        free(json);
-        return;
+    if (library_is_available()) {
+        g_dir_history.count = library_dir_history_get_all(g_dir_history.entries, MAX_DIR_HISTORY_COUNT);
     }
-    
-    pos = strchr(pos, '[');
-    if (!pos) {
-        free(json);
-        return;
-    }
-    
-    const char *end = strchr(pos, ']');
-    if (!end) {
-        free(json);
-        return;
-    }
-    
-    while (pos < end && g_dir_history.count < MAX_DIR_HISTORY_COUNT) {
-        const char *obj_start = strchr(pos, '{');
-        if (!obj_start || obj_start > end) break;
-        
-        const char *obj_end = strchr(obj_start, '}');
-        if (!obj_end || obj_end > end) break;
-        
-        size_t obj_len = obj_end - obj_start + 1;
-        char *obj = malloc(obj_len + 1);
-        if (!obj) break;
-        
-        strncpy(obj, obj_start, obj_len);
-        obj[obj_len] = '\0';
-        
-        extract_json_string(obj, "path", g_dir_history.entries[g_dir_history.count].path, MAX_PATH_LEN);
-        g_dir_history.entries[g_dir_history.count].open_time = (time_t)extract_json_int(obj, "open_time");
-        
-        g_dir_history.count++;
-        free(obj);
-        
-        pos = obj_end + 1;
-    }
-    
-    free(json);
-}
-
-void save_dir_history(void) {
-    /* Atomic write: write to temp file first, then rename */
-    char tmp_path[MAX_PATH_LEN];
-    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", dir_history_file);
-    FILE *f = fopen(tmp_path, "w");
-    if (!f) return;
-
-    fprintf(f, "{\n  \"directories\": [\n");
-
-    for (int i = 0; i < g_dir_history.count; i++) {
-        DirHistoryEntry *e = &g_dir_history.entries[i];
-        char escaped_path[MAX_PATH_LEN * 2];
-
-        escape_json_string(e->path, escaped_path, sizeof(escaped_path));
-
-        fprintf(f, "    {\n");
-        fprintf(f, "      \"path\": \"%s\",\n", escaped_path);
-        fprintf(f, "      \"open_time\": %ld\n", (long)e->open_time);
-        fprintf(f, "    }%s\n", (i < g_dir_history.count - 1) ? "," : "");
-    }
-
-    fprintf(f, "  ],\n  \"count\": %d\n}\n", g_dir_history.count);
-
-    fclose(f);
-    rename(tmp_path, dir_history_file);
 }
 
 void add_dir_history_entry(const char *path) {
     if (!path || strlen(path) == 0) return;
     log_debug("menu_views", "add_dir_history_entry('%s')", path);
-    
+
     for (int i = 0; i < g_dir_history.count; i++) {
         if (strcmp(g_dir_history.entries[i].path, path) == 0) {
             for (int j = i; j < g_dir_history.count - 1; j++) {
@@ -997,196 +536,45 @@ void add_dir_history_entry(const char *path) {
             break;
         }
     }
-    
+
     if (g_dir_history.count >= MAX_DIR_HISTORY_COUNT) {
         memmove(&g_dir_history.entries[0], &g_dir_history.entries[1],
                 sizeof(DirHistoryEntry) * (MAX_DIR_HISTORY_COUNT - 1));
         g_dir_history.count = MAX_DIR_HISTORY_COUNT - 1;
     }
-    
+
     strncpy(g_dir_history.entries[g_dir_history.count].path, path, MAX_PATH_LEN - 1);
     g_dir_history.entries[g_dir_history.count].open_time = time(NULL);
     g_dir_history.count++;
-    
-    save_dir_history();
+
+    /* Persist to SQLite */
+    if (library_is_available())
+        library_dir_history_add(path);
 }
 
 void clear_dir_history(void) {
     log_info("menu_views", "Directory history cleared");
     g_dir_history.count = 0;
-    save_dir_history();
+    if (library_is_available())
+        library_dir_history_clear();
 }
 
 void load_all_playlists(void) {
-    DIR *dir = opendir(playlists_dir);
-    if (!dir) return;
-    
     g_playlist_manager.count = 0;
-    
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL && g_playlist_manager.count < MAX_PLAYLISTS_COUNT) {
-        if (strstr(entry->d_name, ".json") == NULL) continue;
-        
-        char filepath[MAX_PATH_LEN];
-        snprintf(filepath, sizeof(filepath), "%s/%s", playlists_dir, entry->d_name);
-        
-        FILE *f = fopen(filepath, "r");
-        if (!f) continue;
-        
-        fseek(f, 0, SEEK_END);
-        long fsize = ftell(f);
-        fseek(f, 0, SEEK_SET);
-        
-        char *json = malloc(fsize + 1);
-        if (!json) {
-            fclose(f);
-            continue;
-        }
-        
-        fread(json, 1, fsize, f);
-        json[fsize] = '\0';
-        fclose(f);
-        
+    if (!library_is_available()) return;
+
+    int ids[MAX_PLAYLISTS_COUNT];
+    char names[MAX_PLAYLISTS_COUNT][MAX_PLAYLIST_NAME_LEN];
+    int pl_count = library_playlist_get_all(ids, names, MAX_PLAYLISTS_COUNT);
+    for (int i = 0; i < pl_count && i < MAX_PLAYLISTS_COUNT; i++) {
         UserPlaylist *pl = &g_playlist_manager.playlists[g_playlist_manager.count];
-        memset(pl, 0, sizeof(UserPlaylist));
-        
-        extract_json_string(json, "name", pl->name, MAX_PLAYLIST_NAME_LEN);
-        decode_html_entities(pl->name);
-        pl->created_time = (time_t)extract_json_int(json, "created_time");
-        pl->modified_time = (time_t)extract_json_int(json, "modified_time");
-        
-        const char *tracks_pos = strstr(json, "\"tracks\"");
-        if (tracks_pos) {
-            const char *arr_start = strchr(tracks_pos, '[');
-            const char *arr_end = strchr(arr_start ? arr_start : tracks_pos, ']');
-            
-            if (arr_start && arr_end && arr_end > arr_start) {
-                const char *pos = arr_start;
-                
-                while (pos < arr_end && pl->track_count < MAX_TRACKS) {
-                    const char *obj_start = strchr(pos, '{');
-                    if (!obj_start || obj_start > arr_end) break;
-                    
-                    const char *obj_end = strchr(obj_start, '}');
-                    if (!obj_end || obj_end > arr_end) break;
-                    
-                    size_t obj_len = obj_end - obj_start + 1;
-                    char *obj = malloc(obj_len + 1);
-                    if (!obj) break;
-                    
-                    strncpy(obj, obj_start, obj_len);
-                    obj[obj_len] = '\0';
-                    
-                    extract_json_string(obj, "path", pl->tracks[pl->track_count].path, MAX_PATH_LEN);
-                    extract_json_string(obj, "title", pl->tracks[pl->track_count].title, MAX_META_LEN);
-                    extract_json_string(obj, "artist", pl->tracks[pl->track_count].artist, MAX_META_LEN);
-                    extract_json_string(obj, "album", pl->tracks[pl->track_count].album, MAX_META_LEN);
-                    decode_html_entities(pl->tracks[pl->track_count].title);
-                    decode_html_entities(pl->tracks[pl->track_count].artist);
-                    decode_html_entities(pl->tracks[pl->track_count].album);
-                    
-                    pl->track_count++;
-                    free(obj);
-                    
-                    pos = obj_end + 1;
-                }
-            }
-        }
-        
+        pl->db_id = ids[i];
+        strncpy(pl->name, names[i], MAX_PLAYLIST_NAME_LEN - 1);
+        pl->name[MAX_PLAYLIST_NAME_LEN - 1] = '\0';
+        pl->track_count = library_playlist_get_tracks(ids[i], pl->tracks, MAX_TRACKS);
+        pl->created_time = 0;
+        pl->modified_time = 0;
         g_playlist_manager.count++;
-        free(json);
-    }
-    
-    closedir(dir);
-
-    /* If SQLite has playlist data, prefer it over JSON */
-    if (library_is_available() && library_playlist_get_count() > 0) {
-        g_playlist_manager.count = 0;
-        int ids[50];
-        char names[50][MAX_PLAYLIST_NAME_LEN];
-        int pl_count = library_playlist_get_all(ids, names, 50);
-        for (int i = 0; i < pl_count && i < MAX_PLAYLISTS_COUNT; i++) {
-            UserPlaylist *pl = &g_playlist_manager.playlists[g_playlist_manager.count];
-            pl->db_id = ids[i];
-            strncpy(pl->name, names[i], MAX_PLAYLIST_NAME_LEN - 1);
-            pl->name[MAX_PLAYLIST_NAME_LEN - 1] = '\0';
-            pl->track_count = library_playlist_get_tracks(ids[i], pl->tracks, MAX_TRACKS);
-            pl->created_time = 0;
-            pl->modified_time = 0;
-            g_playlist_manager.count++;
-        }
-    }
-}
-
-void save_all_playlists(void) {
-    /* Always write JSON as backup (for downgrade compatibility) */
-    for (int i = 0; i < g_playlist_manager.count; i++) {
-        UserPlaylist *pl = &g_playlist_manager.playlists[i];
-
-        char filename[MAX_PLAYLIST_NAME_LEN + 8];
-        char safe_name[MAX_PLAYLIST_NAME_LEN];
-
-        int j = 0;
-        for (const char *p = pl->name; *p && j < MAX_PLAYLIST_NAME_LEN - 1; p++) {
-            if ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
-                (*p >= '0' && *p <= '9') || *p == '_' || *p == '-') {
-                safe_name[j++] = *p;
-            } else if (*p == ' ') {
-                safe_name[j++] = '_';
-            }
-        }
-        safe_name[j] = '\0';
-
-        if (j == 0) {
-            snprintf(safe_name, sizeof(safe_name), "playlist_%d", i);
-        }
-
-        snprintf(filename, sizeof(filename), "%s.json", safe_name);
-
-        char filepath[MAX_PATH_LEN];
-        snprintf(filepath, sizeof(filepath), "%s/%s", playlists_dir, filename);
-
-        /* Atomic write: write to temp file first, then rename */
-        char tmppath[MAX_PATH_LEN];
-        snprintf(tmppath, sizeof(tmppath), "%s.tmp", filepath);
-        FILE *f = fopen(tmppath, "w");
-        if (!f) continue;
-
-        char escaped_name[MAX_PLAYLIST_NAME_LEN * 2];
-        escape_json_string(pl->name, escaped_name, sizeof(escaped_name));
-
-        fprintf(f, "{\n");
-        fprintf(f, "  \"name\": \"%s\",\n", escaped_name);
-        fprintf(f, "  \"created_time\": %ld,\n", (long)pl->created_time);
-        fprintf(f, "  \"modified_time\": %ld,\n", (long)pl->modified_time);
-        fprintf(f, "  \"tracks\": [\n");
-
-        for (int k = 0; k < pl->track_count; k++) {
-            Track *t = &pl->tracks[k];
-            char escaped_path[MAX_PATH_LEN * 2];
-            char escaped_title[MAX_META_LEN * 2];
-            char escaped_artist[MAX_META_LEN * 2];
-            char escaped_album[MAX_META_LEN * 2];
-
-            escape_json_string(t->path, escaped_path, sizeof(escaped_path));
-            escape_json_string(t->title, escaped_title, sizeof(escaped_title));
-            escape_json_string(t->artist, escaped_artist, sizeof(escaped_artist));
-            escape_json_string(t->album, escaped_album, sizeof(escaped_album));
-
-            fprintf(f, "    {\n");
-            fprintf(f, "      \"path\": \"%s\",\n", escaped_path);
-            fprintf(f, "      \"title\": \"%s\",\n", escaped_title);
-            fprintf(f, "      \"artist\": \"%s\",\n", escaped_artist);
-            fprintf(f, "      \"album\": \"%s\"\n", escaped_album);
-            fprintf(f, "    }%s\n", (k < pl->track_count - 1) ? "," : "");
-        }
-
-        fprintf(f, "  ],\n");
-        fprintf(f, "  \"track_count\": %d\n", pl->track_count);
-        fprintf(f, "}\n");
-
-        fclose(f);
-        rename(tmppath, filepath);
     }
 }
 
@@ -1199,13 +587,11 @@ void save_temp_playlist(void) {
     }
     log_debug("menu_views", "Saving temp playlist (%d tracks)", snapshot_count);
 
-    char folder_path[MAX_PATH_LEN];
+    char folder_path[MAX_PATH_LEN] = "";
     playlist_copy_folder_path(folder_path, sizeof(folder_path));
 
     char (*tracks)[MAX_PATH_LEN] = malloc((size_t)snapshot_count * sizeof(*tracks));
-    if (!tracks) {
-        return;
-    }
+    if (!tracks) return;
 
     int saved_count = 0;
     for (int i = 0; i < snapshot_count; i++) {
@@ -1215,41 +601,17 @@ void save_temp_playlist(void) {
         }
     }
 
-    if (saved_count == 0) {
-        free(tracks);
-        return;
+    if (saved_count > 0 && library_is_available()) {
+        library_temp_playlist_save(folder_path, (const char (*)[MAX_PATH_LEN])tracks, saved_count);
     }
 
-    /* Atomic write: write to temp file first, then rename */
-    char tmp_path[MAX_PATH_LEN];
-    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", temp_playlist_file);
-    FILE *f = fopen(tmp_path, "w");
-    if (!f) {
-        free(tracks);
-        return;
-    }
-
-    char escaped_folder[MAX_PATH_LEN * 3];
-    escape_temp_playlist_field(folder_path, escaped_folder, sizeof(escaped_folder));
-    fprintf(f, "%s\n", TEMP_PLAYLIST_MAGIC);
-    fprintf(f, "folder=%s\n", escaped_folder);
-
-    for (int i = 0; i < saved_count; i++) {
-        char escaped_path[MAX_PATH_LEN * 3];
-        escape_temp_playlist_field(tracks[i], escaped_path, sizeof(escaped_path));
-        fprintf(f, "track=%s\n", escaped_path);
-    }
-
-    fclose(f);
-    rename(tmp_path, temp_playlist_file);
     free(tracks);
 }
 
 void cleanup_temp_playlist(void) {
-    log_debug("menu_views", "Cleaning up temp playlist file");
-    if (temp_playlist_file[0] != '\0') {
-        unlink(temp_playlist_file);
-    }
+    log_debug("menu_views", "Cleaning up temp playlist");
+    if (library_is_available())
+        library_temp_playlist_cleanup();
 }
 
 static int apply_restored_playlist(Playlist *restored,
@@ -1283,210 +645,59 @@ static int apply_restored_playlist(Playlist *restored,
     return loaded_count;
 }
 
-static int load_temp_playlist_v2(FILE *f) {
-    Playlist *restored = calloc(1, sizeof(*restored));
-    if (!restored) {
-        return 0;
-    }
-
-    int loaded_count = 0;
-    int has_multiple_sources = 0;
-    char folder_path[MAX_PATH_LEN] = "";
-    char first_track_dir[MAX_PATH_LEN] = "";
-    char line[(MAX_PATH_LEN * 3) + 32];
-
-    while (fgets(line, sizeof(line), f)) {
-        trim_line_end(line);
-
-        if (strncmp(line, "folder=", 7) == 0) {
-            unescape_temp_playlist_field(line + 7, folder_path, sizeof(folder_path));
-            continue;
-        }
-
-        if (strncmp(line, "track=", 6) != 0 || loaded_count >= MAX_TRACKS) {
-            continue;
-        }
-
-        char path_buf[MAX_PATH_LEN];
-        if (unescape_temp_playlist_field(line + 6, path_buf, sizeof(path_buf)) != 0) {
-            continue;
-        }
-
-        if (path_buf[0] == '\0' || access(path_buf, R_OK) != 0) {
-            continue;
-        }
-
-        strncpy(restored->tracks[loaded_count], path_buf, MAX_PATH_LEN - 1);
-        restored->tracks[loaded_count][MAX_PATH_LEN - 1] = '\0';
-
-        char track_dir[MAX_PATH_LEN];
-        extract_parent_directory_for_playlist(path_buf, track_dir, sizeof(track_dir));
-        if (loaded_count == 0) {
-            snprintf(first_track_dir, sizeof(first_track_dir), "%s", track_dir);
-        } else if (!has_multiple_sources && strcmp(first_track_dir, track_dir) != 0) {
-            has_multiple_sources = 1;
-        }
-
-        loaded_count++;
-    }
-
-    int result = apply_restored_playlist(restored, loaded_count, has_multiple_sources,
-                                         folder_path, first_track_dir);
-    free(restored);
-    return result;
-}
-
-static int load_temp_playlist_legacy_json(void) {
-    FILE *f = fopen(temp_playlist_file, "r");
-    if (!f) {
-        return 0;
-    }
-
-    fseek(f, 0, SEEK_END);
-    long fsize = ftell(f);
-    if (fsize <= 0) {
-        fclose(f);
-        return 0;
-    }
-
-    char *json = malloc(fsize + 1);
-    if (!json) {
-        fclose(f);
-        return 0;
-    }
-
-    fseek(f, 0, SEEK_SET);
-    fread(json, 1, fsize, f);
-    json[fsize] = '\0';
-    fclose(f);
-
-    int count = (int)extract_json_int(json, "count");
-    if (count <= 0 || count > MAX_TRACKS) {
-        free(json);
-        return 0;
-    }
-
-    char folder_path[MAX_PATH_LEN];
-    extract_json_string(json, "folder_path", folder_path, sizeof(folder_path));
-
-    Playlist *restored = calloc(1, sizeof(*restored));
-    if (!restored) {
-        free(json);
-        return 0;
-    }
-
-    const char *tracks_start = strstr(json, "\"tracks\": [");
-    if (!tracks_start) {
-        free(restored);
-        free(json);
-        return 0;
-    }
-
-    const char *array_start = strchr(tracks_start, '[');
-    const char *array_end = array_start ? strchr(array_start, ']') : NULL;
-    if (!array_start || !array_end || array_end <= array_start) {
-        free(restored);
-        free(json);
-        return 0;
-    }
-
-    int loaded_count = 0;
-    int has_multiple_sources = 0;
-    char first_track_dir[MAX_PATH_LEN] = "";
-    const char *current_track = array_start + 1;
-
-    while (current_track < array_end && loaded_count < count && loaded_count < MAX_TRACKS) {
-        while (current_track < array_end &&
-               (*current_track == ' ' || *current_track == '\t' || *current_track == '\n' ||
-                *current_track == '\r' || *current_track == ',')) {
-            current_track++;
-        }
-
-        if (current_track >= array_end) {
-            break;
-        }
-
-        char path_buf[MAX_PATH_LEN];
-        path_buf[0] = '\0';
-
-        if (*current_track == '"') {
-            const char *next = parse_json_string_value(current_track, path_buf, sizeof(path_buf));
-            if (!next) {
-                break;
-            }
-            current_track = next;
-        } else if (*current_track == '{') {
-            const char *end_track = strchr(current_track, '}');
-            if (!end_track || end_track > array_end) {
-                break;
-            }
-
-            size_t obj_len = (size_t)(end_track - current_track + 1);
-            char *track_obj = malloc(obj_len + 1);
-            if (!track_obj) {
-                current_track = end_track + 1;
-                continue;
-            }
-
-            strncpy(track_obj, current_track, obj_len);
-            track_obj[obj_len] = '\0';
-            extract_json_string(track_obj, "path", path_buf, sizeof(path_buf));
-            free(track_obj);
-            current_track = end_track + 1;
-        } else {
-            current_track++;
-            continue;
-        }
-
-        if (path_buf[0] == '\0' || access(path_buf, R_OK) != 0) {
-            continue;
-        }
-
-        strncpy(restored->tracks[loaded_count], path_buf, MAX_PATH_LEN - 1);
-        restored->tracks[loaded_count][MAX_PATH_LEN - 1] = '\0';
-
-        char track_dir[MAX_PATH_LEN];
-        extract_parent_directory_for_playlist(path_buf, track_dir, sizeof(track_dir));
-        if (loaded_count == 0) {
-            snprintf(first_track_dir, sizeof(first_track_dir), "%s", track_dir);
-        } else if (!has_multiple_sources && strcmp(first_track_dir, track_dir) != 0) {
-            has_multiple_sources = 1;
-        }
-
-        loaded_count++;
-    }
-
-    int result = apply_restored_playlist(restored, loaded_count, has_multiple_sources,
-                                         folder_path, first_track_dir);
-
-    free(restored);
-    free(json);
-    return result;
-}
-
 int load_temp_playlist(void) {
-    log_info("menu_views", "Loading temp playlist from '%s'", temp_playlist_file);
-    FILE *f = fopen(temp_playlist_file, "r");
-    if (!f) {
-        log_debug("menu_views", "No temp playlist file found");
+    if (!library_is_available()) {
+        log_debug("menu_views", "Library not available, cannot load temp playlist");
         return 0;
     }
 
-    char header[128];
-    if (!fgets(header, sizeof(header), f)) {
-        fclose(f);
+    char folder_path[MAX_PATH_LEN] = "";
+    char (*tracks)[MAX_PATH_LEN] = malloc((size_t)MAX_TRACKS * sizeof(*tracks));
+    if (!tracks) return 0;
+
+    int loaded_count = library_temp_playlist_load(folder_path, sizeof(folder_path),
+                                                  tracks, MAX_TRACKS);
+
+    if (loaded_count <= 0) {
+        log_debug("menu_views", "No temp playlist found in SQLite");
+        free(tracks);
         return 0;
     }
 
-    trim_line_end(header);
-    if (strcmp(header, TEMP_PLAYLIST_MAGIC) == 0) {
-        int result = load_temp_playlist_v2(f);
-        fclose(f);
-        return result;
+    log_info("menu_views", "Loading temp playlist from SQLite (%d tracks)", loaded_count);
+
+    Playlist *restored = calloc(1, sizeof(*restored));
+    if (!restored) {
+        free(tracks);
+        return 0;
     }
 
-    fclose(f);
-    return load_temp_playlist_legacy_json();
+    int has_multiple_sources = 0;
+    char first_track_dir[MAX_PATH_LEN] = "";
+
+    for (int i = 0; i < loaded_count; i++) {
+        if (tracks[i][0] == '\0' || access(tracks[i], R_OK) != 0) continue;
+
+        strncpy(restored->tracks[i], tracks[i], MAX_PATH_LEN - 1);
+        restored->tracks[i][MAX_PATH_LEN - 1] = '\0';
+
+        char track_dir[MAX_PATH_LEN];
+        extract_parent_directory_for_playlist(tracks[i], track_dir, sizeof(track_dir));
+        if (i == 0) {
+            snprintf(first_track_dir, sizeof(first_track_dir), "%s", track_dir);
+        } else if (!has_multiple_sources && strcmp(first_track_dir, track_dir) != 0) {
+            has_multiple_sources = 1;
+        }
+
+        if (restored->count < MAX_TRACKS - 1) restored->count++;
+    }
+
+    int result = apply_restored_playlist(restored, restored->count, has_multiple_sources,
+                                         folder_path, first_track_dir);
+
+    free(tracks);
+    free(restored);
+    return result;
 }
 
 void render_menu_hint_bar(void) {
@@ -1518,45 +729,19 @@ int create_user_playlist(const char *name) {
         pl->db_id = library_playlist_create(name);
 
     g_playlist_manager.count++;
-    save_all_playlists();
-
     return 0;
 }
 
 int delete_user_playlist(int index) {
     if (index < 0 || index >= g_playlist_manager.count) return -1;
 
-    /* Delete from SQLite first */
     if (library_is_available() && g_playlist_manager.playlists[index].db_id > 0)
         library_playlist_delete(g_playlist_manager.playlists[index].db_id);
-    
-    char filename[MAX_PLAYLIST_NAME_LEN + 8];
-    char safe_name[MAX_PLAYLIST_NAME_LEN];
-    
-    int j = 0;
-    for (const char *p = g_playlist_manager.playlists[index].name; *p && j < MAX_PLAYLIST_NAME_LEN - 1; p++) {
-        if ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || 
-            (*p >= '0' && *p <= '9') || *p == '_' || *p == '-') {
-            safe_name[j++] = *p;
-        } else if (*p == ' ') {
-            safe_name[j++] = '_';
-        }
-    }
-    safe_name[j] = '\0';
-    
-    if (j > 0) {
-        snprintf(filename, sizeof(filename), "%s.json", safe_name);
-        char filepath[MAX_PATH_LEN];
-        snprintf(filepath, sizeof(filepath), "%s/%s", playlists_dir, filename);
-        unlink(filepath);
-    }
-    
+
     for (int i = index; i < g_playlist_manager.count - 1; i++) {
         g_playlist_manager.playlists[i] = g_playlist_manager.playlists[i + 1];
     }
     g_playlist_manager.count--;
-    
-    save_all_playlists();
     return 0;
 }
 
@@ -1569,32 +754,9 @@ int rename_user_playlist(int index, const char *new_name) {
     if (library_is_available() && pl->db_id > 0)
         library_playlist_rename(pl->db_id, new_name);
 
-    char old_filename[MAX_PLAYLIST_NAME_LEN + 8];
-    char safe_old_name[MAX_PLAYLIST_NAME_LEN];
-    int j = 0;
-    for (const char *p = pl->name; *p && j < MAX_PLAYLIST_NAME_LEN - 1; p++) {
-        if ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
-            (*p >= '0' && *p <= '9') || *p == '_' || *p == '-') {
-            safe_old_name[j++] = *p;
-        } else if (*p == ' ') {
-            safe_old_name[j++] = '_';
-        }
-    }
-    safe_old_name[j] = '\0';
-
-    if (j > 0) {
-        snprintf(old_filename, sizeof(old_filename), "%s.json", safe_old_name);
-        char old_filepath[MAX_PATH_LEN];
-        snprintf(old_filepath, sizeof(old_filepath), "%s/%s", playlists_dir, old_filename);
-        unlink(old_filepath);
-    }
-
     strncpy(pl->name, new_name, MAX_PLAYLIST_NAME_LEN - 1);
     pl->name[MAX_PLAYLIST_NAME_LEN - 1] = '\0';
     pl->modified_time = time(NULL);
-
-    if (!library_is_available())
-        save_all_playlists();
     return 0;
 }
 
@@ -1620,7 +782,6 @@ int add_track_to_playlist(int playlist_idx, Track *track) {
         library_playlist_add_track(pl->db_id, track->path);
     }
 
-    save_all_playlists();
     return 0;
 }
 
@@ -1646,8 +807,163 @@ int remove_track_from_playlist(int playlist_idx, int track_idx) {
     if (library_is_available() && pl->db_id > 0 && removed_path[0])
         library_playlist_remove_track_by_path(pl->db_id, removed_path);
 
-    save_all_playlists();
     return 0;
+}
+
+/* ── One-time migration from v1 JSON files ────────────────────────
+ * Reads legacy ~/.config/ter-music/*.json files and writes their
+ * content into SQLite. Only runs when JSON files exist and SQLite
+ * tables are empty — typically once on first upgrade to v2. */
+static void try_migrate_from_json(void) {
+    if (!library_is_available()) return;
+    const char *home = getenv("HOME");
+    if (!home) return;
+
+    char cfg[MAX_PATH_LEN];
+    snprintf(cfg, sizeof(cfg), "%s/.config/ter-music", home);
+
+    /* Quick check: do any legacy JSON files exist? */
+    char path[MAX_PATH_LEN];
+    snprintf(path, sizeof(path), "%s/history.json", cfg);
+    bool has_history = (access(path, F_OK) == 0);
+    snprintf(path, sizeof(path), "%s/favorites.json", cfg);
+    bool has_favs = (access(path, F_OK) == 0);
+    snprintf(path, sizeof(path), "%s/dir_history.json", cfg);
+    bool has_dirhist = (access(path, F_OK) == 0);
+    snprintf(path, sizeof(path), "%s/playlists", cfg);
+    bool has_playlists = (access(path, F_OK) == 0);
+
+    if (!has_history && !has_favs && !has_dirhist && !has_playlists)
+        return;
+
+    /* Only migrate if the SQLite tables are empty */
+    if (library_history_get_count() > 0 || library_favorites_get_count() > 0)
+        return;
+
+    log_info("menu_views", "Migrating legacy v1 JSON data to SQLite...");
+
+    /* Helper macro: read a whole file into a heap buffer. Caller frees. */
+#define READ_FILE(path, buf, len) do { \
+        FILE *f_ = fopen(path, "r"); \
+        if (!f_) { buf = NULL; len = 0; } \
+        else { \
+            fseek(f_, 0, SEEK_END); len = ftell(f_); fseek(f_, 0, SEEK_SET); \
+            buf = malloc((size_t)(len) + 1); \
+            if (buf) { fread(buf, 1, (size_t)len, f_); buf[len] = '\0'; } \
+            fclose(f_); \
+        } \
+    } while (0)
+
+    /* Helper: extract all "path":"..." values from a JSON buffer and invoke cb(path) for each. */
+#define FOR_EACH_PATH(buf, body) do { \
+        char *pos_ = (buf); \
+        while ((pos_ = strstr(pos_, "\"path\":\"")) != NULL) { \
+            pos_ += 8; \
+            char p_[MAX_PATH_LEN]; int i_ = 0; \
+            while (*pos_ && *pos_ != '"' && i_ < MAX_PATH_LEN - 1) { \
+                if (*pos_ == '\\' && *(pos_ + 1)) pos_++; \
+                p_[i_++] = *pos_++; \
+            } \
+            p_[i_] = '\0'; \
+            if (p_[0]) { body } \
+            if (pos_) pos_++; \
+        } \
+    } while (0)
+
+    /* --- history.json → play_history --- */
+    if (has_history) {
+        snprintf(path, sizeof(path), "%s/history.json", cfg);
+        char *buf = NULL; long len = 0;
+        READ_FILE(path, buf, len);
+        if (buf) {
+            FOR_EACH_PATH(buf, {
+                library_scan_file(p_);
+                library_history_add(p_, 0);
+            });
+            free(buf);
+        }
+    }
+
+    /* --- favorites.json → favorites --- */
+    if (has_favs) {
+        snprintf(path, sizeof(path), "%s/favorites.json", cfg);
+        char *buf = NULL; long len = 0;
+        READ_FILE(path, buf, len);
+        if (buf) {
+            FOR_EACH_PATH(buf, {
+                library_scan_file(p_);
+                library_favorites_add(p_);
+            });
+            free(buf);
+        }
+    }
+
+    /* --- dir_history.json → dir_history --- */
+    if (has_dirhist) {
+        snprintf(path, sizeof(path), "%s/dir_history.json", cfg);
+        char *buf = NULL; long len = 0;
+        READ_FILE(path, buf, len);
+        if (buf) {
+            FOR_EACH_PATH(buf, {
+                library_dir_history_add(p_);
+            });
+            free(buf);
+        }
+    }
+
+    /* --- playlists/*.json → playlists --- */
+    if (has_playlists) {
+        snprintf(path, sizeof(path), "%s/playlists", cfg);
+        DIR *dir = opendir(path);
+        if (dir) {
+            struct dirent *entry;
+            while ((entry = readdir(dir)) != NULL) {
+                if (!strstr(entry->d_name, ".json")) continue;
+                char fp[MAX_PATH_LEN];
+                snprintf(fp, sizeof(fp), "%s/playlists/%s", cfg, entry->d_name);
+
+                char *buf = NULL; long len = 0;
+                READ_FILE(fp, buf, len);
+                if (!buf) continue;
+
+                /* Extract playlist name from "name":"..." */
+                char *name_val = strstr(buf, "\"name\":\"");
+                if (name_val) {
+                    name_val += 8;
+                    char pl_name[MAX_PLAYLIST_NAME_LEN];
+                    int ni = 0;
+                    while (*name_val && *name_val != '"' && ni < MAX_PLAYLIST_NAME_LEN - 1) {
+                        if (*name_val == '\\' && *(name_val + 1)) name_val++;
+                        pl_name[ni++] = *name_val++;
+                    }
+                    pl_name[ni] = '\0';
+
+                    if (pl_name[0]) {
+                        int pl_id = library_playlist_create(pl_name);
+                        if (pl_id > 0) {
+                            FOR_EACH_PATH(buf, {
+                                library_scan_file(p_);
+                                library_playlist_add_track(pl_id, p_);
+                            });
+                        }
+                    }
+                }
+                free(buf);
+            }
+            closedir(dir);
+        }
+    }
+
+#undef READ_FILE
+#undef FOR_EACH_PATH
+
+    log_info("menu_views", "JSON migration to SQLite complete");
+
+    /* Reload from SQLite after migration */
+    load_history();
+    load_favorites();
+    load_dir_history();
+    load_all_playlists();
 }
 
 void init_all_persistent_data(void) {
@@ -1655,55 +971,18 @@ void init_all_persistent_data(void) {
     load_config();
     apply_color_theme();
     g_loop_mode = g_app_config.default_loop_mode;
+
+    /* Initialize SQLite */
+    library_init();
+
+    /* Load all persistent data from SQLite */
     load_history();
     load_favorites();
     load_dir_history();
     load_all_playlists();
-    /* Initialize SQLite library database (optional — library mode may not be available) */
-    library_init();
 
-    /* ── JSON → SQLite migration ─────────────────────────────────────
-     * If JSON files have data but SQLite tables are empty, migrate now.
-     * JSON files are never deleted — they serve as backup for rollback. */
-    if (!library_is_available())
-        return;
-
-    /* Migrate favorites */
-    if (g_favorites.count > 0 && library_favorites_get_count() == 0) {
-        log_info("menu_views", "Migrating %d favorites to SQLite", g_favorites.count);
-        for (int i = 0; i < g_favorites.count; i++) {
-            library_scan_file(g_favorites.tracks[i].path);
-            library_favorites_add(g_favorites.tracks[i].path);
-        }
-        log_info("menu_views", "Favorites migration complete");
-    }
-
-    /* Migrate play history */
-    if (g_play_history.count > 0 && library_history_get_count() == 0) {
-        log_info("menu_views", "Migrating %d history entries to SQLite", g_play_history.count);
-        for (int i = 0; i < g_play_history.count; i++) {
-            library_scan_file(g_play_history.entries[i].path);
-            library_history_add(g_play_history.entries[i].path, 0);
-        }
-        log_info("menu_views", "History migration complete");
-    }
-
-    /* Migrate user playlists */
-    if (g_playlist_manager.count > 0 && library_playlist_get_count() == 0) {
-        log_info("menu_views", "Migrating %d playlists to SQLite", g_playlist_manager.count);
-        for (int i = 0; i < g_playlist_manager.count; i++) {
-            UserPlaylist *pl = &g_playlist_manager.playlists[i];
-            library_playlist_create(pl->name);
-            /* After creation it's the newest playlist; we need its ID.
-             * Simplified: rely on sequential IDs. */
-            for (int k = 0; k < pl->track_count; k++) {
-                library_scan_file(pl->tracks[k].path);
-                /* playlist_id = i+1 (SQLite autoincrement starting at 1) */
-                library_playlist_add_track(i + 1, pl->tracks[k].path);
-            }
-        }
-        log_info("menu_views", "Playlists migration complete");
-    }
+    /* One-time migration from legacy v1 JSON files */
+    try_migrate_from_json();
 }
 
 void show_status_message(const char *msg) {
@@ -1799,12 +1078,11 @@ void add_history_entry(Track *track) {
         g_play_history.count = MAX_HISTORY_COUNT;
     }
 
-    /* Persist to SQLite and JSON */
+    /* Persist to SQLite */
     if (library_is_available()) {
         library_scan_file(track->path);
         library_history_add(track->path, 0);
     }
-    save_history();
 }
 
 int add_to_favorites(Track *track) {
@@ -1831,7 +1109,6 @@ int add_to_favorites(Track *track) {
         library_favorites_add(track->path);
     }
 
-    save_favorites();
     return 0;
 }
 
@@ -1855,7 +1132,6 @@ int remove_from_favorites(int index) {
     if (library_is_available())
         library_favorites_remove(removed_path);
 
-    save_favorites();
     return 0;
 }
 
@@ -4281,12 +3557,18 @@ static void handle_history_input(int ch) {
         case 'D':
             if (g_focus_area == FOCUS_CONTENT && g_dir_history.count > 0 &&
                 g_content_selected_idx >= 0 && g_content_selected_idx < g_dir_history.count) {
-                
+
+                /* Capture path for SQLite removal before shifting */
+                char removed_path[MAX_PATH_LEN] = "";
+                strncpy(removed_path, g_dir_history.entries[g_content_selected_idx].path, MAX_PATH_LEN - 1);
+
                 for (int i = g_content_selected_idx; i < g_dir_history.count - 1; i++) {
                     g_dir_history.entries[i] = g_dir_history.entries[i + 1];
                 }
                 g_dir_history.count--;
-                save_dir_history();
+
+                if (library_is_available())
+                    library_dir_history_remove(removed_path);
                 
                 if (g_content_selected_idx >= g_dir_history.count) {
                     g_content_selected_idx = g_dir_history.count - 1;

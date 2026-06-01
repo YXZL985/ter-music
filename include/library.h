@@ -6,10 +6,10 @@
  * incremental updates (mtime-based), FTS5 full-text search, and
  * artist/album/genre browsing dimensions.
  *
- * Design principle: The existing folder-browsing path (load_playlist,
- * scan_playlist_directory_into, g_playlist, LRU cache, JSON files)
- * is completely unchanged. SQLite is an additional data source that
- * feeds into the same g_playlist playing queue.
+ * SQLite is the sole persistence layer — all favorites, history,
+ * playlists, directory history, and temp playlist data are stored
+ * in ~/.config/ter-music/library.db. Legacy v1 JSON persistence
+ * has been fully removed.
  *
  * @author 燕戏竹林 (yxzl666xx@outlook.com)
  * @date 2026-06-01
@@ -239,6 +239,13 @@ int library_favorites_add(const char *track_path);
 int library_favorites_remove(const char *track_path);
 int library_favorites_has(const char *track_path);
 
+/* ========== Directory History (SQLite-backed) ========== */
+
+int library_dir_history_add(const char *path);
+int library_dir_history_get_all(DirHistoryEntry *entries, int max_entries);
+int library_dir_history_remove(const char *path);
+void library_dir_history_clear(void);
+
 /* ========== Play History (SQLite-backed) ========== */
 
 void library_history_add(const char *track_path, int position);
@@ -257,25 +264,19 @@ int library_playlist_remove_track(int playlist_id, int position);
 int library_playlist_remove_track_by_path(int playlist_id, const char *track_path);
 int library_playlist_get_tracks(int playlist_id, Track *tracks, int max_tracks);
 
+/* ========== Temp Playlist (SQLite-backed) ========== */
+
+int library_temp_playlist_save(const char *folder_path,
+                                const char (*tracks)[MAX_PATH_LEN], int track_count);
+int library_temp_playlist_load(char *folder_path, size_t folder_size,
+                               char (*tracks)[MAX_PATH_LEN], int max_tracks);
+void library_temp_playlist_cleanup(void);
+
 /* ========== Statistics ========== */
 
 int library_get_total_duration_seconds(void);
 
 /* ========== Migration Helpers ========== */
-
-/**
- * Migrate data from existing JSON files (favorites.json, history.json,
- * playlists/*.json) into SQLite tables.
- *
- * The migration runs inside a single SQLite transaction. If it fails,
- * the transaction is rolled back and JSON files are left untouched.
- *
- * Existing JSON files are NOT deleted after migration (user can
- * manually clean up later).
- *
- * Returns 0 on success, -1 on failure.
- */
-int library_migrate_from_json(void);
 
 /**
  * Returns 1 if the library database appears to have data (tracks table

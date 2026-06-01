@@ -10,7 +10,7 @@
  *   - Reuses get_audio_metadata() from playlist.c for FFmpeg + APEv2 + GBK fixup
  *   - Reuses is_audio_file() and audio_extensions[] from playlist.c
  *   - Library query results feed into g_playlist via library_load_into_playlist()
- *   - Existing JSON persistence remains as fallback/backup
+ *   - SQLite is the sole persistence layer (JSON legacy fully removed)
  *
  * @author 燕戏竹林 (yxzl666xx@outlook.com)
  * @date 2026-06-01
@@ -146,7 +146,22 @@ static const char *g_schema_sql =
     "CREATE TABLE IF NOT EXISTS schema_version ("
     "  version INTEGER PRIMARY KEY"
     ");"
-    "INSERT OR IGNORE INTO schema_version(version) VALUES (1);";
+    "INSERT OR IGNORE INTO schema_version(version) VALUES (1);"
+
+    /* --- v2: Directory navigation history (replaces dir_history.json) --- */
+    "CREATE TABLE IF NOT EXISTS dir_history ("
+    "  path      TEXT PRIMARY KEY,"
+    "  open_time INTEGER NOT NULL"
+    ");"
+
+    /* --- v2: Temp playlist (replaces temp_playlist.json V2 file) --- */
+    "CREATE TABLE IF NOT EXISTS temp_playlist ("
+    "  sort_order  INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "  folder_path TEXT NOT NULL DEFAULT '',"
+    "  track_path  TEXT NOT NULL"
+    ");"
+
+    "INSERT OR IGNORE INTO schema_version(version) VALUES (2);";
 
 /* ========== Forward declarations of internal functions ========== */
 static void build_db_path(char *buf, size_t buf_size);
@@ -1394,6 +1409,75 @@ int library_favorites_has(const char *track_path) {
     return has;
 }
 
+/* ========== Public API: Directory History (SQLite-backed) ========== */
+
+int library_dir_history_add(const char *path) {
+    if (!library_is_available() || !path || !path[0]) return -1;
+    pthread_mutex_lock(&g_library_mutex);
+    sqlite3_stmt *stmt = NULL;
+    sqlite3_prepare_v2(g_db,
+        "INSERT OR REPLACE INTO dir_history(path, open_time) VALUES(?, ?)",
+        -1, &stmt, NULL);
+    sqlite3_bind_text(stmt, 1, path, -1, SQLITE_STATIC);
+    sqlite3_bind_int64(stmt, 2, (sqlite3_int64)time(NULL));
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    /* Prune to MAX_DIR_HISTORY_COUNT */
+    sqlite3_prepare_v2(g_db,
+        "DELETE FROM dir_history WHERE path NOT IN ("
+        "  SELECT path FROM dir_history ORDER BY open_time DESC LIMIT ?)",
+        -1, &stmt, NULL);
+    sqlite3_bind_int(stmt, 1, MAX_DIR_HISTORY_COUNT);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    pthread_mutex_unlock(&g_library_mutex);
+    return 0;
+}
+
+int library_dir_history_get_all(DirHistoryEntry *entries, int max_entries) {
+    if (!library_is_available() || !entries || max_entries <= 0) return 0;
+    pthread_mutex_lock(&g_library_mutex);
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(g_db,
+        "SELECT path, open_time FROM dir_history ORDER BY open_time DESC LIMIT ?",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        pthread_mutex_unlock(&g_library_mutex);
+        return 0;
+    }
+    sqlite3_bind_int(stmt, 1, max_entries);
+    int count = 0;
+    while (count < max_entries && sqlite3_step(stmt) == SQLITE_ROW) {
+        const char *p = (const char *)sqlite3_column_text(stmt, 0);
+        if (p) strncpy(entries[count].path, p, sizeof(entries[count].path) - 1);
+        entries[count].open_time = (time_t)sqlite3_column_int64(stmt, 1);
+        count++;
+    }
+    sqlite3_finalize(stmt);
+    pthread_mutex_unlock(&g_library_mutex);
+    return count;
+}
+
+int library_dir_history_remove(const char *path) {
+    if (!library_is_available() || !path) return -1;
+    pthread_mutex_lock(&g_library_mutex);
+    sqlite3_stmt *stmt = NULL;
+    sqlite3_prepare_v2(g_db, "DELETE FROM dir_history WHERE path = ?", -1, &stmt, NULL);
+    sqlite3_bind_text(stmt, 1, path, -1, SQLITE_STATIC);
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    pthread_mutex_unlock(&g_library_mutex);
+    return (rc == SQLITE_DONE) ? 0 : -1;
+}
+
+void library_dir_history_clear(void) {
+    if (!library_is_available()) return;
+    pthread_mutex_lock(&g_library_mutex);
+    sqlite3_exec(g_db, "DELETE FROM dir_history", NULL, NULL, NULL);
+    pthread_mutex_unlock(&g_library_mutex);
+}
+
 /* ========== Public API: Play History (SQLite-backed) ========== */
 
 void library_history_add(const char *track_path, int position) {
@@ -1691,17 +1775,78 @@ int library_has_data(void) {
     return library_get_track_count() > 0;
 }
 
-int library_migrate_from_json(void) {
+/* ========== Public API: Temp Playlist (SQLite-backed) ========== */
+
+int library_temp_playlist_save(const char *folder_path,
+                                const char (*tracks)[MAX_PATH_LEN], int track_count) {
     if (!library_is_available()) return -1;
+    pthread_mutex_lock(&g_library_mutex);
+    sqlite3_exec(g_db, "BEGIN", NULL, NULL, NULL);
 
-    log_info("library", "Starting JSON-to-SQLite migration");
+    sqlite3_stmt *del = NULL;
+    sqlite3_prepare_v2(g_db, "DELETE FROM temp_playlist", -1, &del, NULL);
+    sqlite3_step(del);
+    sqlite3_finalize(del);
 
-    /* Migration is done by reading existing JSON data via the existing
-     * load functions and writing to SQLite. This is called from
-     * init_all_persistent_data() in menu_views.c after JSON files are loaded.
-     *
-     * The actual migration logic is in menu_views.c since it has access to
-     * the loaded g_favorites, g_play_history, and g_playlist_manager structs.
-     * Here we provide the SQLite-side functions that menu_views.c calls. */
-    return 0;
+    sqlite3_stmt *ins = NULL;
+    sqlite3_prepare_v2(g_db,
+        "INSERT INTO temp_playlist(folder_path, track_path) VALUES(?, ?)",
+        -1, &ins, NULL);
+    sqlite3_bind_text(ins, 1, folder_path ? folder_path : "", -1, SQLITE_STATIC);
+
+    int ok = 0;
+    for (int i = 0; i < track_count; i++) {
+        sqlite3_bind_text(ins, 2, tracks[i], -1, SQLITE_STATIC);
+        if (sqlite3_step(ins) == SQLITE_DONE) ok++;
+        sqlite3_reset(ins);
+    }
+    sqlite3_finalize(ins);
+
+    sqlite3_exec(g_db, "COMMIT", NULL, NULL, NULL);
+    pthread_mutex_unlock(&g_library_mutex);
+    return ok;
 }
+
+int library_temp_playlist_load(char *folder_path, size_t folder_size,
+                               char (*tracks)[MAX_PATH_LEN], int max_tracks) {
+    if (!library_is_available()) return 0;
+    if (folder_path) folder_path[0] = '\0';
+
+    pthread_mutex_lock(&g_library_mutex);
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(g_db,
+        "SELECT folder_path, track_path FROM temp_playlist ORDER BY sort_order",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        pthread_mutex_unlock(&g_library_mutex);
+        return 0;
+    }
+
+    int count = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW && count < max_tracks) {
+        const char *fp = (const char *)sqlite3_column_text(stmt, 0);
+        const char *tp = (const char *)sqlite3_column_text(stmt, 1);
+        /* First row's folder_path is the directory context */
+        if (count == 0 && fp && folder_path) {
+            strncpy(folder_path, fp, folder_size - 1);
+            folder_path[folder_size - 1] = '\0';
+        }
+        if (tp) {
+            strncpy(tracks[count], tp, MAX_PATH_LEN - 1);
+            tracks[count][MAX_PATH_LEN - 1] = '\0';
+            count++;
+        }
+    }
+    sqlite3_finalize(stmt);
+    pthread_mutex_unlock(&g_library_mutex);
+    return count;
+}
+
+void library_temp_playlist_cleanup(void) {
+    if (!library_is_available()) return;
+    pthread_mutex_lock(&g_library_mutex);
+    sqlite3_exec(g_db, "DELETE FROM temp_playlist", NULL, NULL, NULL);
+    pthread_mutex_unlock(&g_library_mutex);
+}
+
+/* Migration is handled in menu_views.c::try_migrate_from_json() */
