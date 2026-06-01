@@ -2478,6 +2478,12 @@ void run_event_loop() {
         process_pending_ui_refresh();
         media_session_tick();
 
+        /* Check for SIGHUP-triggered config reload */
+        if (g_config_reload_requested) {
+            g_config_reload_requested = 0;
+            reload_config();
+        }
+
         ch = getch();
 
         // 每帧都更新进度条（当播放状态为播放或暂停时）

@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <pthread.h>
+#include <signal.h>
 #include "progress.h"
 #include "logger.h"
 #include "ape_tag.h"
@@ -91,6 +92,8 @@ typedef enum {
 #define AUDIO_BACKEND_AUTO  0
 #define AUDIO_BACKEND_PULSE 1
 #define AUDIO_BACKEND_ALSA  2
+
+#define CONFIG_CURRENT_VERSION 2
 
 typedef struct {
     char path[MAX_PATH_LEN];
@@ -260,6 +263,9 @@ extern Favorites g_favorites;
 extern DirHistory g_dir_history;
 extern PlaylistManager g_playlist_manager;
 extern AppConfig g_app_config;
+
+/* SIGHUP hot-reload flag; set by signal handler, checked in event loop */
+extern volatile sig_atomic_t g_config_reload_requested;
 
 extern int g_content_selected_idx;
 extern FocusArea g_focus_area;

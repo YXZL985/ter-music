@@ -46,6 +46,7 @@ pkg_check_modules(PULSE libpulse)
 pkg_check_modules(ALSA alsa)
 pkg_check_modules(DBUS dbus-1)
 pkg_check_modules(LIBCURL libcurl)
+pkg_check_modules(LIBXML2 REQUIRED libxml-2.0)
 
 if(PULSE_FOUND)
     set(AUDIO_BACKEND_INCLUDE_DIRS ${PULSE_INCLUDE_DIRS})
@@ -101,6 +102,8 @@ add_executable(${PROJECT_NAME}
     src/search.c
     src/scrollbar.c
     src/ape_tag.c
+    src/config_xml.c
+    src/config_migration.c
 )
 
 # 包含头文件目录
@@ -115,6 +118,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${AUDIO_BACKEND_INCLUDE_DIRS}
     ${PNG_INCLUDE_DIRS}
     ${JPEG_INCLUDE_DIRS}
+    ${LIBXML2_INCLUDE_DIRS}
 )
 
 if(DBUS_FOUND)
@@ -142,6 +146,7 @@ target_link_libraries(${PROJECT_NAME}
     ${PNG_LIBRARIES}
     ${JPEG_LIBRARIES}
     ${NCURSESW_LIBRARY}
+    ${LIBXML2_LIBRARIES}
     m
     ${PTHREAD_LIBRARY}
     ${CMAKE_DL_LIBS}
@@ -162,6 +167,7 @@ target_compile_options(${PROJECT_NAME} PRIVATE
     ${AUDIO_BACKEND_CFLAGS}
     ${PNG_CFLAGS_OTHER}
     ${JPEG_CFLAGS_OTHER}
+    ${LIBXML2_CFLAGS_OTHER}
 )
 
 if(DBUS_FOUND)

@@ -50,6 +50,12 @@ void clear_dir_history(void);
 void load_config(void);
 void save_config(void);
 void init_default_config(void);
+void reload_config(void);
+
+/* @deprecated v1 JSON format — kept for migration only */
+char* extract_json_string(const char *json, const char *key, char *output, size_t output_size);
+long  extract_json_int(const char *json, const char *key);
+double extract_json_float(const char *json, const char *key);
 
 void load_all_playlists(void);
 void save_all_playlists(void);

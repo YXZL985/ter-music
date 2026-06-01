@@ -16,6 +16,8 @@
 #include "../include/menu_views.h"
 #include "../include/remote.h"
 #include "../include/crypto.h"
+#include "../include/config_xml.h"
+#include "../include/config_migration.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -258,7 +260,8 @@ static const char *resolve_menu_title(const char *title) {
     return title;
 }
 
-static char* extract_json_string(const char *json, const char *key, char *output, size_t output_size) {
+// @deprecated v1 JSON format — kept for migration only
+char* extract_json_string(const char *json, const char *key, char *output, size_t output_size) {
     char search_key[128];
     snprintf(search_key, sizeof(search_key), "\"%s\"", key);
     
@@ -310,7 +313,8 @@ static char* extract_json_string(const char *json, const char *key, char *output
     return output;
 }
 
-static long extract_json_int(const char *json, const char *key) {
+// @deprecated v1 JSON format — kept for migration only
+long extract_json_int(const char *json, const char *key) {
     char search_key[128];
     snprintf(search_key, sizeof(search_key), "\"%s\"", key);
 
@@ -326,7 +330,8 @@ static long extract_json_int(const char *json, const char *key) {
     return atol(pos);
 }
 
-static double extract_json_float(const char *json, const char *key) {
+// @deprecated v1 JSON format — kept for migration only
+double extract_json_float(const char *json, const char *key) {
     char search_key[128];
     snprintf(search_key, sizeof(search_key), "\"%s\"", key);
 
@@ -518,7 +523,7 @@ void ensure_config_dir_exists(void) {
 
     uid_t uid = getuid();
     snprintf(config_dir, sizeof(config_dir), "%s/.config/ter-music", home);
-    snprintf(config_file, sizeof(config_file), "%s/config.json", config_dir);
+    snprintf(config_file, sizeof(config_file), "%s/config.xml", config_dir);
     snprintf(history_file, sizeof(history_file), "%s/history.json", config_dir);
     snprintf(favorites_file, sizeof(favorites_file), "%s/favorites.json", config_dir);
     snprintf(dir_history_file, sizeof(dir_history_file), "%s/dir_history.json", config_dir);
@@ -615,270 +620,52 @@ void apply_color_theme(void) {
     init_pair(COLOR_PAIR_BORDER, g_app_config.theme.border_fg, g_app_config.theme.border_bg);
 }
 
-void load_config(void) {
+void load_config(void)
+{
     log_info("menu_views", "Loading config from '%s'", config_file);
-    FILE *f = fopen(config_file, "r");
-    if (!f) {
-        log_debug("menu_views", "Config file not found, using defaults");
-        init_default_config();
-        return;
-    }
-    
-    fseek(f, 0, SEEK_END);
-    long fsize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    
-    char *json = malloc(fsize + 1);
-    if (!json) {
-        fclose(f);
-        init_default_config();
-        return;
-    }
-    
-    fread(json, 1, fsize, f);
-    json[fsize] = '\0';
-    fclose(f);
-    
+
+    /* Try native XML format first */
     init_default_config();
-    
-    extract_json_string(json, "default_startup_path", g_app_config.default_startup_path, MAX_PATH_LEN);
-    extract_json_string(json, "last_opened_path", g_app_config.last_opened_path, MAX_PATH_LEN);
-    extract_json_string(json, "last_played_folder_path", g_app_config.last_played_folder_path, MAX_PATH_LEN);
-    extract_json_string(json, "last_played_track_path", g_app_config.last_played_track_path, MAX_PATH_LEN);
-    
-    const char *theme_pos = strstr(json, "\"theme\"");
-    if (theme_pos) {
-        char theme_section[1024];
-        const char *theme_start = strchr(theme_pos, '{');
-        const char *theme_end = strchr(theme_start ? theme_start : theme_pos, '}');
-        if (theme_start && theme_end && theme_end > theme_start) {
-            size_t len = theme_end - theme_start + 1;
-            if (len < sizeof(theme_section)) {
-                strncpy(theme_section, theme_start, len);
-                theme_section[len] = '\0';
-                
-                g_app_config.theme.playlist_fg = (int)extract_json_int(theme_section, "playlist_fg");
-                g_app_config.theme.playlist_bg = (int)extract_json_int(theme_section, "playlist_bg");
-                g_app_config.theme.controls_fg = (int)extract_json_int(theme_section, "controls_fg");
-                g_app_config.theme.controls_bg = (int)extract_json_int(theme_section, "controls_bg");
-                g_app_config.theme.lyrics_fg = (int)extract_json_int(theme_section, "lyrics_fg");
-                g_app_config.theme.lyrics_bg = (int)extract_json_int(theme_section, "lyrics_bg");
-                g_app_config.theme.sidebar_fg = (int)extract_json_int(theme_section, "sidebar_fg");
-                g_app_config.theme.sidebar_bg = (int)extract_json_int(theme_section, "sidebar_bg");
-                g_app_config.theme.highlight_fg = (int)extract_json_int(theme_section, "highlight_fg");
-                g_app_config.theme.highlight_bg = (int)extract_json_int(theme_section, "highlight_bg");
-                g_app_config.theme.border_fg = (int)extract_json_int(theme_section, "border_fg");
-                g_app_config.theme.border_bg = (int)extract_json_int(theme_section, "border_bg");
+    if (config_load_from_xml(config_file, &g_app_config) == 0) {
+        g_playback_speed = g_app_config.default_playback_speed;
+        return;
+    }
+
+    /* XML not found — check for old JSON config needing migration */
+    if (config_needs_migration()) {
+        log_info("menu_views", "Performing v1 (JSON) → v2 (XML) migration");
+        if (config_migrate_v1_to_v2() == 0) {
+            if (config_load_from_xml(config_file, &g_app_config) == 0) {
+                g_playback_speed = g_app_config.default_playback_speed;
+                log_info("menu_views", "Migration successful, config loaded");
+                return;
             }
         }
+        log_warn("menu_views", "Migration attempted but failed to load migrated config");
     }
-    
-    g_app_config.auto_play_on_start = (int)extract_json_int(json, "auto_play_on_start");
-    g_app_config.remember_last_path = (int)extract_json_int(json, "remember_last_path");
-    g_app_config.clear_history_on_startup = (int)extract_json_int(json, "clear_history_on_startup");
-    if (strstr(json, "\"resume_last_playback\"")) {
-        g_app_config.resume_last_playback = (int)extract_json_int(json, "resume_last_playback");
-    }
-    if (strstr(json, "\"last_played_position\"")) {
-        g_app_config.last_played_position = (int)extract_json_int(json, "last_played_position");
-    }
-    if (strstr(json, "\"ui_language\"")) {
-        g_app_config.ui_language = (int)extract_json_int(json, "ui_language");
-    }
-    if (strstr(json, "\"volume_percent\"")) {
-        g_app_config.volume_percent = (int)extract_json_int(json, "volume_percent");
-    }
-    if (strstr(json, "\"audio_latency_ms\"")) {
-        g_app_config.audio_latency_ms = (int)extract_json_int(json, "audio_latency_ms");
-    }
-    if (strstr(json, "\"show_lyrics_panel\"")) {
-        g_app_config.show_lyrics_panel = (int)extract_json_int(json, "show_lyrics_panel");
-    }
-    if (strstr(json, "\"default_loop_mode\"")) {
-        g_app_config.default_loop_mode = (int)extract_json_int(json, "default_loop_mode");
-    }
-    if (g_app_config.default_loop_mode < LOOP_OFF || g_app_config.default_loop_mode > LOOP_RANDOM) {
-        g_app_config.default_loop_mode = LOOP_OFF;
-    }
-    if (strstr(json, "\"default_playback_speed\"")) {
-        g_app_config.default_playback_speed = (float)extract_json_float(json, "default_playback_speed");
-        if (g_app_config.default_playback_speed < 0.5f || g_app_config.default_playback_speed > 3.0f) {
-            g_app_config.default_playback_speed = 1.0f;
-        }
-    } else {
-        g_app_config.default_playback_speed = 1.0f;
-    }
-    if (strstr(json, "\"show_album_cover\"")) {
-        g_app_config.show_album_cover = (int)extract_json_int(json, "show_album_cover");
-    }
-    if (strstr(json, "\"lyrics_alignment\"")) {
-        g_app_config.lyrics_alignment = (int)extract_json_int(json, "lyrics_alignment");
-        if (g_app_config.lyrics_alignment < 0 || g_app_config.lyrics_alignment > 2) {
-            g_app_config.lyrics_alignment = 0;
-        }
-    }
-    if (strstr(json, "\"audio_backend\"")) {
-        g_app_config.audio_backend = (int)extract_json_int(json, "audio_backend");
-        if (g_app_config.audio_backend < 0 || g_app_config.audio_backend > 2) {
-            g_app_config.audio_backend = AUDIO_BACKEND_AUTO;
-        }
-    }
-    if (strstr(json, "\"sort_mode\"")) {
-        g_app_config.sort_mode = (int)extract_json_int(json, "sort_mode");
-        if (g_app_config.sort_mode < SORT_DEFAULT || g_app_config.sort_mode > SORT_FILENAME) {
-            g_app_config.sort_mode = SORT_DEFAULT;
-        }
-    }
+
+    /* Nothing worked — stick with defaults already set by init_default_config */
+    log_debug("menu_views", "No valid config found, using defaults");
     g_playback_speed = g_app_config.default_playback_speed;
-
-    g_app_config.resume_last_playback = g_app_config.resume_last_playback ? 1 : 0;
-    if (g_app_config.last_played_position < 0) {
-        g_app_config.last_played_position = 0;
-    }
-    if (g_app_config.ui_language != UI_LANG_EN) {
-        g_app_config.ui_language = UI_LANG_ZH;
-    }
-    if (g_app_config.volume_percent < 0) {
-        g_app_config.volume_percent = 0;
-    }
-    if (g_app_config.volume_percent > 100) {
-        g_app_config.volume_percent = 100;
-    }
-    if (g_app_config.audio_latency_ms < 20) {
-        g_app_config.audio_latency_ms = 20;
-    }
-    if (g_app_config.audio_latency_ms > 250) {
-        g_app_config.audio_latency_ms = 250;
-    }
-
-    // Parse remote connections
-    g_app_config.remote_connection_count = 0;
-    if (strstr(json, "\"remote_connection_count\"")) {
-        int count = (int)extract_json_int(json, "remote_connection_count");
-        if (count > MAX_REMOTE_CONNECTIONS) count = MAX_REMOTE_CONNECTIONS;
-        if (count < 0) count = 0;
-        g_app_config.remote_connection_count = count;
-        for (int ri = 0; ri < count; ri++) {
-            RemoteConnectionConfig *rc = &g_app_config.remote_connections[ri];
-            char key[64];
-            snprintf(key, sizeof(key), "remote_%d_name", ri);
-            extract_json_string(json, key, rc->name, sizeof(rc->name));
-            snprintf(key, sizeof(key), "remote_%d_protocol", ri);
-            rc->protocol = (int)extract_json_int(json, key);
-            snprintf(key, sizeof(key), "remote_%d_host", ri);
-            extract_json_string(json, key, rc->host, sizeof(rc->host));
-            snprintf(key, sizeof(key), "remote_%d_port", ri);
-            rc->port = (int)extract_json_int(json, key);
-            snprintf(key, sizeof(key), "remote_%d_username", ri);
-            extract_json_string(json, key, rc->username, sizeof(rc->username));
-            snprintf(key, sizeof(key), "remote_%d_password", ri);
-            extract_json_string(json, key, rc->password, sizeof(rc->password));
-            snprintf(key, sizeof(key), "remote_%d_private_key_path", ri);
-            extract_json_string(json, key, rc->private_key_path, sizeof(rc->private_key_path));
-            snprintf(key, sizeof(key), "remote_%d_base_path", ri);
-            extract_json_string(json, key, rc->base_path, sizeof(rc->base_path));
-        }
-    }
-
-    g_app_config.config_version = (int)extract_json_int(json, "config_version");
-
-    if (g_app_config.config_version < 1) {
-        for (int ri = 0; ri < MAX_REMOTE_CONNECTIONS; ri++) {
-            g_app_config.remote_connections[ri].password[0] = '\0';
-        }
-    } else {
-        for (int ri = 0; ri < MAX_REMOTE_CONNECTIONS; ri++) {
-            if (g_app_config.remote_connections[ri].password[0]) {
-                char decrypted[256];
-                crypto_decrypt(g_app_config.remote_connections[ri].password, decrypted, sizeof(decrypted));
-                strncpy(g_app_config.remote_connections[ri].password, decrypted,
-                        sizeof(g_app_config.remote_connections[ri].password) - 1);
-            }
-        }
-    }
-
-    free(json);
 }
 
-void save_config(void) {
+void save_config(void)
+{
     log_debug("menu_views", "Saving config to '%s'", config_file);
-    FILE *f = fopen(config_file, "w");
-    if (!f) return;
-    
-    char escaped_path[MAX_PATH_LEN * 2];
-    
-    fprintf(f, "{\n");
-    
-    escape_json_string(g_app_config.default_startup_path, escaped_path, sizeof(escaped_path));
-    fprintf(f, "  \"default_startup_path\": \"%s\",\n", escaped_path);
-    
-    escape_json_string(g_app_config.last_opened_path, escaped_path, sizeof(escaped_path));
-    fprintf(f, "  \"last_opened_path\": \"%s\",\n", escaped_path);
+    g_app_config.config_version = CONFIG_CURRENT_VERSION;
+    config_save_to_xml(config_file, &g_app_config);
+}
 
-    escape_json_string(g_app_config.last_played_folder_path, escaped_path, sizeof(escaped_path));
-    fprintf(f, "  \"last_played_folder_path\": \"%s\",\n", escaped_path);
-
-    escape_json_string(g_app_config.last_played_track_path, escaped_path, sizeof(escaped_path));
-    fprintf(f, "  \"last_played_track_path\": \"%s\",\n", escaped_path);
-    
-    fprintf(f, "  \"theme\": {\n");
-    fprintf(f, "    \"playlist_fg\": %d,\n", g_app_config.theme.playlist_fg);
-    fprintf(f, "    \"playlist_bg\": %d,\n", g_app_config.theme.playlist_bg);
-    fprintf(f, "    \"controls_fg\": %d,\n", g_app_config.theme.controls_fg);
-    fprintf(f, "    \"controls_bg\": %d,\n", g_app_config.theme.controls_bg);
-    fprintf(f, "    \"lyrics_fg\": %d,\n", g_app_config.theme.lyrics_fg);
-    fprintf(f, "    \"lyrics_bg\": %d,\n", g_app_config.theme.lyrics_bg);
-    fprintf(f, "    \"sidebar_fg\": %d,\n", g_app_config.theme.sidebar_fg);
-    fprintf(f, "    \"sidebar_bg\": %d,\n", g_app_config.theme.sidebar_bg);
-    fprintf(f, "    \"highlight_fg\": %d,\n", g_app_config.theme.highlight_fg);
-    fprintf(f, "    \"highlight_bg\": %d,\n", g_app_config.theme.highlight_bg);
-    fprintf(f, "    \"border_fg\": %d,\n", g_app_config.theme.border_fg);
-    fprintf(f, "    \"border_bg\": %d\n", g_app_config.theme.border_bg);
-    fprintf(f, "  },\n");
-    
-    fprintf(f, "  \"auto_play_on_start\": %d,\n", g_app_config.auto_play_on_start);
-    fprintf(f, "  \"remember_last_path\": %d,\n", g_app_config.remember_last_path);
-    fprintf(f, "  \"clear_history_on_startup\": %d,\n", g_app_config.clear_history_on_startup);
-    fprintf(f, "  \"resume_last_playback\": %d,\n", g_app_config.resume_last_playback);
-    fprintf(f, "  \"last_played_position\": %d,\n", g_app_config.last_played_position);
-    fprintf(f, "  \"ui_language\": %d,\n", g_app_config.ui_language);
-    fprintf(f, "  \"volume_percent\": %d,\n", g_app_config.volume_percent);
-    fprintf(f, "  \"audio_latency_ms\": %d,\n", g_app_config.audio_latency_ms);
-    fprintf(f, "  \"show_lyrics_panel\": %d,\n", g_app_config.show_lyrics_panel);
-    fprintf(f, "  \"default_loop_mode\": %d,\n", g_app_config.default_loop_mode);
-    fprintf(f, "  \"default_playback_speed\": %.2f,\n", g_app_config.default_playback_speed);
-    fprintf(f, "  \"show_album_cover\": %d,\n", g_app_config.show_album_cover);
-    fprintf(f, "  \"lyrics_alignment\": %d,\n", g_app_config.lyrics_alignment);
-    fprintf(f, "  \"audio_backend\": %d,\n", g_app_config.audio_backend);
-    fprintf(f, "  \"sort_mode\": %d,\n", g_app_config.sort_mode);
-
-    fprintf(f, "  \"config_version\": 1,\n");
-    fprintf(f, "  \"remote_connection_count\": %d,\n", g_app_config.remote_connection_count);
-    for (int ri = 0; ri < g_app_config.remote_connection_count && ri < MAX_REMOTE_CONNECTIONS; ri++) {
-        const RemoteConnectionConfig *rc = &g_app_config.remote_connections[ri];
-        char escaped[1024];
-        escape_json_string(rc->name, escaped, sizeof(escaped));
-        fprintf(f, "  \"remote_%d_name\": \"%s\",\n", ri, escaped);
-        fprintf(f, "  \"remote_%d_protocol\": %d,\n", ri, rc->protocol);
-        escape_json_string(rc->host, escaped, sizeof(escaped));
-        fprintf(f, "  \"remote_%d_host\": \"%s\",\n", ri, escaped);
-        fprintf(f, "  \"remote_%d_port\": %d,\n", ri, rc->port);
-        escape_json_string(rc->username, escaped, sizeof(escaped));
-        fprintf(f, "  \"remote_%d_username\": \"%s\",\n", ri, escaped);
-        char encrypted[512];
-        crypto_encrypt(rc->password, encrypted, sizeof(encrypted));
-        escape_json_string(encrypted, escaped, sizeof(escaped));
-        fprintf(f, "  \"remote_%d_password\": \"%s\",\n", ri, escaped);
-        escape_json_string(rc->private_key_path, escaped, sizeof(escaped));
-        fprintf(f, "  \"remote_%d_private_key_path\": \"%s\",\n", ri, escaped);
-        escape_json_string(rc->base_path, escaped, sizeof(escaped));
-        fprintf(f, "  \"remote_%d_base_path\": \"%s\"%s\n", ri, escaped,
-                ri < g_app_config.remote_connection_count - 1 ? "," : "");
-    }
-
-    fprintf(f, "}\n");
-    
-    fclose(f);
+void reload_config(void)
+{
+    log_info("menu_views", "Reloading config on SIGHUP");
+    init_default_config();
+    load_config();
+    apply_color_theme();
+    /* Re-render all UI panels to reflect changed settings */
+    request_ui_refresh(UI_DIRTY_PLAYLIST | UI_DIRTY_CONTROLS | UI_DIRTY_LYRICS);
+    g_loop_mode = g_app_config.default_loop_mode;
+    show_status_message("配置已重新加载 / Config reloaded");
 }
 
 void load_history(void) {

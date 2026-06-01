@@ -21,6 +21,7 @@ extern int load_playlist(const char *path);
 extern void prompt_open_folder();
 
 int g_debug_enabled = 0;
+volatile sig_atomic_t g_config_reload_requested = 0;
 
 void crash_handler(int sig) {
     log_error("main", "Fatal signal %d received! Performing emergency shutdown", sig);
@@ -29,6 +30,11 @@ void crash_handler(int sig) {
     cleanup_temp_playlist();
     fprintf(stderr, "致命错误：收到信号 %d\n", sig);
     exit(1);
+}
+
+void sighup_handler(int sig) {
+    (void)sig;
+    g_config_reload_requested = 1;
 }
 
 static void expand_user_path(const char *input, char *output, size_t output_size) {
@@ -250,6 +256,7 @@ static void print_usage(const char *prog_name) {
 int main(int argc, char *argv[]) {
     signal(SIGSEGV, crash_handler);
     signal(SIGABRT, crash_handler);
+    signal(SIGHUP, sighup_handler);
 
     char *open_path = NULL;
     int opt;
