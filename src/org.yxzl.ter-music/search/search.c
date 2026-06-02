@@ -1,5 +1,8 @@
 #include "search/search.h"
 #include "ui/menus.h"
+#include "ui/ui.h"
+#include "playlist/playlist.h"
+#include "logger/logger.h"
 #include "media/session.h"
 #include <stdio.h>
 #include <stdlib.h>

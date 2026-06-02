@@ -6,6 +6,8 @@
 #include "remote/remote.h"
 #include "playlist/ape_tag.h"
 #include "ui/braille/braille_art.h"
+#include "ui/ui.h"
+#include "logger/logger.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -400,6 +402,8 @@ static int scan_playlist_directory_into(Playlist *playlist, const char *path, in
     closedir(dir);
     return playlist->count - before_count;
 }
+
+void decode_html_entities(char *str);
 
 static void copy_metadata_field(char *dest, size_t dest_size, const char *value) {
     if (!dest || dest_size == 0) {

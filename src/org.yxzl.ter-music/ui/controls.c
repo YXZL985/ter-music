@@ -14,6 +14,7 @@
 #include "audio/audio.h"
 #include "playlist/playlist.h"
 #include "config/config.h"
+#include "logger/logger.h"
 #include <ncursesw/ncurses.h>
 #include <stdio.h>
 #include <string.h>

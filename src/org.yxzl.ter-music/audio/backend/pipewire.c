@@ -11,7 +11,8 @@
 
 #include "audio/audio_internal.h"
 #include <ncursesw/ncurses.h>
-#include "ui/ui.h"             /* update_controls_status() */
+#include "ui/ui.h"
+#include "logger/logger.h"
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>

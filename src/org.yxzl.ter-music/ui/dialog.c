@@ -5,8 +5,13 @@
 #include "types.h"
 #include <ncursesw/ncurses.h>
 #include "ui/dialog.h"
+#include "ui/ui.h"
+#include "ui/menus.h"
 #include "playlist/playlist.h"
+#include "audio/audio.h"
 #include "config/config.h"
+#include "logger/logger.h"
+#include "media/session.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

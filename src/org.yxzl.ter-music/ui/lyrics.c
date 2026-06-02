@@ -5,6 +5,8 @@
 #include "config/config.h"
 #include "ui/scrollbar.h"
 #include "remote/remote.h"
+#include "logger/logger.h"
+#include "playlist/playlist.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

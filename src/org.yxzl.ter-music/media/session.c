@@ -4,6 +4,7 @@
 #include "playlist/playlist.h"
 #include "ui/ui.h"
 #include "media/session.h"
+#include "logger/logger.h"
 
 #include <math.h>
 #include <stdio.h>

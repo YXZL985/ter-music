@@ -113,14 +113,16 @@ int init_atempo_filter(const AVCodecContext *codec_ctx, float speed)
 
     g_atempo_filter.speed = speed;
     g_atempo_filter.input_sample_rate = codec_ctx->sample_rate;
-    g_atempo_filter.input_channels = codec_ctx->ch_layout.nb_channels > 0
-        ? codec_ctx->ch_layout.nb_channels : (codec_ctx->channels > 0 ? codec_ctx->channels : 2);
-    g_atempo_filter.input_sample_fmt = codec_ctx->sample_fmt;
 #if LIBAVUTIL_VERSION_MAJOR >= 57
+    g_atempo_filter.input_channels = codec_ctx->ch_layout.nb_channels > 0
+        ? codec_ctx->ch_layout.nb_channels : 2;
     g_atempo_filter.input_channel_layout = codec_ctx->ch_layout.u.mask;
 #else
+    g_atempo_filter.input_channels = codec_ctx->channels > 0
+        ? codec_ctx->channels : 2;
     g_atempo_filter.input_channel_layout = codec_ctx->channel_layout;
 #endif
+    g_atempo_filter.input_sample_fmt = codec_ctx->sample_fmt;
 
     g_atempo_filter.graph = avfilter_graph_alloc();
     if (!g_atempo_filter.graph) return -1;

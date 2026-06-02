@@ -28,5 +28,6 @@ int get_track_metadata(int index, Track *out);
 void preload_visible_tracks(int start, int end);
 void clear_metadata_cache(void);
 void recompute_sort_order(void);
+void decode_html_entities(char *str);
 
 #endif
