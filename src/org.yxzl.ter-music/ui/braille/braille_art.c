@@ -2,7 +2,7 @@
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
-#include "../include/braille_art.h"
+#include "ui/braille/braille_art.h"
 
 int rgba_to_gray(const unsigned char *rgba, int w, int h, unsigned char *gray) {
     if (!rgba || !gray || w <= 0 || h <= 0) return -1;

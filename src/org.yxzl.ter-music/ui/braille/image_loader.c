@@ -3,7 +3,7 @@
 #include <string.h>
 #include <png.h>
 #include <jpeglib.h>
-#include "../include/braille_art.h"
+#include "ui/braille/braille_art.h"
 
 int load_png_image(const char *filepath, unsigned char **rgba_out, int *w, int *h) {
     FILE *fp = fopen(filepath, "rb");

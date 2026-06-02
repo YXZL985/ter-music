@@ -1,4 +1,4 @@
-#include "../include/scrollbar.h"
+#include "ui/scrollbar.h"
 
 int scrollbar_draw(WINDOW *win, int top, int height,
                    int total, int visible, int offset, int col) {
