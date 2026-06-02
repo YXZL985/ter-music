@@ -6,14 +6,20 @@
  * @date 2026-06-01
  */
 
-#ifndef CONFIG_XML_H
-#define CONFIG_XML_H
+#ifndef CONFIG_H
+#define CONFIG_H
 
-#include "defs.h"
+#include "types.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* ── Extern globals ── */
+extern AppConfig g_app_config;
+
+/* SIGHUP hot-reload flag; set by signal handler, checked in event loop */
+extern volatile sig_atomic_t g_config_reload_requested;
 
 /**
  * Validate an XML config file against the expected schema.
@@ -43,4 +49,4 @@ int config_load_from_xml(const char *path, AppConfig *cfg);
 }
 #endif
 
-#endif /* CONFIG_XML_H */
+#endif /* CONFIG_H */

@@ -13,7 +13,10 @@
 #ifndef LIBRARY_BROWSER_H
 #define LIBRARY_BROWSER_H
 
-#include "defs.h"
+#include "types.h"
+
+/* ── Extern globals ── */
+extern LibraryState g_library_state;
 
 /**
  * Toggle library browsing mode on/off.

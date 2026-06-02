@@ -12,7 +12,7 @@
 #ifndef MENU_VIEWS_H
 #define MENU_VIEWS_H
 
-#include "defs.h"
+#include "types.h"
 
 void init_menu_views(void);
 void render_menu_frame(const char *title);

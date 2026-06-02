@@ -18,7 +18,7 @@
 #ifndef LIBRARY_H
 #define LIBRARY_H
 
-#include "defs.h"
+#include "types.h"
 #include <time.h>
 #include <stdint.h>
 

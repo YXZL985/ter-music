@@ -1,7 +1,7 @@
 #ifndef REMOTE_H
 #define REMOTE_H
 
-#include "defs.h"
+#include "types.h"
 #include <stddef.h>
 #include <stdlib.h>
 

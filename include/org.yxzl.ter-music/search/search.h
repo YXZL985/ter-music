@@ -1,7 +1,11 @@
 #ifndef SEARCH_H
 #define SEARCH_H
 
-#include "defs.h"
+#include "types.h"
+
+/* ── Extern globals ── */
+extern SearchState g_search_state;
+extern pthread_mutex_t g_search_mutex;
 
 // 启动异步搜索。取消任何正在进行的搜索，然后启动新线程。
 void search_async_start(const char *query);
