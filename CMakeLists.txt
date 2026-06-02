@@ -103,31 +103,53 @@ endif()
 
 # 添加可执行文件
 add_executable(${PROJECT_NAME}
-    src/main.c
-    src/ui.c
-    src/playlist.c
-    src/audio.c
-    src/progress.c
-    src/lyrics.c
-    src/media_session.c
-    src/menu_views.c
-    src/crypto.c
-    src/braille_art.c
-    src/image_loader.c
-    src/remote.c
-    src/logger.c
-    src/search.c
-    src/scrollbar.c
-    src/ape_tag.c
-    src/config_xml.c
-    src/config_migration.c
-    src/library.c
-    src/library_browser.c
+    src/org.yxzl.ter-music/main/main.c
+    src/org.yxzl.ter-music/audio/audio.c
+    src/org.yxzl.ter-music/audio/atempo.c
+    src/org.yxzl.ter-music/audio/audio_visualizer.c
+    src/org.yxzl.ter-music/audio/playback_thread.c
+    src/org.yxzl.ter-music/audio/backend_ops.c
+    src/org.yxzl.ter-music/audio/backend/pulse.c
+    src/org.yxzl.ter-music/audio/backend/alsa.c
+    src/org.yxzl.ter-music/audio/backend/pipewire.c
+    src/org.yxzl.ter-music/audio/progress/progress.c
+    src/org.yxzl.ter-music/playlist/playlist.c
+    src/org.yxzl.ter-music/playlist/ape_tag.c
+    src/org.yxzl.ter-music/search/search.c
+    src/org.yxzl.ter-music/library/library.c
+    src/org.yxzl.ter-music/library/browser/browser.c
+    src/org.yxzl.ter-music/ui/ui.c
+    src/org.yxzl.ter-music/ui/utf8.c
+    src/org.yxzl.ter-music/ui/dialog.c
+    src/org.yxzl.ter-music/ui/layout.c
+    src/org.yxzl.ter-music/ui/visualizer.c
+    src/org.yxzl.ter-music/ui/controls.c
+    src/org.yxzl.ter-music/ui/progress_ui.c
+    src/org.yxzl.ter-music/ui/playlist_render.c
+    src/org.yxzl.ter-music/ui/mouse.c
+    src/org.yxzl.ter-music/ui/util.c
+    src/org.yxzl.ter-music/ui/menus.c
+    src/org.yxzl.ter-music/ui/settings.c
+    src/org.yxzl.ter-music/ui/history.c
+    src/org.yxzl.ter-music/ui/favorites.c
+    src/org.yxzl.ter-music/ui/playlist_view.c
+    src/org.yxzl.ter-music/ui/info_view.c
+    src/org.yxzl.ter-music/ui/help_view.c
+    src/org.yxzl.ter-music/ui/lyrics.c
+    src/org.yxzl.ter-music/ui/braille/braille_art.c
+    src/org.yxzl.ter-music/ui/braille/image_loader.c
+    src/org.yxzl.ter-music/ui/scrollbar.c
+    src/org.yxzl.ter-music/media/session.c
+    src/org.yxzl.ter-music/remote/remote.c
+    src/org.yxzl.ter-music/config/config.c
+    src/org.yxzl.ter-music/config/migration.c
+    src/org.yxzl.ter-music/config/crypto.c
+    src/org.yxzl.ter-music/logger/logger.c
 )
 
 # 包含头文件目录
-target_include_directories(${PROJECT_NAME} PRIVATE 
-    include 
+target_include_directories(${PROJECT_NAME} PRIVATE
+    include/org.yxzl.ter-music/
     ${AVCODEC_INCLUDE_DIRS}
     ${AVFORMAT_INCLUDE_DIRS}
     ${SWRESAMPLE_INCLUDE_DIRS}
