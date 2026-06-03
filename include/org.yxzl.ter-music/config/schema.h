@@ -17,8 +17,8 @@ extern "C" {
 #endif
 
 /* ── Version identifiers ──────────────────────────────────────────── */
-#define CONFIG_XML_VERSION          "2.0"
-#define CONFIG_CURRENT_VERSION      2
+#define CONFIG_XML_VERSION          "2.1"
+#define CONFIG_CURRENT_VERSION      3
 #define CONFIG_MIN_SUPPORTED_VER    2
 
 /* ── Root element ─────────────────────────────────────────────────── */
@@ -62,6 +62,8 @@ extern "C" {
 #define XML_PREF_AUDIO_LATENCY      "audio_latency_ms"
 #define XML_PREF_SHOW_LYRICS        "show_lyrics_panel"
 #define XML_PREF_LOOP_MODE          "default_loop_mode"
+#define XML_PREF_PLAY_MODE          "default_play_mode"
+#define XML_PREF_ADVANCED_PLAY_MODES "advanced_play_modes_enabled"
 #define XML_PREF_PLAYBACK_SPEED     "default_playback_speed"
 #define XML_PREF_SHOW_COVER         "show_album_cover"
 #define XML_PREF_LYRICS_ALIGN       "lyrics_alignment"

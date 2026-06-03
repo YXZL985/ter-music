@@ -14,11 +14,25 @@
 #define APP_REPO "https://github.com/YXZL985/ter-music.git"
 
 typedef enum {
-    LOOP_OFF = 0,
-    LOOP_SINGLE = 1,
-    LOOP_LIST = 2,
-    LOOP_RANDOM = 3
-} LoopMode;
+    PLAY_MODE_SEQUENTIAL             = 0,
+    PLAY_MODE_SINGLE_REPEAT          = 1,
+    PLAY_MODE_LIST_REPEAT            = 2,
+    PLAY_MODE_SHUFFLE_ONCE           = 3,
+    PLAY_MODE_SHUFFLE_REPEAT         = 4,
+    PLAY_MODE_FOLDER_SEQUENTIAL      = 5,
+    PLAY_MODE_FOLDER_REPEAT          = 6,
+    PLAY_MODE_FOLDER_SHUFFLE         = 7,
+    PLAY_MODE_FOLDER_SHUFFLE_REPEAT  = 8,
+    PLAY_MODE_ALBUM_SEQUENTIAL       = 9,
+    PLAY_MODE_ALBUM_REPEAT           = 10,
+    PLAY_MODE_ALBUM_SHUFFLE          = 11,
+    PLAY_MODE_ALBUM_SHUFFLE_REPEAT   = 12,
+    PLAY_MODE_ARTIST_SEQUENTIAL      = 13,
+    PLAY_MODE_ARTIST_REPEAT          = 14,
+    PLAY_MODE_ARTIST_SHUFFLE         = 15,
+    PLAY_MODE_ARTIST_SHUFFLE_REPEAT  = 16,
+    PLAY_MODE_COUNT = 17
+} PlayMode;
 
 typedef enum {
     SORT_DEFAULT = 0,
@@ -47,8 +61,33 @@ typedef enum {
 
 typedef enum {
     FOCUS_SIDEBAR = 0,
-    FOCUS_CONTENT = 1
+    FOCUS_CONTENT = 1,
+    FOCUS_CATEGORY = 2
 } FocusArea;
+
+typedef enum {
+    PLAYLIST_MODE_FILE_BROWSER = 0,
+    PLAYLIST_MODE_PLAY_QUEUE   = 1
+} PlaylistViewMode;
+
+typedef enum {
+    POPUP_NONE = 0,
+    POPUP_LOOP_MODE,
+    POPUP_SPEED,
+    POPUP_VOLUME
+} PopupType;
+
+typedef struct {
+    int active;
+    PopupType type;
+    int selected_index;
+    int option_count;
+    int start_row;
+    int start_col;
+    int width;
+    int height;
+    void *popup_win;
+} PopupState;
 
 typedef enum {
     UI_LANG_ZH = 0,
@@ -70,6 +109,14 @@ typedef enum {
 #define MAX_AUDIO_BUFFER_SIZE (44100 * 2 * sizeof(int32_t))
 #define MAX_PATH_LEN 512
 #define MAX_TRACKS 1000
+
+typedef struct {
+    int indices[MAX_TRACKS];
+    int count;
+    int current_position;
+    int shuffle_generation;
+} PlayQueue;
+
 #define MAX_META_LEN 256
 #define MAX_SEARCH_KEY_LEN (MAX_META_LEN * 8)
 
@@ -118,7 +165,7 @@ typedef struct {
 #define AUDIO_BACKEND_ALSA      2
 #define AUDIO_BACKEND_PIPEWIRE  3
 
-#define CONFIG_CURRENT_VERSION 2
+#define CONFIG_CURRENT_VERSION 3
 
 typedef struct {
     char path[MAX_PATH_LEN];
@@ -229,7 +276,8 @@ typedef struct {
     int volume_percent;
     int audio_latency_ms;
     int show_lyrics_panel;
-    int default_loop_mode;
+    int default_play_mode;
+    int advanced_play_modes_enabled;
     float default_playback_speed;
     int show_album_cover;
     int lyrics_alignment;  // 0=居左(Left), 1=居中(Center), 2=居右(Right)
