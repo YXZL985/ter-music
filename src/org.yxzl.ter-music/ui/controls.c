@@ -37,9 +37,10 @@ extern int g_playlist_tab_mode;
 
 /* ── Popup state ── */
 PopupState g_popup = {0};
-#define VOLUME_POPUP_STEP 10
+#define VOLUME_POPUP_STEP 5
 
 /* Forward declarations */
+static void popup_dismiss(void);
 static void render_controls_popup(void);
 
 /* ============================================================
@@ -180,6 +181,12 @@ static void calculate_popup_dimensions(PopupState *popup, WINDOW *parent)
     popup->start_col = parent_screen_x + (parent_w - popup_w) / 2;
     if (popup->start_row < 1) popup->start_row = 1;
     if (popup->start_col < 1) popup->start_col = 1;
+    /* Clamp bottom edge so the popup doesn't overflow the screen */
+    int screen_h, screen_w;
+    getmaxyx(stdscr, screen_h, screen_w);
+    if (popup->start_row + popup->height > screen_h)
+        popup->start_row = screen_h - popup->height;
+    if (popup->start_row < 1) popup->start_row = 1;
 }
 
 static void destroy_popup_window(PopupState *popup)
@@ -269,19 +276,11 @@ int handle_popup_input(int ch)
         case ' ':
         case 10:
             apply_popup_selection();
-            destroy_popup_window(&g_popup);
-            g_popup.active = 0;
-            render_playlist_content();
-            render_controls();
-            render_menu_hint_bar();
+            popup_dismiss();
             return 1;
         case 27:
         case KEY_LEFT:
-            destroy_popup_window(&g_popup);
-            g_popup.active = 0;
-            render_playlist_content();
-            render_controls();
-            render_menu_hint_bar();
+            popup_dismiss();
             return 1;
     }
     return 0;
@@ -329,9 +328,7 @@ void activate_current_control(void)
             break;
         case CONTROL_IDX_LOOP:
             if (g_popup.active) {
-                destroy_popup_window(&g_popup);
-                g_popup.active = 0;
-                render_menu_hint_bar();
+                popup_dismiss();
             } else {
                 g_popup.type = POPUP_LOOP_MODE;
                 g_popup.selected_index = (int)g_play_mode;
@@ -343,9 +340,7 @@ void activate_current_control(void)
             break;
         case CONTROL_IDX_SPEED:
             if (g_popup.active) {
-                destroy_popup_window(&g_popup);
-                g_popup.active = 0;
-                render_menu_hint_bar();
+                popup_dismiss();
             } else {
                 g_popup.type = POPUP_SPEED;
                 g_popup.selected_index = g_speed_index;
@@ -357,9 +352,7 @@ void activate_current_control(void)
             break;
         case CONTROL_IDX_VOLUME:
             if (g_popup.active) {
-                destroy_popup_window(&g_popup);
-                g_popup.active = 0;
-                render_menu_hint_bar();
+                popup_dismiss();
             } else {
                 g_popup.type = POPUP_VOLUME;
                 g_popup.selected_index = get_volume_percent() / VOLUME_POPUP_STEP;
@@ -385,6 +378,12 @@ static void render_controls_popup(void)
     if (!popup_win) return;
 
     int popup_h = g_popup.height;
+    int visible_options = popup_h - 2;
+
+    /* Scroll offset: keep selected_index visible */
+    int scroll_offset = 0;
+    if (g_popup.selected_index >= visible_options)
+        scroll_offset = g_popup.selected_index - visible_options + 1;
 
     werase(popup_win);
     wattron(popup_win, COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
@@ -399,19 +398,97 @@ static void render_controls_popup(void)
     }
     mvwprintw(popup_win, 0, 2, "%s", title);
 
-    for (int i = 0; i < g_popup.option_count && i < popup_h - 2; i++) {
+    for (int i = 0; i < visible_options && (scroll_offset + i) < g_popup.option_count; i++) {
+        int opt_idx = scroll_offset + i;
         char option_text[48];
-        build_popup_option_text(g_popup.type, i, option_text, sizeof(option_text));
+        build_popup_option_text(g_popup.type, opt_idx, option_text, sizeof(option_text));
 
-        if (i == g_popup.selected_index)
+        if (opt_idx == g_popup.selected_index)
             wattron(popup_win, A_REVERSE);
         mvwprintw(popup_win, i + 1, 2, " %-20s ", option_text);
-        if (i == g_popup.selected_index)
+        if (opt_idx == g_popup.selected_index)
             wattroff(popup_win, A_REVERSE);
     }
 
+    /* Scroll indicator arrows */
+    if (scroll_offset > 0)
+        mvwaddch(popup_win, 1, popup_h - 1 < 0 ? 0 : popup_h - 2, '^');
+    if (scroll_offset + visible_options < g_popup.option_count)
+        mvwaddch(popup_win, popup_h - 2 < 1 ? 1 : popup_h - 2,
+                 popup_h - 1 < 0 ? 0 : popup_h - 2, 'v');
+
     wattroff(popup_win, COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
     wrefresh(popup_win);
+}
+
+/* ============================================================
+ * Popup dismiss — force full refresh of all UI elements
+ * ============================================================ */
+
+static void popup_dismiss(void)
+{
+    if (!g_popup.active) return;
+    destroy_popup_window(&g_popup);
+    g_popup.active = 0;
+
+    /* Step 1 — overwrite popup content in curscr's gap areas (areas
+     * between sub-windows) by copying stdscr's clean background to
+     * curscr.  wrefresh(popup_win) called wnoutrefresh(popup_win)
+     * which wrote into curscr; the gap rows are never covered by the
+     * sub-window wnoutrefresh calls below, so we must scrub them here
+     * before doupdate() sees them. */
+    redrawwin(stdscr);
+    wnoutrefresh(stdscr);
+
+    /* Step 2 — force full re-render of playlist and controls so
+     * their sub-window content overwrites the remaining areas. */
+    redrawwin(win_playlist);
+    redrawwin(win_controls);
+    clearok(stdscr, TRUE);
+    render_playlist_content();
+    render_controls();
+    render_menu_hint_bar();
+}
+
+/* ============================================================
+ * Popup mouse handling
+ * ============================================================ */
+
+int popup_handle_mouse_click(int screen_y, int screen_x)
+{
+    if (!g_popup.active || !g_popup.popup_win)
+        return -1;
+
+    int py = g_popup.start_row;
+    int px = g_popup.start_col;
+    int ph = g_popup.height;
+    int pw = g_popup.width;
+    int visible_options = ph - 2;
+
+    /* Scroll offset applied to the popup */
+    int scroll_offset = 0;
+    if (g_popup.selected_index >= visible_options)
+        scroll_offset = g_popup.selected_index - visible_options + 1;
+
+    if (screen_y >= py && screen_y < py + ph &&
+        screen_x >= px && screen_x < px + pw) {
+        /* Click inside popup — select option */
+        int option_row = screen_y - py - 1;
+        int opt_idx = scroll_offset + option_row;
+
+        if (option_row >= 0 && option_row < visible_options &&
+            opt_idx >= 0 && opt_idx < g_popup.option_count) {
+            g_popup.selected_index = opt_idx;
+            apply_popup_selection();
+        }
+
+        popup_dismiss();
+        return 1;  /* fully handled */
+    }
+
+    /* Click outside popup — dismiss, caller should continue */
+    popup_dismiss();
+    return 0;  /* dismissed, may continue with normal handling */
 }
 
 /* ============================================================

@@ -144,6 +144,7 @@ void help_free_lines(void);
 
 extern PopupState g_popup;
 int handle_popup_input(int ch);
+int popup_handle_mouse_click(int screen_y, int screen_x);
 
 /* ============================================================
  * Remote settings (defined in settings.c)

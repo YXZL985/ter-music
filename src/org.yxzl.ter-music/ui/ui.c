@@ -344,9 +344,16 @@ void run_event_loop(void)
 
         if (ch == 27) {
             if (g_current_view == VIEW_MAIN) {
-                esc_pending = 1;
-                esc_pending_time = get_ui_time_ms();
-                continue;
+                /* When a popup is active, ESC must dismiss it immediately.
+                 * Do NOT enter the esc_pending chain so the byte falls through
+                 * to handle_popup_input() at line ~461. */
+                if (g_popup.active && g_control_focus == 1) {
+                    /* fall through — popup handler will catch the ESC */
+                } else {
+                    esc_pending = 1;
+                    esc_pending_time = get_ui_time_ms();
+                    continue;
+                }
             }
         }
 

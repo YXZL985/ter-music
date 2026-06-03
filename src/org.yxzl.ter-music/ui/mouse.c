@@ -276,6 +276,13 @@ int handle_main_view_mouse_event(const MEVENT *event)
 
     int window_y, window_x;
 
+    /* Popup overlay check — popup spans multiple windows */
+    {
+        int ret = popup_handle_mouse_click(event->y, event->x);
+        if (ret > 0) return 1;  /* click inside popup, fully handled */
+        /* ret == 0 → dismissed; ret < 0 → no popup; both: continue */
+    }
+
     // Playlist click
     if (translate_screen_to_window(win_playlist, event->y, event->x, &window_y, &window_x)) {
         int display_index = -1, actual_index = -1;
@@ -313,6 +320,7 @@ int handle_main_view_mouse_event(const MEVENT *event)
 
     // Controls click
     if (translate_screen_to_window(win_controls, event->y, event->x, &window_y, &window_x)) {
+
         int control_index = get_control_index_from_window_point(window_y, window_x);
         if (control_index < 0) return 0;
 
