@@ -108,6 +108,7 @@ add_executable(${PROJECT_NAME}
     src/org.yxzl.ter-music/audio/atempo.c
     src/org.yxzl.ter-music/audio/audio_visualizer.c
     src/org.yxzl.ter-music/audio/playback_thread.c
+    src/org.yxzl.ter-music/audio/play_queue.c
     src/org.yxzl.ter-music/audio/backend_ops.c
     src/org.yxzl.ter-music/audio/backend/pulse.c
     src/org.yxzl.ter-music/audio/backend/alsa.c

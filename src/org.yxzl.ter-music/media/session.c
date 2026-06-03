@@ -1,6 +1,7 @@
 #include "types.h"
 #include <ncursesw/ncurses.h>
 #include "audio/audio.h"
+#include "audio/play_queue.h"
 #include "playlist/playlist.h"
 #include "ui/ui.h"
 #include "media/session.h"
@@ -24,7 +25,7 @@ typedef struct {
     int current_index;
     int playlist_total;
     PlayState play_state;
-    LoopMode loop_mode;
+    int loop_mode;  /* PlayMode value */
     int volume_percent;
     int can_seek;
     int64_t position_us;
@@ -69,21 +70,16 @@ static const char *playback_status_to_mpris(PlayState state) {
     }
 }
 
-static const char *loop_mode_to_mpris(LoopMode mode) {
-    switch (mode) {
-        case LOOP_SINGLE:
-            return "Track";
-        case LOOP_LIST:
-        case LOOP_RANDOM:
-            return "Playlist";
-        case LOOP_OFF:
-        default:
-            return "None";
-    }
+static const char *loop_mode_to_mpris(int mode) {
+    if (mode == PLAY_MODE_SINGLE_REPEAT)
+        return "Track";
+    if (play_mode_repeats(mode))
+        return "Playlist";
+    return "None";
 }
 
-static int shuffle_enabled_for_loop_mode(LoopMode mode) {
-    return mode == LOOP_RANDOM;
+static int shuffle_enabled_for_loop_mode(int mode) {
+    return play_mode_is_shuffle((PlayMode)mode);
 }
 
 static const char *root_property_signature(const char *name) {
@@ -178,7 +174,7 @@ static void capture_snapshot(MediaSessionSnapshot *snapshot) {
     snapshot->current_index = g_current_play_index;
     snapshot->playlist_total = playlist_count();
     snapshot->play_state = g_play_state;
-    snapshot->loop_mode = g_loop_mode;
+    snapshot->loop_mode = g_play_mode;
     snapshot->volume_percent = get_volume_percent();
     snapshot->position_us = (int64_t)g_current_position * 1000000LL;
     snapshot->length_us = (int64_t)g_total_duration * 1000000LL;
@@ -545,13 +541,13 @@ static void apply_remote_loop_status(const char *value) {
     }
 
     if (strcmp(value, "Track") == 0) {
-        g_loop_mode = LOOP_SINGLE;
+        g_play_mode = PLAY_MODE_SINGLE_REPEAT;
     } else if (strcmp(value, "Playlist") == 0) {
-        if (g_loop_mode != LOOP_RANDOM) {
-            g_loop_mode = LOOP_LIST;
+        if (!play_mode_is_shuffle(g_play_mode)) {
+            g_play_mode = PLAY_MODE_LIST_REPEAT;
         }
     } else {
-        g_loop_mode = LOOP_OFF;
+        g_play_mode = PLAY_MODE_SEQUENTIAL;
     }
 }
 
@@ -610,9 +606,9 @@ static DBusMessage *handle_set_property(DBusMessage *message) {
         dbus_bool_t enabled = FALSE;
         dbus_message_iter_get_basic(&variant_iter, &enabled);
         if (enabled) {
-            g_loop_mode = LOOP_RANDOM;
-        } else if (g_loop_mode == LOOP_RANDOM) {
-            g_loop_mode = LOOP_LIST;
+            g_play_mode = PLAY_MODE_SHUFFLE_REPEAT;
+        } else if (play_mode_is_shuffle(g_play_mode)) {
+            g_play_mode = PLAY_MODE_LIST_REPEAT;
         }
     } else {
         return media_session_error(message, DBUS_ERROR_PROPERTY_READ_ONLY, "Property is read only");
