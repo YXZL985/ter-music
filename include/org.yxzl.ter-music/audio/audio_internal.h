@@ -20,10 +20,16 @@ extern int       g_pending_volume_sync;
 extern int       g_output_sample_rate;
 extern int       g_output_channels;
 
+/* ---- Speed state（定义在 audio.c） ---- */
+extern float g_speed_ratios[];
+extern int   g_speed_index;
+extern int   g_speed_count;
+
 /* ---- 播放状态（定义在 audio.c） ---- */
 extern PlayState g_play_state;
 extern int       g_current_play_index;
-extern LoopMode  g_loop_mode;
+extern PlayMode  g_play_mode;
+extern PlayQueue g_play_queue;
 extern pthread_t g_play_thread;
 extern int       g_play_thread_running;
 extern pthread_mutex_t g_play_mutex;

@@ -6,7 +6,7 @@
 /* ── Extern globals ── */
 extern PlayState g_play_state;
 extern int g_current_play_index;
-extern LoopMode g_loop_mode;
+extern PlayMode g_play_mode;
 extern pthread_t g_play_thread;
 extern int g_play_thread_running;
 extern char g_default_audio_device[128];
@@ -29,8 +29,10 @@ void stop_audio();
 void wait_for_playback_thread_shutdown(void);
 void prev_track();
 void next_track();
-void toggle_loop_mode();
-const char *get_loop_mode_str();
+void cycle_play_mode(void);
+PlayMode get_play_mode(void);
+void set_play_mode(PlayMode mode);
+const char *get_play_mode_str(void);
 void cleanup();
 void seek_audio(double position);
 int get_and_clear_initial_seek_position(void);

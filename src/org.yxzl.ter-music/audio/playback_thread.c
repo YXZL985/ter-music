@@ -13,6 +13,7 @@
 #include "audio/audio.h"
 #include "audio/audio_internal.h"
 #include "audio/progress/progress.h"
+#include "audio/play_queue.h"
 #include "playlist/playlist.h"
 #include "ui/ui.h"
 #include "config/config.h"
@@ -426,7 +427,6 @@ void *play_audio_thread(void *arg)
     extern int g_audio_bit_depth;
     extern char g_audio_codec_name[32];
     extern int g_pending_playback_index;
-    extern LoopMode g_loop_mode;
     extern int g_play_thread_active;
     extern int g_play_thread_finished;
 
@@ -666,17 +666,18 @@ cleanup:
 
     pthread_mutex_lock(&g_play_mutex);
     if (g_play_thread_running && reached_end_of_stream) {
-        switch (g_loop_mode) {
-            case LOOP_SINGLE:  followup_index = index; break;
-            case LOOP_LIST:    if (playlist_total > 0) followup_index = (index + 1) % playlist_total; break;
-            case LOOP_RANDOM:  if (playlist_total > 0) followup_index = rand() % playlist_total; break;
-            case LOOP_OFF: default: break;
+        if (g_play_mode == PLAY_MODE_SINGLE_REPEAT) {
+            followup_index = index;
+        } else if (play_mode_repeats(g_play_mode)) {
+            followup_index = play_queue_peek_next(&g_play_queue, g_play_mode);
+            if (followup_index >= 0)
+                play_queue_advance(&g_play_queue, g_play_mode);
         }
     }
     if (reached_end_of_stream && followup_index >= 0)
-        log_info("audio", "End of stream for index=%d, scheduling follow-up index=%d (loop=%d)", index, followup_index, g_loop_mode);
+        log_info("audio", "End of stream for index=%d, scheduling follow-up index=%d (mode=%d)", index, followup_index, g_play_mode);
     else if (reached_end_of_stream)
-        log_info("audio", "End of stream for index=%d, no follow-up (loop=%d)", index, g_loop_mode);
+        log_info("audio", "End of stream for index=%d, no follow-up (mode=%d)", index, g_play_mode);
     else if (playback_error)
         log_warn("audio", "Playback error for index=%d, stopping thread", index);
 

@@ -15,6 +15,7 @@
 #include "types.h"
 #include "audio/audio.h"
 #include "audio/audio_internal.h"
+#include "audio/play_queue.h"
 #include "playlist/playlist.h"
 #include "ui/ui.h"
 #include "config/config.h"
@@ -78,7 +79,7 @@ char g_audio_codec_name[32] = "";
 /* ── Playback state ── */
 PlayState g_play_state = PLAY_STATE_STOPPED;
 int g_current_play_index = -1;
-LoopMode g_loop_mode = LOOP_OFF;
+PlayMode g_play_mode = PLAY_MODE_SEQUENTIAL;
 pthread_t g_play_thread;
 int g_play_thread_running = 0;
 pthread_mutex_t g_play_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -92,9 +93,9 @@ char g_cached_lyrics_path[MAX_PATH_LEN] = "";
 
 /* ── Speed ── */
 float g_playback_speed = 1.0f;
-static float g_speed_ratios[] = {0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 3.0f};
-static int g_speed_index = 1;
-static int g_speed_count = sizeof(g_speed_ratios) / sizeof(g_speed_ratios[0]);
+float g_speed_ratios[] = {0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 3.0f};
+int g_speed_index = 1;
+int g_speed_count = sizeof(g_speed_ratios) / sizeof(g_speed_ratios[0]);
 
 /* ── Seek ── */
 int g_seek_request = 0;
@@ -318,24 +319,41 @@ void adjust_volume(int delta) {
 }
 
 /* ============================================================
- * Loop mode / speed
+ * Play mode / speed
  * ============================================================ */
 
-const char *get_loop_mode_str(void)
+const char *get_play_mode_str(void)
 {
-    switch(g_loop_mode) {
-        case LOOP_OFF:    return audio_text("关闭", "Off");
-        case LOOP_SINGLE: return audio_text("单曲", "Single");
-        case LOOP_LIST:   return audio_text("列表", "List");
-        case LOOP_RANDOM: return audio_text("随机", "Random");
-        default:          return audio_text("关闭", "Off");
-    }
+    return play_mode_display_name(g_play_mode, use_english_ui());
 }
 
-void toggle_loop_mode(void)
+PlayMode get_play_mode(void)
 {
-    g_loop_mode = (g_loop_mode + 1) % 4;
-    log_info("audio", "Loop mode changed: %d (%s)", g_loop_mode, get_loop_mode_str());
+    return g_play_mode;
+}
+
+void set_play_mode(PlayMode mode)
+{
+    if (mode < 0 || mode >= PLAY_MODE_COUNT) return;
+    g_play_mode = mode;
+    log_info("audio", "Play mode changed: %d (%s)", g_play_mode, get_play_mode_str());
+    /* Rebuild queue with new mode */
+    if (g_current_play_index >= 0) {
+        play_queue_rebuild(&g_play_queue, &g_playlist, g_play_mode, g_current_play_index);
+    }
+    render_controls();
+}
+
+void cycle_play_mode(void)
+{
+    int next = (g_play_mode + 1) % 5;
+    g_play_mode = (PlayMode)next;
+    log_info("audio", "Play mode changed: %d (%s)", g_play_mode, get_play_mode_str());
+    if (g_current_play_index >= 0) {
+        play_queue_rebuild(&g_play_queue, &g_playlist, g_play_mode, g_current_play_index);
+    }
+    g_app_config.default_play_mode = g_play_mode;
+    save_config();
     render_controls();
 }
 
@@ -501,19 +519,6 @@ void persist_playback_session_state(void)
 static void remote_progress_refresh(void) { refresh(); }
 
 /* ============================================================
- * Visual position helper (for sorted display)
- * ============================================================ */
-
-static int visual_position_of(int track_index)
-{
-    if (!g_sort_state.active) return track_index;
-    for (int i = 0; i < g_playlist.count; i++) {
-        if (g_sort_state.sorted_indices[i] == track_index) return i;
-    }
-    return track_index;
-}
-
-/* ============================================================
  * Play audio (public API)
  * ============================================================ */
 
@@ -525,6 +530,9 @@ void play_audio(int index)
         return;
     }
     log_info("audio", "play_audio(index=%d) track='%s'", index, track_path);
+
+    /* Rebuild play queue based on current mode */
+    play_queue_rebuild(&g_play_queue, &g_playlist, g_play_mode, index);
 
     reap_finished_playback_thread();
     pthread_mutex_lock(&g_play_mutex);
@@ -758,43 +766,41 @@ void stop_audio(void)
 
 void next_track(void)
 {
-    log_debug("audio", "next_track() called, loop=%d, current_idx=%d", g_loop_mode, g_current_play_index);
+    log_debug("audio", "next_track() called, mode=%d, current_idx=%d", g_play_mode, g_current_play_index);
     int playlist_total = playlist_count();
     if (playlist_total == 0) return;
 
-    int next_index;
-    if (g_loop_mode == LOOP_RANDOM) {
-        next_index = rand() % playlist_total;
-    } else if (g_sort_state.active) {
-        int visual_pos = (g_current_play_index >= 0) ? visual_position_of(g_current_play_index) : g_selected_index;
-        int next_visual = (visual_pos + 1) % playlist_total;
-        next_index = g_sort_state.sorted_indices[next_visual];
-        g_selected_index = next_visual;
-    } else {
-        next_index = (g_current_play_index >= 0) ? g_current_play_index + 1 : g_selected_index + 1;
-        if (next_index >= playlist_total) next_index = 0;
+    /* Ensure queue is built */
+    if (g_play_queue.count == 0) {
+        int idx = (g_current_play_index >= 0) ? g_current_play_index : g_selected_index;
+        if (idx < 0) idx = 0;
+        play_queue_rebuild(&g_play_queue, &g_playlist, g_play_mode, idx);
     }
+
+    int next_index = play_queue_peek_next(&g_play_queue, g_play_mode);
+    if (next_index < 0) {
+        stop_audio();
+        return;
+    }
+    play_queue_advance(&g_play_queue, g_play_mode);
     play_audio(next_index);
 }
 
 void prev_track(void)
 {
-    log_debug("audio", "prev_track() called, loop=%d, current_idx=%d", g_loop_mode, g_current_play_index);
+    log_debug("audio", "prev_track() called, mode=%d, current_idx=%d", g_play_mode, g_current_play_index);
     int playlist_total = playlist_count();
     if (playlist_total == 0) return;
 
-    int prev_index;
-    if (g_loop_mode == LOOP_RANDOM) {
-        prev_index = rand() % playlist_total;
-    } else if (g_sort_state.active) {
-        int visual_pos = (g_current_play_index >= 0) ? visual_position_of(g_current_play_index) : g_selected_index;
-        int prev_visual = (visual_pos - 1 + playlist_total) % playlist_total;
-        prev_index = g_sort_state.sorted_indices[prev_visual];
-        g_selected_index = prev_visual;
-    } else {
-        prev_index = (g_current_play_index >= 0) ? g_current_play_index - 1 : g_selected_index - 1;
-        if (prev_index < 0) prev_index = playlist_total - 1;
+    if (g_play_queue.count == 0) {
+        int idx = (g_current_play_index >= 0) ? g_current_play_index : g_selected_index;
+        if (idx < 0) idx = 0;
+        play_queue_rebuild(&g_play_queue, &g_playlist, g_play_mode, idx);
     }
+
+    int prev_index = play_queue_peek_prev(&g_play_queue, g_play_mode);
+    if (prev_index < 0) return;
+    play_queue_rewind(&g_play_queue, g_play_mode);
     play_audio(prev_index);
 }
 
