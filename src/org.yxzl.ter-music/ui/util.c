@@ -163,12 +163,16 @@ const char *help_sidebar_items_ascii[] = {
 
 const char *color_names[] = {
     "黑色", "红色", "绿色", "黄色",
-    "蓝色", "洋红", "青色", "白色"
+    "蓝色", "洋红", "青色", "白色",
+    "亮黑(灰)", "亮红", "亮绿", "亮黄",
+    "亮蓝", "亮洋红", "亮青", "亮白"
 };
 
 const char *color_names_ascii[] = {
     "Black", "Red", "Green", "Yellow",
-    "Blue", "Magenta", "Cyan", "White"
+    "Blue", "Magenta", "Cyan", "White",
+    "Bright Black", "Bright Red", "Bright Green", "Bright Yellow",
+    "Bright Blue", "Bright Magenta", "Bright Cyan", "Bright White"
 };
 
 const int ncurses_colors[] = {
@@ -193,10 +197,19 @@ const char *menu_bool_text(int enabled)
 const char *menu_color_name(int color_value)
 {
     const char **names = use_english_ui() ? color_names_ascii : color_names;
-    if (color_value < 0 || color_value >= 8) {
-        return menu_text("未知", "Unknown");
+    if (color_value >= 0 && color_value < 16)
+        return names[color_value];
+    switch (color_value) {
+        case 208: return menu_text("橙",   "Orange");
+        case 130: return menu_text("棕",   "Brown");
+        case 198: return menu_text("粉",   "Pink");
+        case 93:  return menu_text("紫",   "Purple");
+        case 37:  return menu_text("青绿", "Teal");
+        case 75:  return menu_text("天蓝", "Sky Blue");
+        case 203: return menu_text("珊瑚", "Coral");
+        case 118: return menu_text("石灰", "Lime");
     }
-    return names[color_value];
+    return menu_text("未知", "Unknown");
 }
 
 const char *menu_language_name(int language)

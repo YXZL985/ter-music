@@ -227,12 +227,18 @@ void apply_color_theme(void)
 {
     if (!has_colors()) return;
 
-    init_pair(COLOR_PAIR_PLAYLIST,  g_app_config.theme.playlist_fg,  g_app_config.theme.playlist_bg);
-    init_pair(COLOR_PAIR_CONTROLS,  g_app_config.theme.controls_fg,  g_app_config.theme.controls_bg);
-    init_pair(COLOR_PAIR_LYRICS,    g_app_config.theme.lyrics_fg,    g_app_config.theme.lyrics_bg);
-    init_pair(COLOR_PAIR_SIDEBAR,   g_app_config.theme.sidebar_fg,   g_app_config.theme.sidebar_bg);
-    init_pair(COLOR_PAIR_HIGHLIGHT, g_app_config.theme.highlight_fg, g_app_config.theme.highlight_bg);
-    init_pair(COLOR_PAIR_BORDER,    g_app_config.theme.border_fg,    g_app_config.theme.border_bg);
+    int max_c = COLORS - 1;
+    if (max_c < 0) max_c = 7;
+#define CLR(v) ((v) < 0 ? 0 : (v) > max_c ? max_c : (v))
+
+    init_pair(COLOR_PAIR_PLAYLIST,  CLR(g_app_config.theme.playlist_fg),  CLR(g_app_config.theme.playlist_bg));
+    init_pair(COLOR_PAIR_CONTROLS,  CLR(g_app_config.theme.controls_fg),  CLR(g_app_config.theme.controls_bg));
+    init_pair(COLOR_PAIR_LYRICS,    CLR(g_app_config.theme.lyrics_fg),    CLR(g_app_config.theme.lyrics_bg));
+    init_pair(COLOR_PAIR_SIDEBAR,   CLR(g_app_config.theme.sidebar_fg),   CLR(g_app_config.theme.sidebar_bg));
+    init_pair(COLOR_PAIR_HIGHLIGHT, CLR(g_app_config.theme.highlight_fg), CLR(g_app_config.theme.highlight_bg));
+    init_pair(COLOR_PAIR_BORDER,    CLR(g_app_config.theme.border_fg),    CLR(g_app_config.theme.border_bg));
+
+#undef CLR
 }
 
 void load_config(void)

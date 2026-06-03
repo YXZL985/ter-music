@@ -663,6 +663,28 @@ static void adjust_or_toggle_settings_option(int option_index, int delta)
 }
 
 /* ============================================================
+ * Theme color palette helpers (dynamic count based on COLORS)
+ * ============================================================ */
+
+static int sel_color_count(void)
+{
+    if (!has_colors() || COLORS <= 0) return 0;
+    if (COLORS >= 256) return 24;
+    if (COLORS >= 16)  return 16;
+    if (COLORS >= 8)   return 8;
+    return COLORS;  /* 2…7 — only whatever the terminal supports */
+}
+
+static int sel_color_val(int i)
+{
+    if (i < 8) return i;
+    if (i < 16) return 8 + (i - 8);
+    static const int cube[] = {208,130,198,93,37,75,203,118};
+    if ((i - 16) < 8) return cube[i - 16];
+    return -1;
+}
+
+/* ============================================================
  * Selection menu — close / apply
  * ============================================================ */
 
@@ -759,10 +781,12 @@ static void close_sel_menu(int apply)
                                  &g_app_config.theme.border_fg,&g_app_config.theme.border_bg};
                     int paired = *cv[(g_sel_src % 2 == 0) ? g_sel_src + 1 : g_sel_src - 1];
                     int idx = 0;
-                    for (int j = 0; j < 8; j++) {
-                        if (j == paired) continue;
+                    int n = sel_color_count();
+                    for (int j = 0; j < n; j++) {
+                        int v = sel_color_val(j);
+                        if (v == paired) continue;
                         if (idx == g_sel_idx) {
-                            *cv[g_sel_src] = j;
+                            *cv[g_sel_src] = v;
                             break;
                         }
                         idx++;
@@ -852,10 +876,22 @@ static void open_sel_menu(int option_index)
                 int paired = *cv[(option_index % 2 == 0) ? option_index + 1 : option_index - 1];
                 int current = *cv[option_index];
                 count = 0;
-                for (int i = 0; i < 8; i++) {
-                    if (i == paired) continue;
-                    if (i == current) cur = count;
+                int n = sel_color_count();
+                for (int i = 0; i < n; i++) {
+                    int v = sel_color_val(i);
+                    if (v == paired) continue;
+                    if (v == current) cur = count;
                     count++;
+                }
+                /* Custom slot: auto-select if current not in presets */
+                if (n > 0) {
+                    int found = 0;
+                    for (int i = 0; i < n; i++) {
+                        if (sel_color_val(i) == current) { found = 1; break; }
+                    }
+                    if (!found && current >= 0 && current < COLORS)
+                        cur = count;
+                    count++; /* +1 for custom */
                 }
             }
             break;
@@ -941,19 +977,34 @@ static void draw_sel_menu(void)
             }
             default:
                 if (src >= 0 && src < 12) {
-                    /* Theme color */
                     int cv[] = {g_app_config.theme.playlist_fg,g_app_config.theme.playlist_bg,
                                 g_app_config.theme.controls_fg,g_app_config.theme.controls_bg,
                                 g_app_config.theme.lyrics_fg,g_app_config.theme.lyrics_bg,
                                 g_app_config.theme.sidebar_fg,g_app_config.theme.sidebar_bg,
                                 g_app_config.theme.highlight_fg,g_app_config.theme.highlight_bg,
                                 g_app_config.theme.border_fg,g_app_config.theme.border_bg};
+                    /* Custom slot (last item) */
+                    if (i == g_sel_count - 1) {
+                        int val = cv[src];
+                        int in_pre = 0;
+                        for (int k = 0; k < sel_color_count(); k++) {
+                            if (sel_color_val(k) == val) { in_pre = 1; break; }
+                        }
+                        if (in_pre || val < 0 || val >= COLORS)
+                            snprintf(opts[i], 48, "[%s...]", menu_text("自定义", "Custom"));
+                        else
+                            snprintf(opts[i], 48, "%s: %d", menu_text("自定义", "Custom"), val);
+                        break;
+                    }
+                    /* Preset colors */
                     int paired = cv[(src % 2 == 0) ? src + 1 : src - 1];
                     int idx = 0;
-                    for (int j = 0; j < 8; j++) {
-                        if (j == paired) continue;
+                    int n = sel_color_count();
+                    for (int j = 0; j < n; j++) {
+                        int v = sel_color_val(j);
+                        if (v == paired) continue;
                         if (idx == i) {
-                            snprintf(opts[i], 48, "%s (%d)", menu_color_name(j), j);
+                            snprintf(opts[i], 48, "%s (%d)", menu_color_name(v), v);
                             break;
                         }
                         idx++;
@@ -1048,6 +1099,45 @@ static int handle_sel_input(int ch)
             return 1;
         case ' ':
         case 10:
+            /* Custom color slot: prompt for a numeric value */
+            if (g_sel_src >= 0 && g_sel_src < 12 &&
+                g_sel_idx == g_sel_count - 1) {
+                int *cv[] = {&g_app_config.theme.playlist_fg,&g_app_config.theme.playlist_bg,
+                             &g_app_config.theme.controls_fg,&g_app_config.theme.controls_bg,
+                             &g_app_config.theme.lyrics_fg,&g_app_config.theme.lyrics_bg,
+                             &g_app_config.theme.sidebar_fg,&g_app_config.theme.sidebar_bg,
+                             &g_app_config.theme.highlight_fg,&g_app_config.theme.highlight_bg,
+                             &g_app_config.theme.border_fg,&g_app_config.theme.border_bg};
+                char buf[8];
+                int cur = *cv[g_sel_src];
+                snprintf(buf, sizeof(buf), "%d", cur);
+                int my, mx;
+                getmaxyx(stdscr, my, mx);
+                noecho();
+                curs_set(1);
+                prompt_text_input(stdscr, my - 3, mx / 4 + 2,
+                    menu_text("输入颜色值 (0-255): ", "Enter color (0-255): "),
+                    buf, sizeof(buf), 0, 0, 0);
+                curs_set(0);
+                noecho();
+                int v = atoi(buf);
+                {
+                    int paired_idx = (g_sel_src % 2 == 0) ? g_sel_src + 1 : g_sel_src - 1;
+                    int paired_val = *cv[paired_idx];
+                    if (v != cur && v >= 0 && v < COLORS && v != paired_val) {
+                        *cv[g_sel_src] = v;
+                        apply_color_theme();
+                        save_config();
+                    } else if (v == paired_val) {
+                        show_status_message(menu_text("前景色和背景色不能相同",
+                                                      "Foreground/background must differ"));
+                    }
+                }
+                g_sel_active = 0;
+                g_sel_src = -1;
+                rerender_settings_view();
+                return 1;
+            }
             close_sel_menu(1);
             rerender_settings_view();
             return 1;
