@@ -135,7 +135,8 @@ int config_save_to_xml(const char *path, const AppConfig *cfg)
         SAVE_INT(XML_PREF_VOLUME,          cfg->volume_percent);
         SAVE_INT(XML_PREF_AUDIO_LATENCY,   cfg->audio_latency_ms);
         SAVE_INT(XML_PREF_SHOW_LYRICS,     cfg->show_lyrics_panel);
-        SAVE_INT(XML_PREF_LOOP_MODE,       cfg->default_loop_mode);
+        SAVE_INT(XML_PREF_PLAY_MODE,       cfg->default_play_mode);
+        SAVE_INT(XML_PREF_ADVANCED_PLAY_MODES, cfg->advanced_play_modes_enabled);
 
         snprintf(buf, sizeof(buf), "%.2f", cfg->default_playback_speed);
         xmlNewChild(prefs, NULL, (const xmlChar *)XML_PREF_PLAYBACK_SPEED,
@@ -265,7 +266,26 @@ int config_load_from_xml(const char *path, AppConfig *cfg)
         cfg->volume_percent           = xml_get_int(prefs, XML_PREF_VOLUME, 100);
         cfg->audio_latency_ms         = xml_get_int(prefs, XML_PREF_AUDIO_LATENCY, 80);
         cfg->show_lyrics_panel        = xml_get_int(prefs, XML_PREF_SHOW_LYRICS, 1);
-        cfg->default_loop_mode        = xml_get_int(prefs, XML_PREF_LOOP_MODE, LOOP_OFF);
+        /* Migration: try new default_play_mode first, fallback to old default_loop_mode */
+        {
+            int new_mode = xml_get_int(prefs, XML_PREF_PLAY_MODE, -1);
+            if (new_mode >= 0 && new_mode < PLAY_MODE_COUNT) {
+                cfg->default_play_mode = new_mode;
+            } else {
+                int old_loop = xml_get_int(prefs, XML_PREF_LOOP_MODE, -1);
+                static const int loop_to_play[] = {
+                    PLAY_MODE_SEQUENTIAL,      /* LOOP_OFF(0)    → sequential */
+                    PLAY_MODE_SINGLE_REPEAT,   /* LOOP_SINGLE(1) → single repeat */
+                    PLAY_MODE_LIST_REPEAT,     /* LOOP_LIST(2)   → list repeat */
+                    PLAY_MODE_SHUFFLE_REPEAT   /* LOOP_RANDOM(3) → shuffle repeat */
+                };
+                if (old_loop >= 0 && old_loop <= 3)
+                    cfg->default_play_mode = loop_to_play[old_loop];
+                else
+                    cfg->default_play_mode = PLAY_MODE_SEQUENTIAL;
+            }
+        }
+        cfg->advanced_play_modes_enabled = xml_get_int(prefs, XML_PREF_ADVANCED_PLAY_MODES, 0);
         cfg->default_playback_speed   = xml_get_float(prefs, XML_PREF_PLAYBACK_SPEED, 1.0f);
         cfg->show_album_cover         = xml_get_int(prefs, XML_PREF_SHOW_COVER, 1);
         cfg->lyrics_alignment         = xml_get_int(prefs, XML_PREF_LYRICS_ALIGN, 0);
@@ -425,8 +445,9 @@ static void clamp_config_values(AppConfig *cfg)
     if (cfg->audio_latency_ms < 20)  cfg->audio_latency_ms = 20;
     if (cfg->audio_latency_ms > 250) cfg->audio_latency_ms = 250;
 
-    if (cfg->default_loop_mode < LOOP_OFF || cfg->default_loop_mode > LOOP_RANDOM)
-        cfg->default_loop_mode = LOOP_OFF;
+    if (cfg->default_play_mode < 0 || cfg->default_play_mode >= PLAY_MODE_COUNT)
+        cfg->default_play_mode = PLAY_MODE_SEQUENTIAL;
+    cfg->advanced_play_modes_enabled = cfg->advanced_play_modes_enabled ? 1 : 0;
 
     if (cfg->default_playback_speed < 0.5f)
         cfg->default_playback_speed = 0.5f;

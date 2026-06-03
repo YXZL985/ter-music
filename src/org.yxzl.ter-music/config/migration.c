@@ -150,8 +150,17 @@ int config_migrate_v1_to_v2(void)
         cfg.audio_latency_ms = (int)extract_json_int(json, "audio_latency_ms");
     if (strstr(json, "\"show_lyrics_panel\""))
         cfg.show_lyrics_panel = (int)extract_json_int(json, "show_lyrics_panel");
-    if (strstr(json, "\"default_loop_mode\""))
-        cfg.default_loop_mode = (int)extract_json_int(json, "default_loop_mode");
+    if (strstr(json, "\"default_loop_mode\"")) {
+        int old_loop = (int)extract_json_int(json, "default_loop_mode");
+        static const int loop_to_play[] = {
+            PLAY_MODE_SEQUENTIAL, PLAY_MODE_SINGLE_REPEAT,
+            PLAY_MODE_LIST_REPEAT, PLAY_MODE_SHUFFLE_REPEAT
+        };
+        if (old_loop >= 0 && old_loop <= 3)
+            cfg.default_play_mode = loop_to_play[old_loop];
+        else
+            cfg.default_play_mode = PLAY_MODE_SEQUENTIAL;
+    }
     if (strstr(json, "\"default_playback_speed\""))
         cfg.default_playback_speed = (float)extract_json_float(json, "default_playback_speed");
     if (strstr(json, "\"show_album_cover\""))
