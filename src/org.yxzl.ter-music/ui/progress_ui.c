@@ -91,6 +91,9 @@ void update_progress_bar(void)
         g_current_position = tracked_position;
     }
 
+    /* 弹出菜单时仅保留逻辑计算，暂停进度条 UI 渲染 */
+    if (g_popup.active) return;
+
     int h, w;
     getmaxyx(win_controls, h, w);
     if (h < 5 || w < 20) return;

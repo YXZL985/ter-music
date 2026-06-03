@@ -12,9 +12,11 @@
 #include "ui/ui.h"
 #include "ui/menu_internal.h"
 #include "audio/audio.h"
+#include "audio/play_queue.h"
 #include "playlist/playlist.h"
 #include "config/config.h"
 #include "logger/logger.h"
+#include "ui/menus.h"
 #include <ncursesw/ncurses.h>
 #include <stdio.h>
 #include <string.h>
@@ -24,6 +26,21 @@ extern WINDOW *win_controls;
 /* ── Control labels ── */
 extern const char *control_labels[];
 extern const char *control_labels_en[];
+
+/* ── Speed state (defined in audio.c) ── */
+extern float g_speed_ratios[];
+extern int   g_speed_index;
+extern int   g_speed_count;
+
+/* ── Playlist tab mode (defined in playlist_render.c) ── */
+extern int g_playlist_tab_mode;
+
+/* ── Popup state ── */
+PopupState g_popup = {0};
+#define VOLUME_POPUP_STEP 10
+
+/* Forward declarations */
+static void render_controls_popup(void);
 
 /* ============================================================
  * Control label helpers
@@ -42,7 +59,7 @@ void build_control_label(int index, char *dest, size_t dest_size)
     if (index < 0 || index >= CONTROL_COUNT) return;
 
     if (index == CONTROL_IDX_LOOP) {
-        snprintf(dest, dest_size, "%s:%s", get_control_label(index), get_loop_mode_str());
+        snprintf(dest, dest_size, "%s:%s", get_control_label(index), get_play_mode_str());
         return;
     }
     if (index == CONTROL_IDX_SPEED) {
@@ -103,6 +120,174 @@ void render_controls_status_line(void)
 }
 
 /* ============================================================
+ * Popup helpers
+ * ============================================================ */
+
+#define BASIC_MODE_COUNT 5
+#define FOLDER_MODE_COUNT 4
+#define ADVANCED_MODE_COUNT 8
+
+static int calculate_available_play_modes(void)
+{
+    int count = BASIC_MODE_COUNT;
+    if (g_playlist_tab_mode == PLAYLIST_MODE_FILE_BROWSER) {
+        if (g_current_play_index >= 0 || g_selected_index >= 0)
+            count += FOLDER_MODE_COUNT;
+    }
+    if (g_app_config.advanced_play_modes_enabled)
+        count += ADVANCED_MODE_COUNT;
+    return count;
+}
+
+static PlayMode get_available_play_mode_at(int index)
+{
+    if (index < BASIC_MODE_COUNT)
+        return (PlayMode)index;
+
+    int folder_offset = BASIC_MODE_COUNT;
+    int advanced_offset = folder_offset + FOLDER_MODE_COUNT;
+
+    if (g_playlist_tab_mode == PLAYLIST_MODE_FILE_BROWSER &&
+        (g_current_play_index >= 0 || g_selected_index >= 0)) {
+        if (index >= folder_offset && index < folder_offset + FOLDER_MODE_COUNT)
+            return (PlayMode)(index - folder_offset + PLAY_MODE_FOLDER_SEQUENTIAL);
+        advanced_offset = folder_offset + FOLDER_MODE_COUNT;
+    } else {
+        advanced_offset = folder_offset;
+    }
+
+    if (index >= advanced_offset)
+        return (PlayMode)(index - advanced_offset + PLAY_MODE_ALBUM_SEQUENTIAL);
+
+    return PLAY_MODE_SEQUENTIAL;
+}
+
+static void calculate_popup_dimensions(PopupState *popup, WINDOW *parent)
+{
+    if (!parent) return;
+    int parent_h, parent_w;
+    getmaxyx(parent, parent_h, parent_w);
+    int popup_h = popup->option_count + 2;
+    /* Cap to a reasonable max, no longer constrained by parent height */
+    if (popup_h > 20) popup_h = 20;
+    int popup_w = 26;
+    popup->height = popup_h;
+    popup->width = popup_w;
+    /* Position relative to parent window's top-left corner on screen */
+    int parent_screen_y, parent_screen_x;
+    getbegyx(parent, parent_screen_y, parent_screen_x);
+    popup->start_row = parent_screen_y + (parent_h - popup_h) / 2;
+    popup->start_col = parent_screen_x + (parent_w - popup_w) / 2;
+    if (popup->start_row < 1) popup->start_row = 1;
+    if (popup->start_col < 1) popup->start_col = 1;
+}
+
+static void destroy_popup_window(PopupState *popup)
+{
+    if (popup->popup_win) {
+        WINDOW *w = (WINDOW *)popup->popup_win;
+        /* 仅释放窗口，不刷新—下层窗口将在后续全量重绘中恢复 */
+        delwin(w);
+        popup->popup_win = NULL;
+    }
+}
+
+static void create_popup_window(PopupState *popup)
+{
+    destroy_popup_window(popup); /* clean up any lingering window */
+    WINDOW *w = newwin(popup->height, popup->width, popup->start_row, popup->start_col);
+    if (!w) return;
+    popup->popup_win = (void *)w;
+}
+
+static void build_popup_option_text(PopupType type, int index,
+                                     char *dest, size_t dest_size)
+{
+    if (!dest || dest_size == 0) return;
+    switch (type) {
+        case POPUP_LOOP_MODE: {
+            PlayMode mode = get_available_play_mode_at(index);
+            snprintf(dest, dest_size, "%s", play_mode_display_name(mode, use_english_ui()));
+            break;
+        }
+        case POPUP_SPEED: {
+            float speeds[] = {0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 3.0f};
+            if (index >= 0 && index < 6)
+                snprintf(dest, dest_size, "%.2fx", (double)speeds[index]);
+            break;
+        }
+        case POPUP_VOLUME: {
+            int vol = index * VOLUME_POPUP_STEP;
+            snprintf(dest, dest_size, "%d%%", vol);
+            break;
+        }
+        default: dest[0] = '\0';
+    }
+}
+
+static void apply_popup_selection(void)
+{
+    switch (g_popup.type) {
+        case POPUP_LOOP_MODE:
+            set_play_mode(get_available_play_mode_at(g_popup.selected_index));
+            break;
+        case POPUP_SPEED: {
+            g_speed_index = g_popup.selected_index;
+            g_playback_speed = g_speed_ratios[g_speed_index];
+            g_app_config.default_playback_speed = g_playback_speed;
+            save_config();
+            char msg[64];
+            snprintf(msg, sizeof(msg), "%s: %.2fx",
+                     use_english_ui() ? "Speed" : "倍速", (double)g_playback_speed);
+            update_controls_status(msg);
+            break;
+        }
+        case POPUP_VOLUME: {
+            int new_vol = g_popup.selected_index * VOLUME_POPUP_STEP;
+            set_volume_percent(new_vol);
+            break;
+        }
+        default: break;
+    }
+}
+
+int handle_popup_input(int ch)
+{
+    if (!g_popup.active) return 0;
+
+    switch (ch) {
+        case KEY_UP:
+            if (g_popup.selected_index > 0)
+                g_popup.selected_index--;
+            render_controls_popup();  /* only redraw popup, not full controls */
+            return 1;
+        case KEY_DOWN:
+            if (g_popup.selected_index < g_popup.option_count - 1)
+                g_popup.selected_index++;
+            render_controls_popup();  /* only redraw popup, not full controls */
+            return 1;
+        case ' ':
+        case 10:
+            apply_popup_selection();
+            destroy_popup_window(&g_popup);
+            g_popup.active = 0;
+            render_playlist_content();
+            render_controls();
+            render_menu_hint_bar();
+            return 1;
+        case 27:
+        case KEY_LEFT:
+            destroy_popup_window(&g_popup);
+            g_popup.active = 0;
+            render_playlist_content();
+            render_controls();
+            render_menu_hint_bar();
+            return 1;
+    }
+    return 0;
+}
+
+/* ============================================================
  * Control activation
  * ============================================================ */
 
@@ -143,17 +328,90 @@ void activate_current_control(void)
             stop_audio();
             break;
         case CONTROL_IDX_LOOP:
-            toggle_loop_mode();
+            if (g_popup.active) {
+                destroy_popup_window(&g_popup);
+                g_popup.active = 0;
+                render_menu_hint_bar();
+            } else {
+                g_popup.type = POPUP_LOOP_MODE;
+                g_popup.selected_index = (int)g_play_mode;
+                g_popup.option_count = calculate_available_play_modes();
+                calculate_popup_dimensions(&g_popup, win_controls);
+                create_popup_window(&g_popup);
+                g_popup.active = (g_popup.popup_win != NULL);
+            }
             break;
         case CONTROL_IDX_SPEED:
-            toggle_playback_speed();
+            if (g_popup.active) {
+                destroy_popup_window(&g_popup);
+                g_popup.active = 0;
+                render_menu_hint_bar();
+            } else {
+                g_popup.type = POPUP_SPEED;
+                g_popup.selected_index = g_speed_index;
+                g_popup.option_count = g_speed_count;
+                calculate_popup_dimensions(&g_popup, win_controls);
+                create_popup_window(&g_popup);
+                g_popup.active = (g_popup.popup_win != NULL);
+            }
             break;
         case CONTROL_IDX_VOLUME:
-            adjust_volume(10);
+            if (g_popup.active) {
+                destroy_popup_window(&g_popup);
+                g_popup.active = 0;
+                render_menu_hint_bar();
+            } else {
+                g_popup.type = POPUP_VOLUME;
+                g_popup.selected_index = get_volume_percent() / VOLUME_POPUP_STEP;
+                g_popup.option_count = 100 / VOLUME_POPUP_STEP + 1;
+                calculate_popup_dimensions(&g_popup, win_controls);
+                create_popup_window(&g_popup);
+                g_popup.active = (g_popup.popup_win != NULL);
+            }
             break;
         case CONTROL_IDX_PROGRESS:
             break;
     }
+}
+
+/* ============================================================
+ * Popup rendering
+ * ============================================================ */
+
+static void render_controls_popup(void)
+{
+    if (!g_popup.active) return;
+    WINDOW *popup_win = (WINDOW *)g_popup.popup_win;
+    if (!popup_win) return;
+
+    int popup_h = g_popup.height;
+
+    werase(popup_win);
+    wattron(popup_win, COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
+    box(popup_win, 0, 0);
+
+    const char *title = "";
+    switch (g_popup.type) {
+        case POPUP_LOOP_MODE: title = ui_text(" 播放模式 ", " Play Mode "); break;
+        case POPUP_SPEED:     title = ui_text(" 播放速度 ", " Speed "); break;
+        case POPUP_VOLUME:    title = ui_text(" 音量 ", " Volume "); break;
+        default: break;
+    }
+    mvwprintw(popup_win, 0, 2, "%s", title);
+
+    for (int i = 0; i < g_popup.option_count && i < popup_h - 2; i++) {
+        char option_text[48];
+        build_popup_option_text(g_popup.type, i, option_text, sizeof(option_text));
+
+        if (i == g_popup.selected_index)
+            wattron(popup_win, A_REVERSE);
+        mvwprintw(popup_win, i + 1, 2, " %-20s ", option_text);
+        if (i == g_popup.selected_index)
+            wattroff(popup_win, A_REVERSE);
+    }
+
+    wattroff(popup_win, COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
+    wrefresh(popup_win);
 }
 
 /* ============================================================
@@ -174,11 +432,12 @@ void render_controls(void)
         ? ui_text("[D:退出定位]", "[D:Exit Seek]")
         : ui_text("[D:歌词定位]", "[D:Lyric Seek]");
     char controls_header[160];
-    snprintf(controls_header, sizeof(controls_header), "%s %s %s %s %s",
+    snprintf(controls_header, sizeof(controls_header), "%s %s %s %s %s %s",
              ui_text("控制区", "Controls"),
              ui_text("[空格:执行]", "[Space:Run]"),
              ui_text("[C:控件]", "[C:Ctrl]"),
              ui_text("[L:列表]", "[L:List]"),
+             ui_text("[Tab:切换]", "[Tab:View]"),
              focus_hint);
     mvwprintw(win_controls, 0, 2, " %s %s", controls_header, lyric_hint);
     wbkgd(win_controls, COLOR_PAIR(COLOR_PAIR_CONTROLS));
@@ -304,5 +563,11 @@ void render_controls(void)
 
     render_controls_status_line();
     render_visualizer_with_album_cover();
-    wrefresh(win_controls);
+
+    /* Refresh controls base window first, then overlay popup on top */
+    wnoutrefresh(win_controls);
+    if (g_popup.active && g_popup.popup_win) {
+        render_controls_popup();
+    }
+    doupdate();
 }

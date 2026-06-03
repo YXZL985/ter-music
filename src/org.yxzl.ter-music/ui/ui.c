@@ -31,6 +31,8 @@
 #include "remote/remote.h"
 #include "logger/logger.h"
 #include "audio/progress/progress.h"
+#include "audio/play_queue.h"
+#include "ui/menu_internal.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -58,6 +60,7 @@ extern void seek_relative_seconds(int delta_seconds);
 extern int  handle_main_view_mouse_event(const MEVENT *event);
 extern void format_display_text(char *dest, size_t dest_size, const char *src, int width, int pad);
 extern void sanitize_ascii_text(char *dest, size_t dest_size, const char *src);
+extern int g_playlist_tab_mode;
 
 /* audio backend shutdown (defined in audio.c) */
 void audio_backend_shutdown(void);
@@ -453,6 +456,10 @@ void run_event_loop(void)
 
         // Control focus mode
         if (g_control_focus == 1) {
+            /* Intercept popup input first */
+            if (g_popup.active && handle_popup_input(ch))
+                continue;
+
             switch (ch) {
                 case KEY_UP:
                     if (g_current_control_idx == CONTROL_IDX_VOLUME) {
@@ -592,6 +599,18 @@ void run_event_loop(void)
                         render_playlist_content();
                         update_controls_status(ui_text("搜索已取消", "Search cancelled"));
                         continue;
+                    }
+                    break;
+                case 9:   /* Tab */
+                case KEY_BTAB:  /* Shift+Tab (KEY_BTAB = 353) */
+                    if (playlist_is_loaded()) {
+                        g_playlist_tab_mode = !g_playlist_tab_mode;
+                        render_playlist_content();
+                        render_controls();
+                        update_controls_status(
+                            g_playlist_tab_mode == PLAYLIST_MODE_PLAY_QUEUE
+                                ? ui_text("切换到播放队列视图", "Switched to Play Queue view")
+                                : ui_text("切换到文件浏览视图", "Switched to File Browser view"));
                     }
                     break;
                 case 'a': case 'A':

@@ -30,6 +30,9 @@ extern WINDOW *win_playlist;
 extern char g_braille_art_buffer[8192];
 extern int g_album_cover_size;
 
+/* ── 主视图播放列表标签模式（文件浏览 vs 播放队列） ── */
+int g_playlist_tab_mode = PLAYLIST_MODE_FILE_BROWSER;
+
 /* ============================================================
  * Text formatting
  * ============================================================ */
@@ -157,6 +160,11 @@ void render_playlist_content(void)
         snprintf(title_buf, sizeof(title_buf), "%s (%d %s) ",
                  ui_text(" 搜索结果 ", " Search Results "), snap_count,
                  ui_text("个", "found"));
+        mvwprintw(win_playlist, 0, 2, "%s", title_buf);
+    } else if (g_playlist_tab_mode == PLAYLIST_MODE_PLAY_QUEUE) {
+        snprintf(title_buf, sizeof(title_buf), " %s [%s] ",
+                 ui_text("播放队列", "Play Queue"),
+                 get_play_mode_str());
         mvwprintw(win_playlist, 0, 2, "%s", title_buf);
     } else {
         mvwprintw(win_playlist, 0, 2, "%s", ui_text(" 播放列表 ", " Playlist "));
@@ -341,7 +349,7 @@ void render_playlist_content(void)
 
             // Left column: metadata
             mvwprintw(win_playlist, status_line + 1, left_col_x, "%s%s", ui_text("状态：", "State: "), status_msg);
-            mvwprintw(win_playlist, status_line + 2, left_col_x, "%s%s", ui_text("循环：", "Loop: "), get_loop_mode_str());
+            mvwprintw(win_playlist, status_line + 2, left_col_x, "%s%s", ui_text("模式：", "Mode: "), get_play_mode_str());
             mvwprintw(win_playlist, status_line + 3, left_col_x, "%s%s", ui_text("标题：", "Title: "), truncated_title);
             mvwprintw(win_playlist, status_line + 4, left_col_x, "%s%s", ui_text("艺术家：", "Artist: "), truncated_artist);
             mvwprintw(win_playlist, status_line + 5, left_col_x, "%s%s", ui_text("专辑：", "Album: "), truncated_album);
@@ -380,7 +388,7 @@ void render_playlist_content(void)
             int col_width = (w - 4) / 2;
             int center_col_x = 2 + col_width;
             mvwprintw(win_playlist, status_line + 1, 2, "%s%s", ui_text("状态：", "State: "), status_msg);
-            mvwprintw(win_playlist, status_line + 2, 2, "%s%s", ui_text("循环：", "Loop: "), get_loop_mode_str());
+            mvwprintw(win_playlist, status_line + 2, 2, "%s%s", ui_text("模式：", "Mode: "), get_play_mode_str());
             mvwprintw(win_playlist, status_line + 3, 2, "%s--", ui_text("标题：", "Title: "));
             mvwprintw(win_playlist, status_line + 4, 2, "%s--", ui_text("艺术家：", "Artist: "));
             mvwprintw(win_playlist, status_line + 5, 2, "%s--", ui_text("专辑：", "Album: "));
