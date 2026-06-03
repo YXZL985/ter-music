@@ -531,8 +531,14 @@ void play_audio(int index)
     }
     log_info("audio", "play_audio(index=%d) track='%s'", index, track_path);
 
-    /* Rebuild play queue based on current mode */
-    play_queue_rebuild(&g_play_queue, &g_playlist, g_play_mode, index);
+    /* Only rebuild queue when it doesn't already contain this track at
+     * current_position — preserves manual additions (a / i / J / K) */
+    if (g_play_queue.count == 0 ||
+        g_play_queue.current_position < 0 ||
+        g_play_queue.current_position >= g_play_queue.count ||
+        g_play_queue.indices[g_play_queue.current_position] != index) {
+        play_queue_rebuild(&g_play_queue, &g_playlist, g_play_mode, index);
+    }
 
     reap_finished_playback_thread();
     pthread_mutex_lock(&g_play_mutex);

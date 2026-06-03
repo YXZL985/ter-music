@@ -10,6 +10,7 @@
 #include "audio/play_queue.h"
 #include "playlist/playlist.h"
 #include "ui/ui.h"
+#include "ui/menus.h"
 #include "logger/logger.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -61,7 +62,6 @@ static void reshuffle_keeping_current(PlayQueue *q)
 {
     if (q->count <= 2) return;
     play_queue_shuffle_range(q, 1, q->count - 1);
-    q->current_position = 0;
     q->shuffle_generation++;
 }
 
@@ -293,6 +293,11 @@ void play_queue_rewind(PlayQueue *q, PlayMode mode)
 {
     if (!q || q->count == 0) return;
 
+    if (mode == PLAY_MODE_SINGLE_REPEAT) {
+        /* stay at same position (consistent with advance) */
+        return;
+    }
+
     q->current_position--;
     if (q->current_position < 0) {
         if (play_mode_repeats(mode))
@@ -316,6 +321,147 @@ int play_queue_get_track_at(const PlayQueue *q, int position, int *track_index)
 int play_queue_is_active(const PlayQueue *q)
 {
     return q && q->count > 0 && q->current_position >= 0;
+}
+
+/* ============================================================
+ * Queue editing
+ * ============================================================ */
+
+int play_queue_append(PlayQueue *q, int track_index)
+{
+    if (!q || q->count >= MAX_TRACKS) return -1;
+    q->indices[q->count++] = track_index;
+    return 0;
+}
+
+int play_queue_remove_at(PlayQueue *q, int position)
+{
+    if (!q || position < 0 || position >= q->count) return -1;
+
+    int shift = q->count - position - 1;
+    if (shift > 0)
+        memmove(&q->indices[position], &q->indices[position + 1], shift * sizeof(int));
+    q->count--;
+
+    if (q->count == 0) {
+        q->current_position = -1;
+    } else if (position < q->current_position) {
+        q->current_position--;
+    } else if (position == q->current_position) {
+        if (q->current_position >= q->count)
+            q->current_position = q->count - 1;
+    }
+    return 0;
+}
+
+int play_queue_insert_after(PlayQueue *q, int track_index)
+{
+    if (!q || q->count >= MAX_TRACKS) return -1;
+    if (q->current_position < 0) {
+        q->current_position = 0;
+        q->indices[0] = track_index;
+        q->count = 1;
+        return 0;
+    }
+    int insert_pos = q->current_position + 1;
+    if (insert_pos > q->count) insert_pos = q->count;
+    int shift = q->count - insert_pos;
+    if (shift > 0)
+        memmove(&q->indices[insert_pos + 1], &q->indices[insert_pos], shift * sizeof(int));
+    q->indices[insert_pos] = track_index;
+    q->count++;
+    return 0;
+}
+
+int play_queue_move_up(PlayQueue *q, int position)
+{
+    if (!q || position <= 0 || position >= q->count) return -1;
+    int tmp = q->indices[position];
+    q->indices[position] = q->indices[position - 1];
+    q->indices[position - 1] = tmp;
+    if (q->current_position == position)
+        q->current_position--;
+    else if (q->current_position == position - 1)
+        q->current_position++;
+    return 0;
+}
+
+int play_queue_move_down(PlayQueue *q, int position)
+{
+    if (!q || position < 0 || position >= q->count - 1) return -1;
+    int tmp = q->indices[position];
+    q->indices[position] = q->indices[position + 1];
+    q->indices[position + 1] = tmp;
+    if (q->current_position == position)
+        q->current_position++;
+    else if (q->current_position == position + 1)
+        q->current_position--;
+    return 0;
+}
+
+/* ============================================================
+ * Queue persistence
+ * ============================================================ */
+
+int play_queue_save(const PlayQueue *q)
+{
+    if (!q || q->count == 0) return -1;
+
+    char path[MAX_PATH_LEN];
+    ensure_config_dir_exists();
+    snprintf(path, sizeof(path), "%s/queue.txt", get_config_dir());
+
+    FILE *f = fopen(path, "w");
+    if (!f) return -1;
+
+    fprintf(f, "%d\n%d\n", q->current_position, q->count);
+    for (int i = 0; i < q->count; i++) {
+        char track_path[MAX_PATH_LEN];
+        if (playlist_get_track_path(q->indices[i], track_path, sizeof(track_path)) == 0)
+            fprintf(f, "%s\n", track_path);
+    }
+    fclose(f);
+    return 0;
+}
+
+int play_queue_load(PlayQueue *q)
+{
+    if (!q) return -1;
+
+    char path[MAX_PATH_LEN];
+    snprintf(path, sizeof(path), "%s/queue.txt", get_config_dir());
+
+    FILE *f = fopen(path, "r");
+    if (!f) return -1;
+
+    int pos, cnt;
+    if (fscanf(f, "%d\n%d\n", &pos, &cnt) != 2 || cnt <= 0 || cnt > MAX_TRACKS) {
+        fclose(f);
+        return -1;
+    }
+
+    q->count = 0;
+    q->current_position = -1;
+    char line[MAX_PATH_LEN];
+    for (int i = 0; i < cnt && fgets(line, sizeof(line), f); i++) {
+        size_t len = strlen(line);
+        if (len > 0 && line[len - 1] == '\n') line[--len] = '\0';
+        if (len == 0) continue;
+        int idx = playlist_find_track_index_by_path(line);
+        if (idx >= 0)
+            q->indices[q->count++] = idx;
+    }
+    fclose(f);
+
+    if (q->count == 0) return -1;
+    if (pos >= 0 && pos < q->count)
+        q->current_position = pos;
+    else
+        q->current_position = 0;
+
+    /* Rebuild shuffle generation if needed */
+    q->shuffle_generation = 0;
+    return 0;
 }
 
 /* ============================================================

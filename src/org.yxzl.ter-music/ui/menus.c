@@ -155,6 +155,11 @@ void ensure_config_dir_exists(void)
     mkdir(config_dir, 0755);
 }
 
+const char *get_config_dir(void)
+{
+    return config_dir[0] ? config_dir : NULL;
+}
+
 void init_default_config(void)
 {
     memset(&g_app_config, 0, sizeof(AppConfig));

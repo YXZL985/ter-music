@@ -22,6 +22,17 @@ void play_queue_rewind(PlayQueue *q, PlayMode mode);
 int  play_queue_get_track_at(const PlayQueue *q, int position, int *track_index);
 int  play_queue_is_active(const PlayQueue *q);
 
+/* Queue editing */
+int  play_queue_append(PlayQueue *q, int track_index);
+int  play_queue_remove_at(PlayQueue *q, int position);
+int  play_queue_insert_after(PlayQueue *q, int track_index);
+int  play_queue_move_up(PlayQueue *q, int position);
+int  play_queue_move_down(PlayQueue *q, int position);
+
+/* Persistence */
+int  play_queue_save(const PlayQueue *q);
+int  play_queue_load(PlayQueue *q);
+
 int  play_mode_is_shuffle(PlayMode mode);
 int  play_mode_is_folder_mode(PlayMode mode);
 int  play_mode_is_album_mode(PlayMode mode);

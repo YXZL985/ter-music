@@ -52,6 +52,7 @@ int remove_track_from_playlist(int playlist_idx, int track_idx);
 int rename_user_playlist(int index, const char *new_name);
 
 void ensure_config_dir_exists(void);
+const char *get_config_dir(void);
 
 /* JSON parser helpers — used by config_migration.c for v1→v2 config upgrade only */
 char* extract_json_string(const char *json, const char *key, char *output, size_t output_size);

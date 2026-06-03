@@ -23,6 +23,8 @@
 
 
 extern WINDOW *win_controls;
+extern int g_playlist_tab_mode;
+extern int g_queue_selected_index;
 
 #define UI_PROGRESS_REFRESH_MS 80
 
@@ -59,6 +61,11 @@ int get_playlist_scroll_offset(void)
         int offset = 0;
         if (g_search_state.selected_index >= visible_lines)
             offset = g_search_state.selected_index - visible_lines + 1;
+        return offset;
+    } else if (g_playlist_tab_mode == PLAYLIST_MODE_PLAY_QUEUE) {
+        int offset = 0;
+        if (g_queue_selected_index >= visible_lines)
+            offset = g_queue_selected_index - visible_lines + 1;
         return offset;
     } else {
         int offset = 0;

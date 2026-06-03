@@ -7,6 +7,8 @@
 #include "playlist/ape_tag.h"
 #include "ui/braille/braille_art.h"
 #include "ui/ui.h"
+#include "audio/audio.h"
+#include "audio/play_queue.h"
 #include "logger/logger.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -351,6 +353,7 @@ void reset_playlist_state(void) {
     playlist_unlock();
     search_clear();
     memset(&g_sort_state, 0, sizeof(g_sort_state));
+    play_queue_clear(&g_play_queue);
 }
 
 static int playlist_contains_track_in(const Playlist *playlist, const char *path) {
@@ -790,6 +793,11 @@ int load_single_file(const char *file_path) {
 
     free(next);
     recompute_sort_order();
+    play_queue_clear(&g_play_queue);
+    if (g_current_play_index >= 0)
+        play_queue_rebuild(&g_play_queue, &g_playlist, g_play_mode, g_current_play_index);
+    else if (playlist_count() > 0)
+        play_queue_rebuild(&g_play_queue, &g_playlist, g_play_mode, 0);
     return 1;
 }
 
@@ -839,6 +847,11 @@ int load_playlist(const char *path) {
     free(next);
     log_info("playlist", "load_playlist: loaded %d tracks from '%s'", total, path);
     recompute_sort_order();
+    play_queue_clear(&g_play_queue);
+    if (g_current_play_index >= 0)
+        play_queue_rebuild(&g_play_queue, &g_playlist, g_play_mode, g_current_play_index);
+    else if (playlist_count() > 0)
+        play_queue_rebuild(&g_play_queue, &g_playlist, g_play_mode, 0);
     return total;
 }
 
@@ -890,6 +903,11 @@ int append_playlist(const char *path) {
     free(next);
     log_info("playlist", "append_playlist: added %d new tracks (total=%d)", added, playlist_count());
     recompute_sort_order();
+    play_queue_clear(&g_play_queue);
+    if (g_current_play_index >= 0)
+        play_queue_rebuild(&g_play_queue, &g_playlist, g_play_mode, g_current_play_index);
+    else if (playlist_count() > 0)
+        play_queue_rebuild(&g_play_queue, &g_playlist, g_play_mode, 0);
     return added;
 }
 
@@ -945,6 +963,11 @@ int load_remote_playlist(const RemoteConnectionConfig *conn, const char *subpath
     free(next);
     log_info("playlist", "Remote playlist: loaded %d tracks", total);
     recompute_sort_order();
+    play_queue_clear(&g_play_queue);
+    if (g_current_play_index >= 0)
+        play_queue_rebuild(&g_play_queue, &g_playlist, g_play_mode, g_current_play_index);
+    else if (playlist_count() > 0)
+        play_queue_rebuild(&g_play_queue, &g_playlist, g_play_mode, 0);
     return total;
 }
 

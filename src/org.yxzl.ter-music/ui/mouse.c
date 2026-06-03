@@ -16,6 +16,7 @@
 #include "playlist/playlist.h"
 #include "search/search.h"
 #include "audio/audio.h"
+#include "audio/play_queue.h"
 #include "ui/lyrics.h"
 #include "config/config.h"
 #include <ncursesw/ncurses.h>
@@ -24,6 +25,10 @@
 extern WINDOW *win_playlist;
 extern WINDOW *win_controls;
 extern WINDOW *win_lyrics;
+
+/* Playlist tab mode and queue selection (defined in playlist_render.c) */
+extern int g_playlist_tab_mode;
+extern int g_queue_selected_index;
 
 /* Layout helpers (defined in layout.c) */
 extern int calculate_lyrics_content_top(int h, int w);
@@ -292,6 +297,12 @@ int handle_main_view_mouse_event(const MEVENT *event)
             g_search_state.active = 0;
             g_selected_index = g_sort_state.active ? 0 : actual_index;
             render_playlist_content();
+        } else if (g_playlist_tab_mode == PLAYLIST_MODE_PLAY_QUEUE) {
+            g_queue_selected_index = display_index;
+            if (display_index >= 0 && display_index < g_play_queue.count) {
+                g_play_queue.current_position = display_index;
+                play_audio(g_play_queue.indices[display_index]);
+            }
         } else {
             g_selected_index = display_index;
             play_audio(actual_index);

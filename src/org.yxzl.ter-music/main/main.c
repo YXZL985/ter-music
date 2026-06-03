@@ -2,6 +2,7 @@
 #include "playlist/playlist.h"
 #include "ui/dialog.h"
 #include "audio/audio.h"
+#include "audio/play_queue.h"
 #include "ui/ui.h"
 #include "config/config.h"
 #include "logger/logger.h"
@@ -527,6 +528,9 @@ int main(int argc, char *argv[]) {
             }
         }
 
+        /* Restore queue from disk */
+        play_queue_load(&g_play_queue);
+
         if (!resumed_playback && playlist_count() > 0 &&
             (g_app_config.auto_play_on_start || opened_single_file)) {
             log_info("main", "Auto-playing first track");
@@ -546,6 +550,7 @@ int main(int argc, char *argv[]) {
     run_event_loop();
 
     log_info("main", "Event loop exited, beginning shutdown");
+    play_queue_save(&g_play_queue);
     save_temp_playlist();
     cleanup();
     cleanup_temp_playlist();
