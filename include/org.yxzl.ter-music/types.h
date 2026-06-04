@@ -106,7 +106,6 @@ typedef enum {
 #define UI_DIRTY_LYRICS 0x04
 
 #define CONTROL_COUNT 8
-#define MAX_AUDIO_BUFFER_SIZE (44100 * 2 * sizeof(int32_t))
 #define MAX_PATH_LEN 512
 #define MAX_TRACKS 1000
 

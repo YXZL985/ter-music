@@ -1,12 +1,12 @@
 /**
  * @file playback_thread.c
- * @brief 音频播放线程 — PCM 队列、解码循环、线程函数
+ * @brief 音频播放线程 — Segment 池、解码循环、线程函数
  *
- * 从 audio.c 拆分，负责音频文件的 FFmpeg 解码、重采样、atempo 滤镜
- * 处理和 PCM 数据输出。
+ * 基于 m3u8 分段思路，将曲目拆成 15 秒一段的 Segment，
+ * 池中最多保留当前段 + 后两段（共 3 段），曲目末尾自动预加载下一曲的前 1-2 段。
  *
  * @author 燕戏竹林 (yxzl666xx@outlook.com)
- * @date 2026-06-02
+ * @date 2026-06-04
  */
 
 #include "types.h"
@@ -31,6 +31,9 @@
 #include <libavutil/channel_layout.h>
 #include <libavutil/samplefmt.h>
 #include <libavutil/version.h>
+
+/* ── Write batch size (~23ms at 44100 Hz) ── */
+#define WRITE_BATCH_FRAMES 1024
 
 /* ── FFmpeg version dependent channel count ── */
 int codec_channel_count(const AVCodecContext *codec_ctx)
@@ -76,130 +79,161 @@ static int init_resampler(SwrContext *swr_ctx,
 }
 
 /* ============================================================
- * PCM Queue
+ * Append decoded frame data into a Segment buffer
  * ============================================================ */
 
-#define PCM_QUEUE_CAPACITY 24
-#define PCM_QUEUE_MIN_PREFILL_MS 180
-#define PCM_QUEUE_MAX_PREFILL_MS 420
-
-typedef struct {
-    int32_t *data;
-    int frame_count;
-    int bytes;
-    int capacity_bytes;
-} PCMChunk;
-
-typedef struct {
-    PCMChunk chunks[PCM_QUEUE_CAPACITY];
-    int read_index;
-    int write_index;
-    int count;
-    int buffered_frames;
-} PCMQueue;
-
-static int pcm_chunk_ensure_capacity(PCMChunk *chunk, int required_bytes)
+static void append_decoded_frame_to_segment(Segment *seg, AVFrame *frame,
+                                            SwrContext *swr_ctx,
+                                            int output_sample_rate,
+                                            int output_channels,
+                                            int use_resampler,
+                                            int atempo_input_sample_rate)
 {
-    if (!chunk || required_bytes <= 0) return -1;
-    if (chunk->capacity_bytes >= required_bytes) return 0;
-    int new_capacity = chunk->capacity_bytes > 0 ? chunk->capacity_bytes : MAX_AUDIO_BUFFER_SIZE;
-    while (new_capacity < required_bytes) new_capacity *= 2;
-    int32_t *new_data = realloc(chunk->data, (size_t)new_capacity);
-    if (!new_data) return -1;
-    chunk->data = new_data;
-    chunk->capacity_bytes = new_capacity;
-    return 0;
-}
+    if (!seg || !frame) return;
 
-static void pcm_queue_reset(PCMQueue *queue)
-{
-    if (!queue) return;
-    queue->read_index = 0;
-    queue->write_index = 0;
-    queue->count = 0;
-    queue->buffered_frames = 0;
-    for (int i = 0; i < PCM_QUEUE_CAPACITY; i++) {
-        queue->chunks[i].frame_count = 0;
-        queue->chunks[i].bytes = 0;
-    }
-}
+    int max_extra = seg->capacity_frames - seg->frame_count;
+    if (max_extra <= 0) return;
 
-static int pcm_queue_init(PCMQueue *queue)
-{
-    if (!queue) return -1;
-    memset(queue, 0, sizeof(*queue));
-    for (int i = 0; i < PCM_QUEUE_CAPACITY; i++) {
-        queue->chunks[i].data = malloc(MAX_AUDIO_BUFFER_SIZE);
-        if (!queue->chunks[i].data) {
-            for (int j = 0; j < i; j++) { free(queue->chunks[j].data); queue->chunks[j].data = NULL; }
-            return -1;
+    if (!use_resampler) {
+        int bytes = av_samples_get_buffer_size(NULL, output_channels,
+                                               frame->nb_samples, AV_SAMPLE_FMT_S32, 1);
+        if (bytes > 0) {
+            int frames = frame->nb_samples;
+            if (frames > max_extra) frames = max_extra;
+            memcpy(seg->data + seg->frame_count * output_channels,
+                   frame->data[0], (size_t)frames * output_channels * sizeof(int32_t));
+            seg->frame_count += frames;
         }
-        queue->chunks[i].capacity_bytes = MAX_AUDIO_BUFFER_SIZE;
+    } else {
+        int src_rate = (atempo_input_sample_rate > 0) ? atempo_input_sample_rate
+                                                       : output_sample_rate;
+        int dst_nb = av_rescale_rnd(
+            swr_get_delay(swr_ctx, src_rate) + frame->nb_samples,
+            output_sample_rate, src_rate, AV_ROUND_UP);
+        if (dst_nb > max_extra) dst_nb = max_extra;
+        if (dst_nb > 0) {
+            uint8_t *planes[] = {
+                (uint8_t *)(seg->data + seg->frame_count * output_channels)
+            };
+            int produced = swr_convert(swr_ctx, planes, dst_nb,
+                                       (const uint8_t **)frame->data, frame->nb_samples);
+            if (produced > 0) seg->frame_count += produced;
+        }
     }
-    pcm_queue_reset(queue);
-    return 0;
-}
-
-static void pcm_queue_destroy(PCMQueue *queue)
-{
-    if (!queue) return;
-    for (int i = 0; i < PCM_QUEUE_CAPACITY; i++) {
-        free(queue->chunks[i].data);
-        queue->chunks[i].data = NULL;
-    }
-    pcm_queue_reset(queue);
-}
-
-static PCMChunk *pcm_queue_write_slot(PCMQueue *queue)
-{
-    if (!queue || queue->count >= PCM_QUEUE_CAPACITY) return NULL;
-    return &queue->chunks[queue->write_index];
-}
-
-static void pcm_queue_commit_write(PCMQueue *queue, int frame_count, int bytes)
-{
-    if (!queue || queue->count >= PCM_QUEUE_CAPACITY) return;
-    queue->chunks[queue->write_index].frame_count = frame_count;
-    queue->chunks[queue->write_index].bytes = bytes;
-    queue->write_index = (queue->write_index + 1) % PCM_QUEUE_CAPACITY;
-    queue->count++;
-    queue->buffered_frames += frame_count;
-}
-
-static PCMChunk *pcm_queue_peek(PCMQueue *queue)
-{
-    if (!queue || queue->count <= 0) return NULL;
-    return &queue->chunks[queue->read_index];
-}
-
-static int pcm_queue_buffered_ms(const PCMQueue *queue, int sample_rate)
-{
-    if (!queue || sample_rate <= 0 || queue->buffered_frames <= 0) return 0;
-    return (queue->buffered_frames * 1000) / sample_rate;
-}
-
-static void pcm_queue_consume(PCMQueue *queue)
-{
-    if (!queue || queue->count <= 0) return;
-    int consumed_frames = queue->chunks[queue->read_index].frame_count;
-    queue->chunks[queue->read_index].frame_count = 0;
-    queue->chunks[queue->read_index].bytes = 0;
-    queue->read_index = (queue->read_index + 1) % PCM_QUEUE_CAPACITY;
-    queue->count--;
-    queue->buffered_frames -= consumed_frames;
-    if (queue->buffered_frames < 0) queue->buffered_frames = 0;
 }
 
 /* ============================================================
- * Seek-in-decoder handler
+ * Decode one full segment (15s) into a pool slot
+ * ============================================================ */
+
+static int decode_segment_fill(AVFormatContext *fmt_ctx,
+                               AVCodecContext *codec_ctx,
+                               SwrContext *swr_ctx,
+                               AVPacket *packet,
+                               AVFrame *frame,
+                               AVFrame *filtered_frame,
+                               SegmentPool *pool,
+                               int target_slot,
+                               int target_frames,
+                               int audio_stream_index,
+                               int output_sample_rate,
+                               int output_channels,
+                               int use_resampler,
+                               int *decoder_draining,
+                               int *decoder_finished)
+{
+    if (!fmt_ctx || !codec_ctx || !packet || !frame || !filtered_frame ||
+        !pool || target_slot < 0 || target_slot >= SEGMENT_POOL_SIZE)
+        return -1;
+
+    Segment *seg = &pool->slots[target_slot];
+
+    /* Make sure we don't exceed capacity */
+    if (target_frames > seg->capacity_frames)
+        target_frames = seg->capacity_frames;
+
+    while (seg->frame_count < target_frames && !*decoder_finished) {
+        /* 1. Try atempo filtered frame first */
+        if (atempo_is_active()) {
+            int filter_ret = atempo_receive_frame(filtered_frame);
+            if (filter_ret == 0) {
+                append_decoded_frame_to_segment(seg, filtered_frame,
+                                                 swr_ctx, output_sample_rate,
+                                                 output_channels, use_resampler,
+                                                 atempo_get_input_sample_rate());
+                av_frame_unref(filtered_frame);
+
+                /* Check if segment is now full */
+                if (seg->frame_count >= target_frames)
+                    break;
+                continue;
+            }
+        }
+
+        /* 2. Try receiving decoded frame */
+        int ret = avcodec_receive_frame(codec_ctx, frame);
+        if (ret == 0) {
+            if (atempo_is_active()) {
+                if (atempo_send_frame(frame) < 0) { av_frame_unref(frame); return -1; }
+                av_frame_unref(frame);
+                continue;
+            }
+
+            /* No atempo: directly append */
+            append_decoded_frame_to_segment(seg, frame, swr_ctx,
+                                             output_sample_rate, output_channels,
+                                             use_resampler, 0);
+            av_frame_unref(frame);
+            continue;
+        }
+
+        if (ret == AVERROR_EOF) {
+            *decoder_finished = 1;
+            break;
+        }
+        if (ret != AVERROR(EAGAIN)) return -1;
+
+        /* 3. Read next packet */
+        if (!*decoder_draining) {
+            while (1) {
+                ret = av_read_frame(fmt_ctx, packet);
+                if (ret < 0) {
+                    *decoder_draining = 1;
+                    ret = avcodec_send_packet(codec_ctx, NULL);
+                    if (ret < 0 && ret != AVERROR_EOF) return -1;
+                    break;
+                }
+                if (packet->stream_index != audio_stream_index) { av_packet_unref(packet); continue; }
+                ret = avcodec_send_packet(codec_ctx, packet);
+                av_packet_unref(packet);
+                if (ret == AVERROR(EAGAIN)) break;
+                if (ret < 0) return -1;
+                break;
+            }
+        } else {
+            *decoder_finished = 1;
+            break;
+        }
+    }
+
+    return (seg->frame_count > 0) ? 1 : 0;
+}
+
+/* ============================================================
+ * Seek-in-decoder handler (segment-aware)
  * ============================================================ */
 
 static int handle_seek_request_in_decoder(AVFormatContext *fmt_ctx,
                                           AVCodecContext *codec_ctx,
                                           SwrContext *swr_ctx,
                                           AVPacket *packet,
-                                          PCMQueue *queue,
+                                          AVFrame *frame,
+                                          AVFrame *filtered_frame,
+                                          SegmentPool *pool,
                                           int audio_stream_index,
+                                          int output_sample_rate,
+                                          int output_channels,
+                                          int use_resampler,
                                           int *decoder_draining,
                                           int *decoder_finished)
 {
@@ -224,12 +258,41 @@ static int handle_seek_request_in_decoder(AVFormatContext *fmt_ctx,
             avcodec_flush_buffers(codec_ctx);
             if (swr_ctx) swr_init(swr_ctx);
             if (packet) av_packet_unref(packet);
-            if (queue) pcm_queue_reset(queue);
+
+            /* Reset segment pool to target segment */
+            int target_seg = segment_id_from_position(target_position);
+            int saved_total = pool->total_segments;
+            segment_pool_seek_to(pool, target_seg);
+            pool->total_segments = saved_total;
+
+            /* Reset atempo filter to clear stale pre-seek samples */
+            if (atempo_is_active()) {
+                float speed = atempo_get_speed();
+                cleanup_atempo_filter();
+                if (speed > 0.01f)
+                    init_atempo_filter(codec_ctx, speed);
+            }
+
             audio_backend_flush_stream();
             progress_tracker_seek(target_position);
             g_current_position = target_position;
+
             if (decoder_draining) *decoder_draining = 0;
             if (decoder_finished) *decoder_finished = 0;
+
+            /* Immediately decode the target segment into slot 0 */
+            int target_frames = output_sample_rate * SEGMENT_DURATION_SEC;
+            decode_segment_fill(fmt_ctx, codec_ctx, swr_ctx, packet, frame, filtered_frame,
+                                pool, pool->current_slot, target_frames,
+                                audio_stream_index, output_sample_rate, output_channels,
+                                use_resampler, decoder_draining, decoder_finished);
+
+            /* Mark the decoded segment as ready — was missing, causing
+             * segment_pool_current() to return NULL and skip playback */
+            int is_last = (*decoder_finished) || (target_seg >= pool->total_segments - 1);
+            segment_pool_mark_ready(pool, pool->current_slot,
+                                    pool->slots[pool->current_slot].frame_count,
+                                    target_seg, is_last);
 
             char msg[64];
             snprintf(msg, sizeof(msg),
@@ -261,133 +324,6 @@ static int wait_while_paused(void)
 }
 
 /* ============================================================
- * Decode next PCM chunk
- * ============================================================ */
-
-static int decode_next_pcm_chunk(AVFormatContext *fmt_ctx,
-                                 AVCodecContext *codec_ctx,
-                                 SwrContext *swr_ctx,
-                                 AVPacket *packet,
-                                 AVFrame *frame,
-                                 AVFrame *filtered_frame,
-                                 PCMQueue *queue,
-                                 int audio_stream_index,
-                                 int output_sample_rate,
-                                 int output_channels,
-                                 int use_resampler,
-                                 int *decoder_draining,
-                                 int *decoder_finished)
-{
-    if (!fmt_ctx || !codec_ctx || !packet || !frame || !filtered_frame || !queue) return -1;
-
-    while (!*decoder_finished) {
-        // Try atempo filtered frame first
-        if (atempo_is_active()) {
-            int filter_ret = atempo_receive_frame(filtered_frame);
-            if (filter_ret == 0) {
-                PCMChunk *slot = pcm_queue_write_slot(queue);
-                if (!slot) { av_frame_unref(filtered_frame); return 0; }
-
-                int produced_frames = 0, produced_bytes = 0;
-                if (!use_resampler) {
-                    produced_bytes = av_samples_get_buffer_size(NULL, output_channels,
-                                        filtered_frame->nb_samples, AV_SAMPLE_FMT_S32, 1);
-                    if (produced_bytes > 0 && pcm_chunk_ensure_capacity(slot, produced_bytes) == 0) {
-                        memcpy(slot->data, filtered_frame->data[0], (size_t)produced_bytes);
-                        produced_frames = filtered_frame->nb_samples;
-                    }
-                } else {
-                    int dst_nb_samples = av_rescale_rnd(
-                        swr_get_delay(swr_ctx, atempo_get_input_sample_rate()) + filtered_frame->nb_samples,
-                        output_sample_rate, atempo_get_input_sample_rate(), AV_ROUND_UP);
-                    produced_bytes = av_samples_get_buffer_size(NULL, output_channels, dst_nb_samples,
-                                                                AV_SAMPLE_FMT_S32, 1);
-                    if (produced_bytes > 0 && pcm_chunk_ensure_capacity(slot, produced_bytes) == 0) {
-                        uint8_t *output_planes[] = {(uint8_t *)slot->data};
-                        produced_frames = swr_convert(swr_ctx, output_planes, dst_nb_samples,
-                                                      (const uint8_t **)filtered_frame->data,
-                                                      filtered_frame->nb_samples);
-                        if (produced_frames > 0)
-                            produced_bytes = produced_frames * output_channels * (int)sizeof(int32_t);
-                    }
-                }
-                av_frame_unref(filtered_frame);
-                if (produced_frames > 0 && produced_bytes > 0) {
-                    pcm_queue_commit_write(queue, produced_frames, produced_bytes);
-                    return 1;
-                }
-                continue;
-            }
-        }
-
-        int ret = avcodec_receive_frame(codec_ctx, frame);
-        if (ret == 0) {
-            if (atempo_is_active()) {
-                if (atempo_send_frame(frame) < 0) { av_frame_unref(frame); return -1; }
-                av_frame_unref(frame);
-                continue;
-            }
-
-            PCMChunk *slot = pcm_queue_write_slot(queue);
-            if (!slot) { av_frame_unref(frame); return 0; }
-
-            int produced_frames = 0, produced_bytes = 0;
-            if (!use_resampler) {
-                produced_bytes = av_samples_get_buffer_size(NULL, output_channels,
-                                    frame->nb_samples, AV_SAMPLE_FMT_S32, 1);
-                if (produced_bytes > 0 && pcm_chunk_ensure_capacity(slot, produced_bytes) == 0) {
-                    memcpy(slot->data, frame->data[0], (size_t)produced_bytes);
-                    produced_frames = frame->nb_samples;
-                }
-            } else {
-                int dst_nb_samples = av_rescale_rnd(
-                    swr_get_delay(swr_ctx, codec_ctx->sample_rate) + frame->nb_samples,
-                    output_sample_rate, codec_ctx->sample_rate, AV_ROUND_UP);
-                produced_bytes = av_samples_get_buffer_size(NULL, output_channels, dst_nb_samples,
-                                                            AV_SAMPLE_FMT_S32, 1);
-                if (produced_bytes > 0 && pcm_chunk_ensure_capacity(slot, produced_bytes) == 0) {
-                    uint8_t *output_planes[] = {(uint8_t *)slot->data};
-                    produced_frames = swr_convert(swr_ctx, output_planes, dst_nb_samples,
-                                                  (const uint8_t **)frame->data, frame->nb_samples);
-                    if (produced_frames > 0)
-                        produced_bytes = produced_frames * output_channels * (int)sizeof(int32_t);
-                }
-            }
-            av_frame_unref(frame);
-            if (produced_frames > 0 && produced_bytes > 0) {
-                pcm_queue_commit_write(queue, produced_frames, produced_bytes);
-                return 1;
-            }
-            continue;
-        }
-        if (ret == AVERROR_EOF) { *decoder_finished = 1; return 0; }
-        if (ret != AVERROR(EAGAIN)) return -1;
-
-        if (!*decoder_draining) {
-            while (1) {
-                ret = av_read_frame(fmt_ctx, packet);
-                if (ret < 0) {
-                    *decoder_draining = 1;
-                    ret = avcodec_send_packet(codec_ctx, NULL);
-                    if (ret < 0 && ret != AVERROR_EOF) return -1;
-                    break;
-                }
-                if (packet->stream_index != audio_stream_index) { av_packet_unref(packet); continue; }
-                ret = avcodec_send_packet(codec_ctx, packet);
-                av_packet_unref(packet);
-                if (ret == AVERROR(EAGAIN)) break;
-                if (ret < 0) return -1;
-                break;
-            }
-        } else {
-            *decoder_finished = 1;
-            return 0;
-        }
-    }
-    return 0;
-}
-
-/* ============================================================
  * Atempo filter flush helper (for end-of-stream)
  * ============================================================ */
 
@@ -398,6 +334,226 @@ static void drain_atempo_filter(AVFrame *filtered_frame)
     while (atempo_receive_frame(filtered_frame) == 0)
         av_frame_unref(filtered_frame);
     cleanup_atempo_filter();
+}
+
+/* ============================================================
+ * Next-track preloading
+ * ============================================================ */
+
+static void attempt_next_track_preload(int current_track_index,
+                                       SegmentPool *pool,
+                                       int output_sample_rate,
+                                       int output_channels)
+{
+    if (!pool) return;
+
+    /* Skip preload at non-1.0x speed — preloaded segments would be at
+     * original tempo while the new thread expects speed-adjusted PCM */
+    extern float g_playback_speed;
+    if (g_playback_speed < 0.99f || g_playback_speed > 1.01f) {
+        log_debug("segment", "preload: skipping (speed=%.2f != 1.0)", (double)g_playback_speed);
+        return;
+    }
+
+    /* Determine next track index (need lock for queue access) */
+    int next_index = -1;
+    pthread_mutex_lock(&g_play_mutex);
+    next_index = play_queue_peek_next(&g_play_queue, g_play_mode);
+    pthread_mutex_unlock(&g_play_mutex);
+    if (next_index < 0 || next_index == current_track_index) {
+        log_debug("segment", "preload: no valid next track (idx=%d)", next_index);
+        return;
+    }
+
+    char file_path[MAX_PATH_LEN];
+    if (playlist_get_track_path(next_index, file_path, sizeof(file_path)) != 0) {
+        log_warn("segment", "preload: cannot get path for next track idx=%d", next_index);
+        return;
+    }
+
+    /* Use cached remote path if available */
+    {
+        extern char g_cached_audio_path[256];
+        if (g_cached_audio_path[0])
+            strncpy(file_path, g_cached_audio_path, MAX_PATH_LEN - 1);
+    }
+
+    log_info("segment", "preload: attempting next track idx=%d path='%s'", next_index, file_path);
+
+    /* Ensure preload data buffers are allocated */
+    if (preload_data_ensure_init(&g_preload_data, output_sample_rate, output_channels) < 0) {
+        log_warn("segment", "preload: failed to init preload buffers");
+        return;
+    }
+
+    /* Open FFmpeg context for next track */
+    AVFormatContext *next_fmt = NULL;
+    AVCodecContext *next_codec = NULL;
+    SwrContext *next_swr = NULL;
+    AVPacket *next_pkt = NULL;
+    AVFrame *next_frame = NULL;
+    AVFrame *next_filtered = NULL;
+    int audio_stream = -1;
+    int drain = 0, eof = 0;
+    int success = 0;
+    int preloaded_count = 0;
+
+    if (avformat_open_input(&next_fmt, file_path, NULL, NULL) != 0) {
+        log_warn("segment", "preload: avformat_open_input failed for '%s'", file_path);
+        goto preload_cleanup;
+    }
+    if (avformat_find_stream_info(next_fmt, NULL) < 0) {
+        log_warn("segment", "preload: avformat_find_stream_info failed");
+        goto preload_cleanup;
+    }
+
+    for (int i = 0; i < (int)next_fmt->nb_streams; i++) {
+        if (next_fmt->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+            audio_stream = i;
+            break;
+        }
+    }
+    if (audio_stream < 0) {
+        log_warn("segment", "preload: no audio stream in '%s'", file_path);
+        goto preload_cleanup;
+    }
+
+    AVCodecParameters *par = next_fmt->streams[audio_stream]->codecpar;
+    const AVCodec *codec = avcodec_find_decoder(par->codec_id);
+    if (!codec) { log_warn("segment", "preload: unsupported codec"); goto preload_cleanup; }
+
+    next_codec = avcodec_alloc_context3(codec);
+    if (!next_codec) goto preload_cleanup;
+    if (avcodec_parameters_to_context(next_codec, par) < 0) goto preload_cleanup;
+    if (avcodec_open2(next_codec, codec, NULL) < 0) goto preload_cleanup;
+
+    int in_ch = codec_channel_count(next_codec);
+    if (in_ch <= 0) in_ch = 2;
+    int out_ch = (in_ch == 1) ? 1 : 2;
+    int in_rate = next_codec->sample_rate > 0 ? next_codec->sample_rate : output_sample_rate;
+    int need_resample = (next_codec->sample_fmt != AV_SAMPLE_FMT_S32 || in_ch != out_ch);
+
+    if (need_resample) {
+        next_swr = swr_alloc();
+        if (!next_swr) goto preload_cleanup;
+        if (init_resampler(next_swr, next_codec, in_ch, out_ch, output_sample_rate) < 0) {
+            log_warn("segment", "preload: resampler init failed");
+            swr_free(&next_swr);
+            next_swr = NULL;
+            need_resample = 0;
+        }
+    }
+
+    next_pkt = av_packet_alloc();
+    next_frame = av_frame_alloc();
+    next_filtered = av_frame_alloc();
+    if (!next_pkt || !next_frame || !next_filtered) goto preload_cleanup;
+
+    /* Decode up to PRELOAD_SEGMENT_COUNT segments */
+    int target_frames = output_sample_rate * SEGMENT_DURATION_SEC;
+    for (int seg_idx = 0; seg_idx < PRELOAD_SEGMENT_COUNT; seg_idx++) {
+        /* Abort check — user skipped track or seeked */
+        {
+            extern int g_play_thread_running;
+            extern int g_seek_request;
+            if (!g_play_thread_running || g_seek_request) {
+                log_debug("segment", "preload: aborted (thread stopped or seek requested)");
+                break;
+            }
+        }
+
+        if (eof) break;
+
+        Segment *dst = &g_preload_data.segments[seg_idx];
+        dst->frame_count = 0;
+        dst->consumed_frames = 0;
+        dst->is_valid = 0;
+
+        int frames_so_far = 0;
+        while (frames_so_far < target_frames && !eof) {
+            /* Try atempo (preload uses original speed, no atempo needed for preload) */
+            int rret = avcodec_receive_frame(next_codec, next_frame);
+            if (rret == 0) {
+                int max_extra = dst->capacity_frames - dst->frame_count;
+                if (max_extra <= 0) break;
+
+                if (!need_resample) {
+                    int bytes = av_samples_get_buffer_size(NULL, out_ch,
+                                            next_frame->nb_samples, AV_SAMPLE_FMT_S32, 1);
+                    if (bytes > 0) {
+                        int f = next_frame->nb_samples;
+                        if (f > max_extra) f = max_extra;
+                        memcpy(dst->data + dst->frame_count * out_ch,
+                               next_frame->data[0], (size_t)f * out_ch * sizeof(int32_t));
+                        dst->frame_count += f;
+                        frames_so_far += f;
+                    }
+                } else if (next_swr) {
+                    int dst_nb = av_rescale_rnd(
+                        swr_get_delay(next_swr, in_rate) + next_frame->nb_samples,
+                        output_sample_rate, in_rate, AV_ROUND_UP);
+                    if (dst_nb > max_extra) dst_nb = max_extra;
+                    if (dst_nb > 0) {
+                        uint8_t *planes[] = { (uint8_t *)(dst->data + dst->frame_count * out_ch) };
+                        int p = swr_convert(next_swr, planes, dst_nb,
+                                            (const uint8_t **)next_frame->data,
+                                            next_frame->nb_samples);
+                        if (p > 0) { dst->frame_count += p; frames_so_far += p; }
+                    }
+                }
+                av_frame_unref(next_frame);
+                continue;
+            }
+
+            if (rret == AVERROR_EOF) { eof = 1; break; }
+            if (rret != AVERROR(EAGAIN)) break;
+
+            if (!drain) {
+                int pret = av_read_frame(next_fmt, next_pkt);
+                if (pret < 0) {
+                    drain = 1;
+                    avcodec_send_packet(next_codec, NULL);
+                    break;
+                }
+                if (next_pkt->stream_index == audio_stream) {
+                    avcodec_send_packet(next_codec, next_pkt);
+                }
+                av_packet_unref(next_pkt);
+            } else {
+                eof = 1;
+            }
+        }
+
+        if (dst->frame_count > 0) {
+            dst->is_valid = 1;
+            preloaded_count++;
+            log_debug("segment", "preload: segment %d decoded (%d frames)", seg_idx, dst->frame_count);
+        }
+    }
+
+    if (preloaded_count > 0) {
+        pthread_mutex_lock(&g_preload_data.lock);
+        g_preload_data.valid = 1;
+        g_preload_data.track_index = next_index;
+        g_preload_data.segment_count = preloaded_count;
+        g_preload_data.sample_rate = output_sample_rate;
+        g_preload_data.channels = output_channels;
+        pthread_mutex_unlock(&g_preload_data.lock);
+        success = 1;
+        log_info("segment", "preload: successfully preloaded %d segments for track idx=%d",
+                 preloaded_count, next_index);
+    }
+
+preload_cleanup:
+    av_frame_free(&next_filtered);
+    av_frame_free(&next_frame);
+    av_packet_free(&next_pkt);
+    swr_free(&next_swr);
+    avcodec_free_context(&next_codec);
+    avformat_close_input(&next_fmt);
+
+    if (!success)
+        log_debug("segment", "preload: no segments preloaded for track idx=%d", next_index);
 }
 
 /* ============================================================
@@ -454,11 +610,13 @@ void *play_audio_thread(void *arg)
     }
     log_debug("audio", "Playback thread file_path='%s'", file_path);
 
+    /* ── FFmpeg context ── */
     AVFormatContext *fmt_ctx = NULL;
     AVCodecContext *codec_ctx = NULL;
     SwrContext *swr_ctx = NULL;
     AVPacket *packet = NULL;
     AVFrame *frame = NULL;
+    AVFrame *filtered_frame = NULL;
     int audio_stream_index = -1;
     int input_channels = 2;
     int output_channels = 2;
@@ -467,10 +625,12 @@ void *play_audio_thread(void *arg)
     int decoder_draining = 0;
     int decoder_finished = 0;
     int playback_error = 0;
-    int prefill_target_frames = 0;
-    PCMQueue pcm_queue;
-    int pcm_queue_initialized = 0;
-    memset(&pcm_queue, 0, sizeof(pcm_queue));
+
+    /* ── Segment pool ── */
+    SegmentPool seg_pool;
+    memset(&seg_pool, 0, sizeof(seg_pool));
+    int pool_initialized = 0;
+    int preload_attempted = 0;
 
     if (avformat_open_input(&fmt_ctx, file_path, NULL, NULL) != 0) {
         log_error("audio", "avformat_open_input failed for '%s' (index=%d)", file_path, index);
@@ -554,8 +714,19 @@ void *play_audio_thread(void *arg)
     log_debug("audio", "Audio stream: rate=%d, channels=%d, codec=%s, duration=%ds",
               output_sample_rate, output_channels, codec ? codec->name : "unknown", g_total_duration);
 
-    prefill_target_frames = (output_sample_rate * get_pcm_prefill_target_ms(output_sample_rate) + 999) / 1000;
     use_resampler = (codec_ctx->sample_fmt != AV_SAMPLE_FMT_S32 || input_channels != output_channels);
+
+    /* ── Segment pool init ── */
+    if (segment_pool_init(&seg_pool, output_sample_rate, output_channels) < 0) {
+        update_controls_status(audio_text("无法分配分段缓冲区", "Cannot allocate segment buffer"));
+        goto cleanup;
+    }
+    pool_initialized = 1;
+
+    /* Set total segments for this track */
+    seg_pool.total_segments = segment_pool_total_for_duration(g_total_duration);
+    log_debug("audio", "Total segments for track: %d (%d sec)",
+              seg_pool.total_segments, g_total_duration);
 
     if (use_resampler) {
         swr_ctx = swr_alloc();
@@ -571,16 +742,11 @@ void *play_audio_thread(void *arg)
 
     packet = av_packet_alloc();
     frame = av_frame_alloc();
-    AVFrame *filtered_frame = av_frame_alloc();
+    filtered_frame = av_frame_alloc();
     if (!packet || !frame || !filtered_frame) {
         update_controls_status(audio_text("无法分配解码数据结构", "Cannot allocate decode structures"));
         goto cleanup;
     }
-
-    if (pcm_queue_init(&pcm_queue) < 0) {
-        update_controls_status(audio_text("无法分配音频缓冲区", "Cannot allocate audio buffer")); goto cleanup;
-    }
-    pcm_queue_initialized = 1;
 
     if (audio_backend_prepare_stream(output_sample_rate, output_channels) < 0) goto cleanup;
 
@@ -594,63 +760,197 @@ void *play_audio_thread(void *arg)
 
     g_play_state = PLAY_STATE_PLAYING;
 
+    /* ── Check if preloaded data is available for this track ── */
+    /* Only use preload at 1.0x speed (preloaded PCM is not atempo-adjusted) */
+    int used_preload = 0;
+    pthread_mutex_lock(&g_preload_data.lock);
+    if (g_preload_data.valid && g_preload_data.track_index == index &&
+        g_preload_data.sample_rate == output_sample_rate &&
+        g_preload_data.channels == output_channels &&
+        g_playback_speed >= 0.99f && g_playback_speed <= 1.01f) {
+        /* Copy preloaded segments into pool */
+        int n = g_preload_data.segment_count;
+        if (n > SEGMENT_POOL_SIZE) n = SEGMENT_POOL_SIZE;
+
+        for (int s = 0; s < n; s++) {
+            Segment *src = &g_preload_data.segments[s];
+            Segment *dst = &seg_pool.slots[s];
+            if (src->frame_count > dst->capacity_frames)
+                src->frame_count = dst->capacity_frames;
+            memcpy(dst->data, src->data, (size_t)src->frame_count * output_channels * sizeof(int32_t));
+            dst->frame_count = src->frame_count;
+            dst->consumed_frames = 0;
+            dst->segment_id = s;
+            dst->is_last = 0;   /* will be corrected by decoder in Phase 3 fill */
+            dst->is_valid = (src->frame_count > 0);
+        }
+        seg_pool.current_slot = 0;
+        seg_pool.current_segment_id = 0;
+        used_preload = (n > 0);
+
+        log_info("audio", "Using preloaded data for index=%d (%d segments)", index, n);
+        g_preload_data.valid = 0;
+    }
+    pthread_mutex_unlock(&g_preload_data.lock);
+
+    /* ── If no preload, decode first segment(s) normally ── */
+    if (!used_preload) {
+        int target_frames = output_sample_rate * SEGMENT_DURATION_SEC;
+        for (int s = 0; s < SEGMENT_POOL_SIZE && !decoder_finished; s++) {
+            int seg_id = s;
+            if (seg_id >= seg_pool.total_segments) break;
+
+            int ret = decode_segment_fill(fmt_ctx, codec_ctx, swr_ctx,
+                                          packet, frame, filtered_frame,
+                                          &seg_pool, s, target_frames,
+                                          audio_stream_index, output_sample_rate,
+                                          output_channels, use_resampler,
+                                          &decoder_draining, &decoder_finished);
+            if (ret < 0) { playback_error = 1; break; }
+
+            segment_pool_mark_ready(&seg_pool, s,
+                                    seg_pool.slots[s].frame_count, s,
+                                    (decoder_finished || s == seg_pool.total_segments - 1));
+            if (ret == 0 && seg_pool.slots[s].frame_count == 0) break;
+        }
+        seg_pool.current_slot = 0;
+        seg_pool.current_segment_id = 0;
+    }
+
+    /* Handle initial seek (e.g. from speed change restart) */
     if (initial_seek_position > 0 && initial_seek_position < g_total_duration) {
         g_seek_position = initial_seek_position;
         g_seek_request = 1;
     }
 
+    /* ════════════════════════════════════════════════════════
+     * Main playback loop
+     * ════════════════════════════════════════════════════════ */
+
     while (g_play_thread_running) {
         audio_backend_sync_volume(0);
 
+        /* ── Phase 1: Pause check ── */
         if (!wait_while_paused()) break;
 
-        if (handle_seek_request_in_decoder(fmt_ctx, codec_ctx, swr_ctx, packet, &pcm_queue,
-                                           audio_stream_index, &decoder_draining, &decoder_finished)) {
+        /* ── Phase 2: Seek check ── */
+        if (handle_seek_request_in_decoder(fmt_ctx, codec_ctx, swr_ctx,
+                                           packet, frame, filtered_frame,
+                                           &seg_pool, audio_stream_index,
+                                           output_sample_rate, output_channels,
+                                           use_resampler,
+                                           &decoder_draining, &decoder_finished)) {
             if (g_current_position >= g_total_duration) { g_play_thread_running = 0; break; }
             continue;
         }
 
-        while (g_play_thread_running && !decoder_finished &&
-               pcm_queue.count < PCM_QUEUE_CAPACITY &&
-               pcm_queue.buffered_frames < prefill_target_frames) {
-            int dr = decode_next_pcm_chunk(fmt_ctx, codec_ctx, swr_ctx, packet, frame, filtered_frame,
-                                            &pcm_queue, audio_stream_index, output_sample_rate,
-                                            output_channels, use_resampler, &decoder_draining, &decoder_finished);
-            if (dr < 0) { playback_error = 1; break; }
-            if (dr == 0) break;
+        /* ── Phase 3: Fill empty slots ── */
+        if (!playback_error) {
+            int target_frames = output_sample_rate * SEGMENT_DURATION_SEC;
+            int free_slot;
+            while ((free_slot = segment_pool_free_slot(&seg_pool)) >= 0 && !decoder_finished) {
+                int next_seg_id = seg_pool.current_segment_id;
+                /* Find the global segment id for this free slot */
+                /* It's the slot farthest from current, so its global id =
+                 * current_segment_id + (offset from current) */
+                int offset = (free_slot - seg_pool.current_slot + SEGMENT_POOL_SIZE) % SEGMENT_POOL_SIZE;
+                int global_seg = seg_pool.current_segment_id + offset;
+                if (global_seg >= seg_pool.total_segments) break;
+
+                int ret = decode_segment_fill(fmt_ctx, codec_ctx, swr_ctx,
+                                              packet, frame, filtered_frame,
+                                              &seg_pool, free_slot, target_frames,
+                                              audio_stream_index, output_sample_rate,
+                                              output_channels, use_resampler,
+                                              &decoder_draining, &decoder_finished);
+                if (ret < 0) { playback_error = 1; break; }
+
+                segment_pool_mark_ready(&seg_pool, free_slot,
+                                        seg_pool.slots[free_slot].frame_count,
+                                        global_seg,
+                                        (decoder_finished || global_seg >= seg_pool.total_segments - 1));
+                if (ret == 0 && seg_pool.slots[free_slot].frame_count == 0) break;
+            }
         }
 
         if (playback_error) break;
 
-        PCMChunk *chunk = pcm_queue_peek(&pcm_queue);
-        if (!chunk) {
+        /* ── Phase 4: Advance if current segment is done ── */
+        if (segment_pool_current_done(&seg_pool)) {
+            if (segment_pool_is_last(&seg_pool)) {
+                reached_end_of_stream = 1;
+                break;
+            }
+
+            /* Trigger next-track preload when within 2 segments of the end */
+            if (!preload_attempted &&
+                seg_pool.current_segment_id >= seg_pool.total_segments - 2) {
+                preload_attempted = 1;
+                attempt_next_track_preload(index, &seg_pool,
+                                           output_sample_rate, output_channels);
+            }
+
+            int free_slot = segment_pool_advance(&seg_pool);
+            if (free_slot >= 0 && !decoder_finished) {
+                int next_global = seg_pool.current_segment_id + 2; /* the new farthest slot */
+                if (next_global < seg_pool.total_segments) {
+                    int target_frames = output_sample_rate * SEGMENT_DURATION_SEC;
+                    int ret = decode_segment_fill(fmt_ctx, codec_ctx, swr_ctx,
+                                                  packet, frame, filtered_frame,
+                                                  &seg_pool, free_slot, target_frames,
+                                                  audio_stream_index, output_sample_rate,
+                                                  output_channels, use_resampler,
+                                                  &decoder_draining, &decoder_finished);
+                    if (ret < 0) { playback_error = 1; break; }
+                    segment_pool_mark_ready(&seg_pool, free_slot,
+                                            seg_pool.slots[free_slot].frame_count,
+                                            next_global,
+                                            (decoder_finished || next_global >= seg_pool.total_segments - 1));
+                }
+            }
+            continue;
+        }
+
+        /* ── Phase 5: Write batch from current segment ── */
+        Segment *cur = segment_pool_current(&seg_pool);
+        if (!cur) {
             if (decoder_finished) { reached_end_of_stream = 1; break; }
             continue;
         }
 
-        if (pcm_queue_buffered_ms(&pcm_queue, output_sample_rate) > get_configured_latency_ms())
-            push_visualizer_samples(chunk->data, chunk->frame_count, output_channels);
+        int remaining = segment_pool_current_remaining(&seg_pool);
+        int batch = (remaining < WRITE_BATCH_FRAMES) ? remaining : WRITE_BATCH_FRAMES;
+        int32_t *write_ptr = cur->data + cur->consumed_frames * seg_pool.channels;
 
-        /* Volume applied inline in main audio.c's apply_volume_to_samples — doing it here */
+        /* Visualizer */
+        if (remaining > (output_sample_rate * get_configured_latency_ms() / 1000))
+            push_visualizer_samples(write_ptr, batch, seg_pool.channels);
+
+        /* Volume */
         extern void apply_volume_to_samples(int32_t *samples, int sample_count);
-        apply_volume_to_samples(chunk->data, chunk->frame_count * output_channels);
+        apply_volume_to_samples(write_ptr, batch * seg_pool.channels);
 
-        if (audio_backend_write_samples(chunk->data, chunk->frame_count) < 0) {
+        /* Write to audio backend */
+        if (audio_backend_write_samples(write_ptr, batch) < 0) {
             update_controls_status(audio_text("写入音频设备失败", "Audio device write failed"));
             playback_error = 1;
             break;
         }
 
-        progress_tracker_add_samples(chunk->frame_count);
+        progress_tracker_add_samples(batch);
+        segment_pool_consume(&seg_pool, batch);
         g_current_position = progress_tracker_get_position_seconds();
-        pcm_queue_consume(&pcm_queue);
     }
+
+    /* ════════════════════════════════════════════════════════
+     * Cleanup
+     * ════════════════════════════════════════════════════════ */
 
 cleanup:
     drain_atempo_filter(filtered_frame);
     audio_backend_cleanup_stream();
 
-    if (pcm_queue_initialized) pcm_queue_destroy(&pcm_queue);
+    if (pool_initialized) segment_pool_destroy(&seg_pool);
     av_frame_free(&filtered_frame);
     av_frame_free(&frame);
     av_packet_free(&packet);
@@ -668,7 +968,7 @@ cleanup:
     if (g_play_thread_running && reached_end_of_stream) {
         if (g_play_mode == PLAY_MODE_SINGLE_REPEAT) {
             followup_index = index;
-        } else if (play_mode_repeats(g_play_mode)) {
+        } else {
             followup_index = play_queue_peek_next(&g_play_queue, g_play_mode);
             if (followup_index >= 0)
                 play_queue_advance(&g_play_queue, g_play_mode);

@@ -323,6 +323,15 @@ int play_queue_is_active(const PlayQueue *q)
     return q && q->count > 0 && q->current_position >= 0;
 }
 
+int play_queue_contains(const PlayQueue *q, int track_index)
+{
+    if (!q) return 0;
+    for (int i = 0; i < q->count; i++) {
+        if (q->indices[i] == track_index) return 1;
+    }
+    return 0;
+}
+
 /* ============================================================
  * Queue editing
  * ============================================================ */

@@ -34,7 +34,7 @@ extern int g_album_cover_size;
 /* ── 主视图播放列表标签模式（文件浏览 vs 播放队列） ── */
 int g_playlist_tab_mode = PLAYLIST_MODE_FILE_BROWSER;
 int g_queue_selected_index = 0;   /* cursor in queue view */
-static int g_saved_browser_index = 0;  /* saved g_selected_index when switching to queue */
+int g_saved_browser_index = -1;  /* saved g_selected_index when switching to queue */
 
 /* ============================================================
  * Text formatting
@@ -267,6 +267,8 @@ void render_playlist_content(void)
                 is_selected = (idx == snap_selected);
             } else {
                 is_selected = (idx == g_selected_index && g_control_focus == 0);
+                is_now_playing = (actual_idx == g_current_play_index &&
+                                  g_play_state != PLAY_STATE_STOPPED);
             }
 
             /* Build sequence number prefix for queue mode */

@@ -21,6 +21,7 @@ void play_queue_rewind(PlayQueue *q, PlayMode mode);
 
 int  play_queue_get_track_at(const PlayQueue *q, int position, int *track_index);
 int  play_queue_is_active(const PlayQueue *q);
+int  play_queue_contains(const PlayQueue *q, int track_index);
 
 /* Queue editing */
 int  play_queue_append(PlayQueue *q, int track_index);

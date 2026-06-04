@@ -49,10 +49,6 @@ extern char g_audio_codec_name[32];
 extern char g_cached_audio_path[];
 extern char g_cached_lyrics_path[];
 
-/* ---- PCM queue prefill constants（用于 audio.c 的 get_pcm_prefill_target_ms） ---- */
-#define PCM_QUEUE_MIN_PREFILL_MS 180
-#define PCM_QUEUE_MAX_PREFILL_MS 420
-
 /* ---- PulseAudio 后端状态（定义在 audio/backend/pulse.c） ---- */
 #include "audio/backend/pulse.h"
 #define PULSE_SONAME "libpulse.so.0"
@@ -110,6 +106,10 @@ void pw_pause_stream(void);
 void pw_resume_stream(void);
 void pw_sync_volume(int volume);
 
+/* ---- Segment buffer（用于分段播放） ---- */
+#include "audio/segment_buffer.h"
+extern PreloadData g_preload_data;
+
 /* ---- FFmpeg type forward declarations（用于 atempo / codec 接口） ---- */
 struct AVCodecContext;
 struct AVFrame;
@@ -117,7 +117,6 @@ struct AVFrame;
 /* ---- 通用辅助函数（定义在 audio.c） ---- */
 const char *audio_text(const char *utf8, const char *ascii);
 int  get_configured_latency_ms(void);
-int  get_pcm_prefill_target_ms(int sample_rate);
 void apply_volume_to_samples(int32_t *samples, int sample_count);
 
 /* ---- Atempo filter（定义在 atempo.c） ---- */

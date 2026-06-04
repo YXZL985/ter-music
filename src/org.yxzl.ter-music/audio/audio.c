@@ -131,15 +131,6 @@ int get_configured_latency_ms(void) {
     return latency_ms;
 }
 
-int get_pcm_prefill_target_ms(int sample_rate) {
-    int prefill_ms = get_configured_latency_ms() * 3;
-    if (prefill_ms < PCM_QUEUE_MIN_PREFILL_MS) prefill_ms = PCM_QUEUE_MIN_PREFILL_MS;
-    if (sample_rate >= 88200 && prefill_ms < 240) prefill_ms = 240;
-    if (sample_rate >= 176400 && prefill_ms < 320) prefill_ms = 320;
-    if (prefill_ms > PCM_QUEUE_MAX_PREFILL_MS) prefill_ms = PCM_QUEUE_MAX_PREFILL_MS;
-    return prefill_ms;
-}
-
 void apply_volume_to_samples(int32_t *samples, int sample_count)
 {
     if (g_active_backend == AUDIO_BACKEND_PULSE ||
@@ -541,13 +532,27 @@ void play_audio(int index)
     }
     log_info("audio", "play_audio(index=%d) track='%s'", index, track_path);
 
-    /* Only rebuild queue when it doesn't already contain this track at
-     * current_position — preserves manual additions (a / i / J / K) */
+    /* When the queue already has this track at current_position, skip rebuild
+     * to preserve manual additions (a / i / J / K).
+     * Otherwise, search the queue for the target — if found, jump to it;
+     * if not found, insert after current position instead of rebuilding. */
     if (g_play_queue.count == 0 ||
         g_play_queue.current_position < 0 ||
-        g_play_queue.current_position >= g_play_queue.count ||
-        g_play_queue.indices[g_play_queue.current_position] != index) {
+        g_play_queue.current_position >= g_play_queue.count) {
         play_queue_rebuild(&g_play_queue, &g_playlist, g_play_mode, index);
+    } else if (g_play_queue.indices[g_play_queue.current_position] != index) {
+        int found = -1;
+        for (int i = 0; i < g_play_queue.count; i++) {
+            if (g_play_queue.indices[i] == index) { found = i; break; }
+        }
+        if (found >= 0) {
+            /* Target already queued — just jump to it */
+            g_play_queue.current_position = found;
+        } else {
+            /* Insert after current, preserving the rest of the queue */
+            play_queue_insert_after(&g_play_queue, index);
+            g_play_queue.current_position++;
+        }
     }
 
     reap_finished_playback_thread();
