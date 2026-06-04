@@ -9,7 +9,7 @@
 #define SEGMENT_DURATION_SEC     15
 #define SEGMENT_POOL_SIZE          3    /* current + next + next+1 */
 #define SEGMENT_MIN_SPEED       0.75f  /* lowest atempo for worst-case buffer sizing */
-#define PRELOAD_SEGMENT_COUNT      2    /* segments to pre-decode for next track */
+#define PRELOAD_SEGMENT_COUNT      1    /* segments to pre-decode for next track */
 
 /* ── Segment: a single 15-second PCM buffer ── */
 
@@ -162,5 +162,8 @@ int  preload_data_ensure_init(PreloadData *pd, int sr, int ch);
  * @brief Free preload data buffers.
  */
 void preload_data_destroy(PreloadData *pd);
+
+/** @brief Free preload segment buffers but keep struct reusable (lazy re-init). */
+void preload_data_reset(PreloadData *pd);
 
 #endif /* SEGMENT_BUFFER_H */

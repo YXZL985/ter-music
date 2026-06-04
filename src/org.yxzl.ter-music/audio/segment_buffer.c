@@ -30,7 +30,7 @@ static int segment_alloc(Segment *seg, int cap, int ch)
 {
     if (!seg || cap <= 0 || ch <= 0) return -1;
     size_t sz = (size_t)cap * (size_t)ch * sizeof(int32_t);
-    seg->data = calloc(1, sz);
+    seg->data = malloc(sz);
     if (!seg->data) {
         log_error("segment", "calloc(%zu) failed for segment buffer", sz);
         return -1;
@@ -262,6 +262,18 @@ void preload_data_destroy(PreloadData *pd)
         segment_free(&pd->segments[i]);
     pthread_mutex_destroy(&pd->lock);
     memset(pd, 0, sizeof(*pd));
+}
+
+void preload_data_reset(PreloadData *pd)
+{
+    if (!pd) return;
+    for (int i = 0; i < PRELOAD_SEGMENT_COUNT; i++)
+        segment_free(&pd->segments[i]);
+    pd->valid         = 0;
+    pd->track_index   = -1;
+    pd->segment_count = 0;
+    pd->sample_rate   = 0;
+    pd->channels      = 0;
 }
 
 /* ==================================================================

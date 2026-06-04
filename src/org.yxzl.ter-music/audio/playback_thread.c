@@ -790,6 +790,7 @@ void *play_audio_thread(void *arg)
 
         log_info("audio", "Using preloaded data for index=%d (%d segments)", index, n);
         g_preload_data.valid = 0;
+        preload_data_reset(&g_preload_data);
     }
     pthread_mutex_unlock(&g_preload_data.lock);
 
