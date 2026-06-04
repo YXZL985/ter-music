@@ -7,6 +7,7 @@
 #include "remote/remote.h"
 #include "logger/logger.h"
 #include "playlist/playlist.h"
+#include "playlist/ape_tag.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +17,9 @@
 #include <libgen.h>
 #include <math.h>
 #include <time.h>
+#include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
+#include <libavutil/dict.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -27,6 +31,7 @@ Lyrics g_lyrics = {
     .current_index = -1,
     .highlight_count = 0,
     .has_lyrics = 0,
+    .has_timestamps = 0,
     .cursor_index = -1,
     .lock = PTHREAD_MUTEX_INITIALIZER
 };
@@ -410,6 +415,7 @@ static void reset_loaded_lyrics(void) {
     g_lyrics.current_index = -1;
     g_lyrics.highlight_count = 0;
     g_lyrics.has_lyrics = 0;
+    g_lyrics.has_timestamps = 0;
     g_lyrics.cursor_index = -1;
     pthread_mutex_unlock(&g_lyrics.lock);
 }
@@ -1016,11 +1022,156 @@ static void render_lyric_line(int row, const char *text, int is_highlighted, int
     }
 }
 
+/* ── Embedded lyrics extraction ── */
+
+/**
+ * @brief Extract lyrics embedded in audio file metadata.
+ *
+ * Searches FFmpeg AVDictionary first, then APE tags.
+ * FFmpeg maps:
+ *   - MP3 ID3v2 USLT    → key "lyrics"
+ *   - FLAC Vorbis Comment → key "LYRICS" / "lyrics"
+ *   - M4A/MP4 iTunes     → key "\xa9lyr" / "lyrics"
+ * APE tag:
+ *   - APE/WV/MP3 etc     → key "LYRICS"
+ *
+ * @param audio_path  Path to the audio file.
+ * @return 0 on success (lyrics found), -1 on failure.
+ */
+static int extract_embedded_lyrics(const char *audio_path)
+{
+    if (!audio_path || remote_is_remote_path(audio_path)) return -1;
+
+    char *lyrics_text = NULL;
+    int found = 0;
+
+    /* ── Step 1: FFmpeg AVDictionary ── */
+    AVFormatContext *fmt_ctx = NULL;
+    if (avformat_open_input(&fmt_ctx, audio_path, NULL, NULL) == 0) {
+        (void)avformat_find_stream_info(fmt_ctx, NULL);
+
+        AVDictionary *stream_meta = NULL;
+        for (unsigned int i = 0; i < fmt_ctx->nb_streams; i++) {
+            if (fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+                stream_meta = fmt_ctx->streams[i]->metadata;
+                break;
+            }
+        }
+
+        static const char *lyrics_keys[] = {
+            "lyrics", "LYRICS", "unsyncedlyrics", "\xa9lyr", NULL
+        };
+        for (int k = 0; !found && lyrics_keys[k]; k++) {
+            AVDictionaryEntry *entry = av_dict_get(stream_meta, lyrics_keys[k], NULL, 0);
+            if (!entry || !entry->value || !entry->value[0])
+                entry = av_dict_get(fmt_ctx->metadata, lyrics_keys[k], NULL, 0);
+            if (entry && entry->value && entry->value[0]) {
+                lyrics_text = strdup(entry->value);
+                if (lyrics_text) found = 1;
+                break;
+            }
+        }
+        avformat_close_input(&fmt_ctx);
+    }
+
+    /* ── Step 2: APE tag fallback ── */
+    if (!found) {
+        APEItem ape_items[APE_MAX_ITEMS];
+        int ape_count = parse_ape_tags(audio_path, ape_items, APE_MAX_ITEMS);
+        for (int i = 0; i < ape_count; i++) {
+            if (ape_items[i].is_binary) continue;
+            if (strcmp(ape_items[i].key, "LYRICS") == 0 &&
+                ape_items[i].value[0] != '\0') {
+                lyrics_text = strdup(ape_items[i].value);
+                if (lyrics_text) { found = 1; break; }
+            }
+        }
+    }
+
+    if (!found) return -1;
+
+    /* ── Parse lyrics text into LyricLine[] ── */
+    LyricLine temp_lines[MAX_LYRIC_LINES];
+    int count = 0;
+    int has_timestamps = 0;
+
+    char *cursor = lyrics_text;
+    while (cursor && *cursor != '\0' && count < MAX_LYRIC_LINES) {
+        char *line = cursor;
+        char *newline = strchr(cursor, '\n');
+        if (newline) {
+            *newline = '\0';
+            cursor = newline + 1;
+        } else {
+            cursor = line + strlen(line);
+        }
+
+        /* Strip trailing \r */
+        size_t llen = strlen(line);
+        while (llen > 0 && (line[llen - 1] == '\r' || line[llen - 1] == ' '))
+            line[--llen] = '\0';
+
+        if (line[0] == '\0') continue;
+
+        /* Try LRC parsing */
+        double ts;
+        char lrc_text[MAX_LYRIC_TEXT_LEN];
+        if (parse_lrc_line(line, &ts, lrc_text)) {
+            temp_lines[count].timestamp = ts;
+            decode_html_entities(lrc_text);
+            strncpy(temp_lines[count].text, lrc_text, MAX_LYRIC_TEXT_LEN - 1);
+            temp_lines[count].text[MAX_LYRIC_TEXT_LEN - 1] = '\0';
+            has_timestamps = 1;
+            count++;
+        } else {
+            /* Skip LRC metadata headers like [ti:...], [ar:...], [by:...] */
+            if (line[0] == '[') {
+                const char *colon = strchr(line, ':');
+                const char *close_bracket = strchr(line, ']');
+                if (colon && close_bracket && colon < close_bracket) {
+                    continue;  /* metadata header — skip */
+                }
+            }
+            /* Plain text line */
+            temp_lines[count].timestamp = 0.0;
+            decode_html_entities(line);
+            strncpy(temp_lines[count].text, line, MAX_LYRIC_TEXT_LEN - 1);
+            temp_lines[count].text[MAX_LYRIC_TEXT_LEN - 1] = '\0';
+            count++;
+        }
+    }
+
+    free(lyrics_text);
+
+    if (count == 0) return -1;
+
+    /* Store parsed lyrics */
+    pthread_mutex_lock(&g_lyrics.lock);
+    g_lyrics.count = count;
+    memcpy(g_lyrics.lines, temp_lines, sizeof(LyricLine) * count);
+    g_lyrics.has_lyrics = 1;
+    g_lyrics.has_timestamps = has_timestamps;
+    g_lyrics.current_index = has_timestamps ? -1 : 0;
+    g_lyrics.highlight_count = 0;
+    g_lyrics.cursor_index = -1;
+    pthread_mutex_unlock(&g_lyrics.lock);
+
+    log_info("lyrics", "Loaded %d embedded lyric lines from '%s' (timestamps=%d)",
+             count, audio_path, has_timestamps);
+    return 0;
+}
+
 void load_lyrics(const char *audio_path) {
     if (!audio_path) {
         return;
     }
     log_debug("lyrics", "load_lyrics(path='%s') called", audio_path);
+
+    /* Phase 1: Embedded lyrics (highest priority) */
+    if (extract_embedded_lyrics(audio_path) == 0) {
+        log_debug("lyrics", "Using embedded lyrics for '%s'", audio_path);
+        return;
+    }
     
     // 构造 LRC 文件路径
     char lrc_path[MAX_PATH_LEN];
@@ -1113,6 +1264,7 @@ void load_lyrics(const char *audio_path) {
     g_lyrics.count = count;
     memcpy(g_lyrics.lines, temp_lines, sizeof(LyricLine) * count);
     g_lyrics.has_lyrics = 1;
+    g_lyrics.has_timestamps = 1;
     g_lyrics.current_index = -1;
     g_lyrics.highlight_count = 0;
     g_lyrics.cursor_index = -1;
@@ -1128,6 +1280,7 @@ void clear_lyrics(void) {
     g_lyrics.current_index = -1;
     g_lyrics.highlight_count = 0;
     g_lyrics.has_lyrics = 0;
+    g_lyrics.has_timestamps = 0;
     pthread_mutex_unlock(&g_lyrics.lock);
 }
 
@@ -1136,28 +1289,42 @@ void update_lyrics_display(void) {
     if (g_play_state == PLAY_STATE_STOPPED || g_current_view != VIEW_MAIN) {
         return;
     }
-    
+
     pthread_mutex_lock(&g_lyrics.lock);
-    
+
     if (!g_lyrics.has_lyrics || g_lyrics.count == 0) {
         pthread_mutex_unlock(&g_lyrics.lock);
         return;
     }
-    
+
+    int changed = 0;
+
+    /* Plain text embedded lyrics — no timestamp tracking needed */
+    if (!g_lyrics.has_timestamps) {
+        /* Ensure we start at line 0 and render once */
+        if (g_lyrics.current_index != 0) {
+            g_lyrics.current_index = 0;
+            g_lyrics.highlight_count = 0;
+            changed = 1;
+        }
+        pthread_mutex_unlock(&g_lyrics.lock);
+        if (changed) render_lyrics();
+        return;
+    }
+
     // 根据当前播放位置找到对应的歌词行
     double current_pos = (double)g_current_position;
     int new_index = -1;
     int new_highlight_count = 0;
-    int changed = 0;
-    
+
     // 遍历歌词数组，找到最后一个 timestamp <= current_position 的行
     for (int i = 0; i < g_lyrics.count; i++) {
         if (g_lyrics.lines[i].timestamp <= current_pos) {
             new_index = i;
             new_highlight_count = 1;
-            
+
             // 检查下一行是否有相同时间戳，最多高亮两行
-            if (i + 1 < g_lyrics.count && 
+            if (i + 1 < g_lyrics.count &&
                 g_lyrics.lines[i + 1].timestamp == g_lyrics.lines[i].timestamp) {
                 new_highlight_count = 2;
             }
@@ -1165,17 +1332,17 @@ void update_lyrics_display(void) {
             break;
         }
     }
-    
+
     // 只有当索引变化时才更新
-    if (new_index != g_lyrics.current_index || 
+    if (new_index != g_lyrics.current_index ||
         new_highlight_count != g_lyrics.highlight_count) {
         g_lyrics.current_index = new_index;
         g_lyrics.highlight_count = new_highlight_count;
         changed = 1;
     }
-    
+
     pthread_mutex_unlock(&g_lyrics.lock);
-    
+
     if (changed) {
         render_lyrics();
     }

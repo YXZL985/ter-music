@@ -21,6 +21,7 @@ typedef struct {
     int current_index;                  // 当前高亮的起始索引
     int highlight_count;                // 当前需要高亮的行数（最多 2 行）
     int has_lyrics;                     // 是否成功加载歌词
+    int has_timestamps;                 // 1=有 LRC 时间戳, 0=纯文本嵌入歌词
     int cursor_index;                   // 光标位置索引（编辑模式下使用）
     pthread_mutex_t lock;               // 互斥锁
 } Lyrics;
