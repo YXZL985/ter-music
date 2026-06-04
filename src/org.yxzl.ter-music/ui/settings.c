@@ -88,7 +88,8 @@ static const char *settings_options[] = {
     "音频后端",
     "排序方式",
     "高级播放模式",
-    "默认播放模式"
+    "默认播放模式",
+    "无缝预加载下一曲"
 };
 static const char *settings_options_ascii[] = {
     "Playlist Foreground",
@@ -119,7 +120,8 @@ static const char *settings_options_ascii[] = {
     "Audio Backend",
     "Sort Mode",
     "Advanced Play Modes",
-    "Default Play Mode"
+    "Default Play Mode",
+    "Seamless Preload"
 };
 #define SETTINGS_OPTION_COUNT 29
 
