@@ -83,6 +83,7 @@ static const char *settings_options[] = {
     "默认播放模式",
     "默认倍速",
     "显示专辑图片",
+    "无缝预加载下一曲",
     "歌词对齐方式",
     "音频后端",
     "排序方式",
@@ -113,13 +114,14 @@ static const char *settings_options_ascii[] = {
     "Default Play Mode",
     "Default Speed",
     "Show Album Cover",
+    "Seamless Preload",
     "Lyrics Alignment",
     "Audio Backend",
     "Sort Mode",
     "Advanced Play Modes",
     "Default Play Mode"
 };
-#define SETTINGS_OPTION_COUNT 28
+#define SETTINGS_OPTION_COUNT 29
 
 enum {
     SETTINGS_IDX_THEME_COLOR_PAIR_0  = 0,
@@ -149,7 +151,8 @@ enum {
     SETTINGS_IDX_AUDIO_BACKEND       = 24,
     SETTINGS_IDX_SORT_MODE           = 25,
     SETTINGS_IDX_ADVANCED_PLAY_MODES = 26,
-    SETTINGS_IDX_DEFAULT_PLAY_MODE2  = 27
+    SETTINGS_IDX_DEFAULT_PLAY_MODE2  = 27,
+    SETTINGS_IDX_SEAMLESS_PRELOAD    = 28
 };
 
 typedef struct {
@@ -185,6 +188,7 @@ static const int settings_playback_option_indices[] = {
     SETTINGS_IDX_LATENCY,
     SETTINGS_IDX_SHOW_LYRICS,
     SETTINGS_IDX_SHOW_ALBUM_COVER,
+    SETTINGS_IDX_SEAMLESS_PRELOAD,
     SETTINGS_IDX_LYRICS_ALIGNMENT,
     SETTINGS_IDX_DEFAULT_SPEED,
     SETTINGS_IDX_AUDIO_BACKEND,
@@ -346,6 +350,10 @@ static void format_settings_option_line(int option_index, char *line, size_t lin
         snprintf(line, line_size, "%s%s%s",
                  current_settings_options[option_index], separator,
                  menu_bool_text(g_app_config.show_album_cover));
+    } else if (option_index == SETTINGS_IDX_SEAMLESS_PRELOAD) {
+        snprintf(line, line_size, "%s%s%s",
+                 current_settings_options[option_index], separator,
+                 menu_bool_text(g_app_config.seamless_preload));
     } else if (option_index == SETTINGS_IDX_LYRICS_ALIGNMENT) {
         const char *align_str;
         switch (g_app_config.lyrics_alignment) {
@@ -565,6 +573,10 @@ static void adjust_or_toggle_settings_option(int option_index, int delta)
             break;
         case SETTINGS_IDX_SHOW_ALBUM_COVER:
             g_app_config.show_album_cover = !g_app_config.show_album_cover;
+            save_config();
+            break;
+        case SETTINGS_IDX_SEAMLESS_PRELOAD:
+            g_app_config.seamless_preload = !g_app_config.seamless_preload;
             save_config();
             break;
         case SETTINGS_IDX_LYRICS_ALIGNMENT:
@@ -1163,6 +1175,7 @@ static void activate_settings_current_option(void)
         g_settings_current_option == SETTINGS_IDX_CLEAR_HISTORY ||
         g_settings_current_option == SETTINGS_IDX_SHOW_LYRICS ||
         g_settings_current_option == SETTINGS_IDX_SHOW_ALBUM_COVER ||
+        g_settings_current_option == SETTINGS_IDX_SEAMLESS_PRELOAD ||
         g_settings_current_option == SETTINGS_IDX_ADVANCED_PLAY_MODES) {
         adjust_or_toggle_settings_option(g_settings_current_option, 0);
         return;

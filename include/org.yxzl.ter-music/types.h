@@ -279,6 +279,7 @@ typedef struct {
     int advanced_play_modes_enabled;
     float default_playback_speed;
     int show_album_cover;
+    int seamless_preload;    // 0=off, 1=pre-decode next track at end of current
     int lyrics_alignment;  // 0=居左(Left), 1=居中(Center), 2=居右(Right)
     int audio_backend;     // 0=Auto, 1=PulseAudio, 2=ALSA, 3=PipeWire
     int sort_mode;         // SortMode value, 0=default (no sort)

@@ -66,6 +66,7 @@ extern "C" {
 #define XML_PREF_ADVANCED_PLAY_MODES "advanced_play_modes_enabled"
 #define XML_PREF_PLAYBACK_SPEED     "default_playback_speed"
 #define XML_PREF_SHOW_COVER         "show_album_cover"
+#define XML_PREF_SEAMLESS_PRELOAD   "seamless_preload"
 #define XML_PREF_LYRICS_ALIGN       "lyrics_alignment"
 #define XML_PREF_AUDIO_BACKEND      "audio_backend"
 #define XML_PREF_SORT_MODE          "sort_mode"

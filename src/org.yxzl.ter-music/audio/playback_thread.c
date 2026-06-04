@@ -884,7 +884,8 @@ void *play_audio_thread(void *arg)
             }
 
             /* Trigger next-track preload when within 2 segments of the end */
-            if (!preload_attempted &&
+            extern AppConfig g_app_config;
+            if (g_app_config.seamless_preload && !preload_attempted &&
                 seg_pool.current_segment_id >= seg_pool.total_segments - 2) {
                 preload_attempted = 1;
                 attempt_next_track_preload(index, &seg_pool,

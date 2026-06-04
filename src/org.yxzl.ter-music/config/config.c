@@ -143,6 +143,7 @@ int config_save_to_xml(const char *path, const AppConfig *cfg)
                     (const xmlChar *)buf);
 
         SAVE_INT(XML_PREF_SHOW_COVER,      cfg->show_album_cover);
+        SAVE_INT(XML_PREF_SEAMLESS_PRELOAD, cfg->seamless_preload);
         SAVE_INT(XML_PREF_LYRICS_ALIGN,    cfg->lyrics_alignment);
         SAVE_INT(XML_PREF_AUDIO_BACKEND,   cfg->audio_backend);
         SAVE_INT(XML_PREF_SORT_MODE,       cfg->sort_mode);
@@ -288,6 +289,7 @@ int config_load_from_xml(const char *path, AppConfig *cfg)
         cfg->advanced_play_modes_enabled = xml_get_int(prefs, XML_PREF_ADVANCED_PLAY_MODES, 0);
         cfg->default_playback_speed   = xml_get_float(prefs, XML_PREF_PLAYBACK_SPEED, 1.0f);
         cfg->show_album_cover         = xml_get_int(prefs, XML_PREF_SHOW_COVER, 1);
+        cfg->seamless_preload         = xml_get_int(prefs, XML_PREF_SEAMLESS_PRELOAD, 0);
         cfg->lyrics_alignment         = xml_get_int(prefs, XML_PREF_LYRICS_ALIGN, 0);
         cfg->audio_backend            = xml_get_int(prefs, XML_PREF_AUDIO_BACKEND, AUDIO_BACKEND_AUTO);
         cfg->sort_mode                = xml_get_int(prefs, XML_PREF_SORT_MODE, SORT_DEFAULT);
@@ -431,6 +433,7 @@ static void clamp_config_values(AppConfig *cfg)
     cfg->resume_last_playback     = cfg->resume_last_playback ? 1 : 0;
     cfg->show_lyrics_panel        = cfg->show_lyrics_panel ? 1 : 0;
     cfg->show_album_cover         = cfg->show_album_cover ? 1 : 0;
+    cfg->seamless_preload         = cfg->seamless_preload ? 1 : 0;
 
     /* Range clamping */
     if (cfg->last_played_position < 0)
