@@ -247,6 +247,7 @@ static void apply_popup_selection(void)
             snprintf(msg, sizeof(msg), "%s: %.2fx",
                      use_english_ui() ? "Speed" : "倍速", (double)g_playback_speed);
             update_controls_status(msg);
+            apply_playback_speed_change();
             break;
         }
         case POPUP_VOLUME: {
@@ -331,8 +332,15 @@ void activate_current_control(void)
                 popup_dismiss();
             } else {
                 g_popup.type = POPUP_LOOP_MODE;
-                g_popup.selected_index = (int)g_play_mode;
                 g_popup.option_count = calculate_available_play_modes();
+                /* Find the popup index that maps to the current play mode */
+                g_popup.selected_index = 0;
+                for (int i = 0; i < g_popup.option_count; i++) {
+                    if (get_available_play_mode_at(i) == g_play_mode) {
+                        g_popup.selected_index = i;
+                        break;
+                    }
+                }
                 calculate_popup_dimensions(&g_popup, win_controls);
                 create_popup_window(&g_popup);
                 g_popup.active = (g_popup.popup_win != NULL);

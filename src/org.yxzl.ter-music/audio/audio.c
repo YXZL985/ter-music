@@ -341,6 +341,8 @@ void set_play_mode(PlayMode mode)
     if (g_current_play_index >= 0) {
         play_queue_rebuild(&g_play_queue, &g_playlist, g_play_mode, g_current_play_index);
     }
+    g_app_config.default_play_mode = g_play_mode;
+    save_config();
     render_controls();
 }
 
@@ -369,7 +371,15 @@ void toggle_playback_speed(void)
     snprintf(msg, sizeof(msg), "%s: %.2fx", use_english_ui() ? "Speed" : "倍速", (double)g_playback_speed);
     update_controls_status(msg);
     render_controls();
+    apply_playback_speed_change();
+}
 
+/**
+ * @brief 重启当前播放以使倍速变更生效 — 被 toggle_playback_speed()
+ *        和控件窗格 POPUP_SPEED 共用
+ */
+void apply_playback_speed_change(void)
+{
     if (g_play_state == PLAY_STATE_PLAYING || g_play_state == PLAY_STATE_PAUSED) {
         pthread_mutex_lock(&g_play_mutex);
         int was_paused = (g_play_state == PLAY_STATE_PAUSED);

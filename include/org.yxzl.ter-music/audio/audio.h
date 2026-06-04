@@ -19,6 +19,7 @@ extern char g_audio_codec_name[32];
 
 /* ── Function prototypes ── */
 void toggle_playback_speed(void);
+void apply_playback_speed_change(void);
 void init_ffmpeg();
 void init_audio_device();
 int audio_backend_is_available(int backend);
