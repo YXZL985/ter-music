@@ -40,6 +40,7 @@ extern int g_pending_playback_index;
 extern int g_seek_request;
 extern int g_seek_position;
 extern int g_initial_seek_position;
+extern int g_cue_offset;
 extern int g_current_position;
 extern int g_total_duration;
 extern int g_audio_sample_rate;

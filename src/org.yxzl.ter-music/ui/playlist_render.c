@@ -253,9 +253,17 @@ void render_playlist_content(void)
             if (title_width  < 2) title_width  = 2;
             if (artist_width < 2) artist_width = 2;
 
+            /* For CUE sub-tracks, prepend track number and add a visible marker */
+            char display_title[MAX_META_LEN];
+            if (t.cue_offset > 0 && t.cue_track_number > 0) {
+                snprintf(display_title, sizeof(display_title), "[CUE] %s", t.title);
+            } else {
+                snprintf(display_title, sizeof(display_title), "%s", t.title);
+            }
+
             char truncated_title[MAX_META_LEN];
             char truncated_artist[MAX_META_LEN];
-            format_display_text(truncated_title, sizeof(truncated_title), t.title, title_width - 1, 1);
+            format_display_text(truncated_title, sizeof(truncated_title), display_title, title_width - 1, 1);
             format_display_text(truncated_artist, sizeof(truncated_artist), t.artist, artist_width - 1, 1);
 
             int is_selected, is_now_playing = 0;

@@ -235,7 +235,8 @@ static int handle_seek_request_in_decoder(AVFormatContext *fmt_ctx,
                                           int output_channels,
                                           int use_resampler,
                                           int *decoder_draining,
-                                          int *decoder_finished)
+                                          int *decoder_finished,
+                                          int cue_offset)
 {
     extern pthread_mutex_t g_seek_mutex;
     extern int g_seek_request;
@@ -250,7 +251,7 @@ static int handle_seek_request_in_decoder(AVFormatContext *fmt_ctx,
         handled = 1;
 
         AVRational time_base = fmt_ctx->streams[audio_stream_index]->time_base;
-        int64_t target_ts = av_rescale_q(target_position, (AVRational){1, 1}, time_base);
+        int64_t target_ts = av_rescale_q(target_position + cue_offset, (AVRational){1, 1}, time_base);
         int ret = av_seek_frame(fmt_ctx, audio_stream_index, target_ts, 0);
         if (ret < 0) {
             update_controls_status(audio_text("跳转失败", "Seek failed"));
@@ -362,6 +363,14 @@ static void attempt_next_track_preload(int current_track_index,
     pthread_mutex_unlock(&g_play_mutex);
     if (next_index < 0 || next_index == current_track_index) {
         log_debug("segment", "preload: no valid next track (idx=%d)", next_index);
+        return;
+    }
+
+    /* Skip preload for CUE tracks — preloaded PCM from position 0 would be
+     * at the wrong offset. The playback thread handles CUE offset seeking. */
+    if (next_index >= 0 && next_index < MAX_TRACKS &&
+        g_playlist.cue_offsets[next_index] > 0) {
+        log_debug("segment", "preload: skipping (CUE track with offset)");
         return;
     }
 
@@ -585,8 +594,13 @@ void *play_audio_thread(void *arg)
     extern int g_pending_playback_index;
     extern int g_play_thread_active;
     extern int g_play_thread_finished;
+    extern int g_cue_offset;
 
     log_info("audio", "Playback thread started for index=%d", index);
+
+    /* Capture and clear CUE offset for this track */
+    int cue_offset = g_cue_offset;
+    g_cue_offset = 0;
 
     pthread_mutex_lock(&g_play_mutex);
     int thread_running = g_play_thread_running;
@@ -656,6 +670,19 @@ void *play_audio_thread(void *arg)
             }
         }
         if (g_total_duration <= 0) g_total_duration = 300;
+    }
+
+    /* Cap duration for CUE sub-tracks */
+    if (cue_offset > 0) {
+        int next_offset = cue_find_next_offset(index);
+        int capped;
+        if (next_offset > cue_offset) {
+            capped = next_offset - cue_offset;
+        } else {
+            capped = g_total_duration - cue_offset;
+        }
+        if (capped > 0 && capped < g_total_duration)
+            g_total_duration = capped;
     }
 
     g_current_position = 0;
@@ -819,9 +846,57 @@ void *play_audio_thread(void *arg)
     }
 
     /* Handle initial seek (e.g. from speed change restart) */
+    /* Handle initial seek (speed-change restart, etc.) — relative position */
     if (initial_seek_position > 0 && initial_seek_position < g_total_duration) {
         g_seek_position = initial_seek_position;
         g_seek_request = 1;
+    }
+
+    /* Handle initial CUE offset seek — seek to absolute file position */
+    if (cue_offset > 0 && !g_seek_request) {
+        AVRational time_base = fmt_ctx->streams[audio_stream_index]->time_base;
+        int64_t target_ts = av_rescale_q(cue_offset, (AVRational){1, 1}, time_base);
+        int ret = av_seek_frame(fmt_ctx, audio_stream_index, target_ts, 0);
+        if (ret >= 0) {
+            avcodec_flush_buffers(codec_ctx);
+            if (swr_ctx) swr_init(swr_ctx);
+            if (packet) av_packet_unref(packet);
+
+            /* Reset segment pool */
+            int seg_id = segment_id_from_position(0);
+            segment_pool_seek_to(&seg_pool, seg_id);
+            seg_pool.total_segments = segment_pool_total_for_duration(g_total_duration);
+
+            /* Reset atempo filter */
+            if (atempo_is_active()) {
+                float speed = atempo_get_speed();
+                cleanup_atempo_filter();
+                if (speed > 0.01f)
+                    init_atempo_filter(codec_ctx, speed);
+            }
+
+            audio_backend_flush_stream();
+            g_current_position = 0;
+            progress_tracker_seek(0);
+            decoder_draining = 0;
+            decoder_finished = 0;
+
+            /* Re-decode first segment from seeked position */
+            int target_frames = output_sample_rate * SEGMENT_DURATION_SEC;
+            decode_segment_fill(fmt_ctx, codec_ctx, swr_ctx, packet, frame, filtered_frame,
+                                &seg_pool, seg_pool.current_slot, target_frames,
+                                audio_stream_index, output_sample_rate, output_channels,
+                                use_resampler, &decoder_draining, &decoder_finished);
+
+            segment_pool_mark_ready(&seg_pool, seg_pool.current_slot,
+                                    seg_pool.slots[seg_pool.current_slot].frame_count,
+                                    seg_id,
+                                    (decoder_finished || seg_id >= seg_pool.total_segments - 1));
+
+            log_debug("audio", "CUE offset seek to %ds (index=%d)", cue_offset, index);
+        } else {
+            log_warn("audio", "CUE offset seek failed for position %d", cue_offset);
+        }
     }
 
     /* ════════════════════════════════════════════════════════
@@ -840,7 +915,8 @@ void *play_audio_thread(void *arg)
                                            &seg_pool, audio_stream_index,
                                            output_sample_rate, output_channels,
                                            use_resampler,
-                                           &decoder_draining, &decoder_finished)) {
+                                           &decoder_draining, &decoder_finished,
+                                           cue_offset)) {
             if (g_current_position >= g_total_duration) { g_play_thread_running = 0; break; }
             continue;
         }

@@ -171,6 +171,8 @@ typedef struct {
     char title[MAX_META_LEN];
     char artist[MAX_META_LEN];
     char album[MAX_META_LEN];
+    int cue_offset;          /* seconds offset within the file (0 = not a CUE sub-track) */
+    int cue_track_number;    /* CUE track number (0 = not a CUE sub-track) */
 } Track;
 
 typedef struct {
@@ -183,6 +185,8 @@ typedef struct {
     char title_search[MAX_SEARCH_KEY_LEN];
     char artist_search[MAX_SEARCH_KEY_LEN];
     char album_search[MAX_SEARCH_KEY_LEN];
+    int cue_offset;
+    int cue_track_number;
 } CachedTrack;
 
 typedef struct {
@@ -296,6 +300,8 @@ typedef struct {
     int has_multiple_sources;
     CachedTrack cache[MAX_CACHE_SIZE];
     int cache_count;
+    int cue_offsets[MAX_TRACKS];        /* per-track CUE offset in seconds (0 if not CUE) */
+    int cue_track_numbers[MAX_TRACKS];  /* per-track CUE track number (0 if not CUE) */
 } Playlist;
 
 typedef struct {

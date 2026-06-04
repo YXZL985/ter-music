@@ -101,6 +101,7 @@ int g_speed_count = sizeof(g_speed_ratios) / sizeof(g_speed_ratios[0]);
 int g_seek_request = 0;
 int g_seek_position = 0;
 int g_initial_seek_position = 0;
+int g_cue_offset = 0;
 
 /* ── Progress ── */
 int g_current_position = 0;
@@ -612,6 +613,9 @@ start_playback:
     {
     char local_audio_path[MAX_PATH_LEN] = "";
     char local_lyrics_path[MAX_PATH_LEN] = "";
+
+    /* Set CUE offset for the playback thread */
+    g_cue_offset = cue_get_offset(index);
 
     if (remote_is_remote_path(track_path)) {
         cleanup_playback_cache();

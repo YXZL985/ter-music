@@ -31,14 +31,16 @@
 #include <jpeglib.h>
 
 const char *audio_extensions[] = {
-    ".mp3", ".MP3", ".flac", ".FLAC", ".wav", ".WAV", 
+    ".mp3", ".MP3", ".flac", ".FLAC", ".wav", ".WAV",
     ".ogg", ".OGG", ".m4a", ".M4A", ".aac", ".AAC",
     ".wma", ".WMA", ".ape", ".APE", ".opus", ".OPUS",
+    ".wv", ".WV",
     NULL
 };
 
 // 全局变量定义
 Playlist g_playlist = {0};
+CueSheet g_cue_sheet = {0};
 int g_selected_index = 0;  // 当前选中的歌曲索引
 
 // 控制区焦点状态
@@ -370,6 +372,10 @@ static int playlist_contains_track_in(const Playlist *playlist, const char *path
     return 0;
 }
 
+/* Forward declaration for CUE helper used during directory scan */
+static int load_cue_subtracks(Playlist *playlist, const char *cue_dir,
+                               const char *audio_path);
+
 static int scan_playlist_directory_into(Playlist *playlist, const char *path, int append_mode) {
     if (!playlist) {
         return -1;
@@ -396,8 +402,15 @@ static int scan_playlist_directory_into(Playlist *playlist, const char *path, in
                 continue;
             }
 
+            /* Check for matching CUE sheet — if found, add sub-tracks instead */
+            int cue_added = load_cue_subtracks(playlist, path, full_path);
+            if (cue_added > 0) continue;  /* skip raw file */
+
+            /* No CUE — add raw audio file as before */
             strncpy(playlist->tracks[playlist->count], full_path, MAX_PATH_LEN - 1);
             playlist->tracks[playlist->count][MAX_PATH_LEN - 1] = '\0';
+            playlist->cue_offsets[playlist->count] = 0;
+            playlist->cue_track_numbers[playlist->count] = 0;
             playlist->count++;
         }
     }
@@ -539,13 +552,124 @@ void decode_html_entities(char *str) {
 int is_audio_file(const char *filename) {
     const char *ext = strrchr(filename, '.');
     if (!ext) return 0;
-    
+
     for (int i = 0; audio_extensions[i] != NULL; i++) {
         if (strcasecmp(ext, audio_extensions[i]) == 0) {
             return 1;
         }
     }
     return 0;
+}
+
+/* ── CUE helpers ── */
+
+int cue_get_offset(int track_index)
+{
+    int offset = 0;
+    playlist_lock();
+    if (track_index >= 0 && track_index < g_playlist.count)
+        offset = g_playlist.cue_offsets[track_index];
+    playlist_unlock();
+    return offset;
+}
+
+int cue_get_track_number(int track_index)
+{
+    int tn = 0;
+    playlist_lock();
+    if (track_index >= 0 && track_index < g_playlist.count)
+        tn = g_playlist.cue_track_numbers[track_index];
+    playlist_unlock();
+    return tn;
+}
+
+void cue_clear_sheet(void)
+{
+    playlist_lock();
+    memset(&g_cue_sheet, 0, sizeof(g_cue_sheet));
+    playlist_unlock();
+}
+
+/**
+ * @brief Find the next CUE track in the same physical file.
+ * @return offset of the next track in the same file, or -1 if current is last.
+ */
+int cue_find_next_offset(int current_index)
+{
+    if (current_index < 0 || current_index >= MAX_TRACKS) return -1;
+
+    playlist_lock();
+    const char *current_path = g_playlist.tracks[current_index];
+    if (!current_path || current_path[0] == '\0') {
+        playlist_unlock();
+        return -1;
+    }
+
+    for (int i = current_index + 1; i < g_playlist.count; i++) {
+        if (strcmp(g_playlist.tracks[i], current_path) == 0 &&
+            g_playlist.cue_offsets[i] > g_playlist.cue_offsets[current_index]) {
+            int next = g_playlist.cue_offsets[i];
+            playlist_unlock();
+            return next;
+        }
+    }
+    playlist_unlock();
+    return -1;
+}
+
+/**
+ * @brief Add CUE sub-tracks from a matched CueSheet for a given audio file.
+ *
+ * Once this returns > 0, the caller should skip adding the raw audio file
+ * and instead register the sub-tracks via the output iterator.
+ *
+ * @param cue_path  Path to the .cue file.
+ * @param audio_path Path to the matching audio file.
+ * @param sheet     Parsed CueSheet (will be filled if not already loaded).
+ * @return Number of CUE tracks added, or 0 if none.
+ */
+static int load_cue_subtracks(Playlist *playlist, const char *cue_dir,
+                               const char *audio_path)
+{
+    if (!playlist || !cue_dir || !audio_path) return 0;
+
+    char cue_path[MAX_PATH_LEN];
+    if (!cue_match_file(audio_path, cue_dir, cue_path))
+        return 0;
+
+    /* Check if this CUE file was already parsed */
+    if (strcmp(g_cue_sheet.loaded_cue_path, cue_path) != 0) {
+        CueSheet fresh;
+        if (cue_parse_file(cue_path, &fresh) <= 0) return 0;
+        playlist_lock();
+        g_cue_sheet = fresh;
+        playlist_unlock();
+    }
+
+    int added = 0;
+    playlist_lock();
+    for (int i = 0; i < g_cue_sheet.count && playlist->count < MAX_TRACKS; i++) {
+        CueTrack *ct = &g_cue_sheet.tracks[i];
+
+        /* Compare FILE reference's basename to the audio file's basename */
+        const char *audio_base = strrchr(audio_path, '/');
+        audio_base = audio_base ? audio_base + 1 : audio_path;
+        const char *cue_ref_base = strrchr(ct->file_path, '/');
+        cue_ref_base = cue_ref_base ? cue_ref_base + 1 : ct->file_path;
+
+        if (strcasecmp(audio_base, cue_ref_base) != 0) continue;
+
+        /* Add this CUE sub-track */
+        strncpy(playlist->tracks[playlist->count], audio_path, MAX_PATH_LEN - 1);
+        playlist->tracks[playlist->count][MAX_PATH_LEN - 1] = '\0';
+        playlist->cue_offsets[playlist->count] = ct->index_01_offset > 0 ? ct->index_01_offset : 0;
+        playlist->cue_track_numbers[playlist->count] = ct->track_number;
+        playlist->count++;
+        added++;
+    }
+    playlist_unlock();
+
+    return added;
 }
 
 /* ---------- ID3 tag helpers ---------- */
@@ -821,7 +945,10 @@ int load_playlist(const char *path) {
     if (!S_ISDIR(s.st_mode)) {
         return -1;
     }
-    
+
+    /* Clear CUE sheet for new directory scan */
+    cue_clear_sheet();
+
     Playlist *next = calloc(1, sizeof(*next));
     if (!next) {
         return -1;
@@ -1097,6 +1224,8 @@ int get_track_metadata(int index, Track *out) {
         out->artist[MAX_META_LEN - 1] = '\0';
         strncpy(out->album, cached->album, MAX_META_LEN - 1);
         out->album[MAX_META_LEN - 1] = '\0';
+        out->cue_offset = cached->cue_offset;
+        out->cue_track_number = cached->cue_track_number;
         playlist_unlock();
         return 0;
     }
@@ -1111,7 +1240,41 @@ int get_track_metadata(int index, Track *out) {
     char title_search[MAX_SEARCH_KEY_LEN];
     char artist_search[MAX_SEARCH_KEY_LEN];
     char album_search[MAX_SEARCH_KEY_LEN];
-    get_audio_metadata(path, title, artist, album);
+
+    /* Determine CUE offset info */
+    int cue_offset = 0;
+    int cue_track_number = 0;
+    playlist_lock();
+    if (index >= 0 && index < g_playlist.count) {
+        cue_offset = g_playlist.cue_offsets[index];
+        cue_track_number = g_playlist.cue_track_numbers[index];
+    }
+    playlist_unlock();
+
+    if (cue_offset > 0) {
+        /* CUE sub-track: get metadata from CueSheet, override file-level metadata */
+        get_audio_metadata(path, title, artist, album);
+
+        playlist_lock();
+        if (cue_track_number > 0 && g_cue_sheet.count > 0) {
+            for (int i = 0; i < g_cue_sheet.count; i++) {
+                if (g_cue_sheet.tracks[i].track_number == cue_track_number) {
+                    if (g_cue_sheet.tracks[i].title[0])
+                        strncpy(title, g_cue_sheet.tracks[i].title, sizeof(title) - 1);
+                    if (g_cue_sheet.tracks[i].artist[0])
+                        strncpy(artist, g_cue_sheet.tracks[i].artist, sizeof(artist) - 1);
+                    if (g_cue_sheet.tracks[i].album[0])
+                        strncpy(album, g_cue_sheet.tracks[i].album, sizeof(album) - 1);
+                    break;
+                }
+            }
+        }
+        playlist_unlock();
+    } else {
+        /* Normal track: existing behavior */
+        get_audio_metadata(path, title, artist, album);
+    }
+
     build_search_key(title, title_search, sizeof(title_search));
     build_search_key(artist, artist_search, sizeof(artist_search));
     build_search_key(album, album_search, sizeof(album_search));
@@ -1124,6 +1287,8 @@ int get_track_metadata(int index, Track *out) {
     out->artist[MAX_META_LEN - 1] = '\0';
     strncpy(out->album, album, MAX_META_LEN - 1);
     out->album[MAX_META_LEN - 1] = '\0';
+    out->cue_offset = cue_offset;
+    out->cue_track_number = cue_track_number;
 
     playlist_lock();
     if (index >= 0 &&
@@ -1146,6 +1311,8 @@ int get_track_metadata(int index, Track *out) {
         new_cache->artist_search[MAX_SEARCH_KEY_LEN - 1] = '\0';
         strncpy(new_cache->album_search, album_search, MAX_SEARCH_KEY_LEN - 1);
         new_cache->album_search[MAX_SEARCH_KEY_LEN - 1] = '\0';
+        new_cache->cue_offset = cue_offset;
+        new_cache->cue_track_number = cue_track_number;
     }
     playlist_unlock();
 
