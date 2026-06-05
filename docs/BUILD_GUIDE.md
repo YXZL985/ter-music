@@ -342,11 +342,14 @@ sudo pacman -U ter-music-cn-*.pkg.tar.zst
 - `libpng-devel`
 - `libjpeg-turbo-devel`
 - `libxml2-devel`
+- `sqlite-devel`
 - `libcurl-devel`
 - Docker（容器构建模式时必需）
 
 > **静态构建（`--static`）**：FFmpeg 在 Docker 容器中从源码编译，无需 `ffmpeg-free-devel` 包。
 > 二进制文件静态链接 FFmpeg，动态链接其他系统库，单包兼容 RHEL 8/9/10。
+
+> **可选后端**：PipeWire（`pipewire-devel`，dlopen 加载，无编译时依赖）、ALSA（`alsa-lib-devel`）、DBus（`dbus-devel`，MPRIS 集成）为可选依赖，CMake 会自动检测。
 
 ### build-appimage.sh 依赖：
 - `squashfs-tools`
@@ -376,6 +379,7 @@ sudo pacman -U ter-music-cn-*.pkg.tar.zst
 - `libavutil-dev`
 - `libtag1-dev`
 - `libpulse-dev`
+- `libsqlite3-dev`
 
 ### build-deb.sh 依赖：
 - `dpkg-dev`
@@ -390,11 +394,14 @@ sudo pacman -U ter-music-cn-*.pkg.tar.zst
 - `libpng-dev`
 - `libjpeg-dev`
 - `libxml2-dev`
+- `libsqlite3-dev`
 - `libdbus-1-dev`
 - FFmpeg 开发库：`libavcodec-dev`、`libavformat-dev`、`libavutil-dev`、`libswresample-dev`、`libswscale-dev`、`libavfilter-dev`
 - Docker（容器或静态构建模式时必需）
 
 > **静态构建（`--static`）**：FFmpeg 在 Docker 容器中从源码编译，无需系统 FFmpeg dev 包。二进制文件静态链接 FFmpeg，动态链接其他系统库，单包兼容 Debian 10/11/12/13+。
+
+> **可选后端**：PipeWire（`libpipewire-0.3-dev`，dlopen 加载，无编译时依赖）、ALSA（`libasound2-dev`）为可选依赖。
 
 ### PKGBUILD 依赖：
 - `base-devel`
@@ -406,13 +413,14 @@ sudo pacman -U ter-music-cn-*.pkg.tar.zst
 - `pulseaudio`
 - `ncurses`
 - `libxml2`
+- `sqlite`
 - `libao`
 - `libmad`
 - `libid3tag`
 
 在 Debian/Ubuntu 上安装构建依赖：
 ```bash
-sudo apt install dpkg-dev fakeroot cmake make gcc libavfilter-dev libpng-dev libjpeg-dev libswscale-dev
+sudo apt install dpkg-dev fakeroot cmake make gcc libavfilter-dev libpng-dev libjpeg-dev libswscale-dev libxml2-dev libsqlite3-dev
 ```
 
 ## 交叉编译支持
@@ -478,7 +486,7 @@ docker-compose -f docker-compose.cross.yml run --rm cross-build ./build-deb.sh -
 **容器环境包含：**
 - Ubuntu 22.04 基础系统
 - ARM64 交叉编译工具链（gcc, g++, binutils）
-- ARM64 架构的开发库（libavcodec, libavformat, libswresample, libavutil, libavfilter, libpng, libjpeg, libxml2, libpulse, ncurses）
+- ARM64 架构的开发库（libavcodec, libavformat, libswresample, libavutil, libavfilter, libpng, libjpeg, libxml2, libsqlite3, libpulse, ncurses）
 - 各种包格式构建工具（dpkg-dev, rpm, squashfs-tools 等）
 
 ### Dockerfile.rpm — RHEL 容器构建
@@ -532,7 +540,7 @@ sudo apt update
 # 安装目标架构的开发库
 sudo apt install libncurses-dev:arm64 libavcodec-dev:arm64 libavformat-dev:arm64 \
                  libswresample-dev:arm64 libswscale-dev:arm64 libavutil-dev:arm64 libavfilter-dev:arm64 \
-                 libpng-dev:arm64 libjpeg-dev:arm64 libxml2-dev:arm64 libpulse-dev:arm64
+                 libpng-dev:arm64 libjpeg-dev:arm64 libxml2-dev:arm64 libsqlite3-dev:arm64 libpulse-dev:arm64
 ```
 
 ⚠️ **警告**：在主机上添加多架构支持可能会卸载某些 amd64 软件包，导致系统不稳定！建议在测试环境或虚拟机中执行。
@@ -625,7 +633,7 @@ file bin/ter-music
 ### RPM 包安装失败
 如果遇到依赖问题，请确保系统已安装所有必要的开发包：
 ```bash
-sudo dnf install ffmpeg-free-devel pulseaudio-libs-devel ncurses-devel libcurl-devel libxml2-devel libpng-devel libjpeg-turbo-devel
+sudo dnf install ffmpeg-free-devel pulseaudio-libs-devel ncurses-devel libcurl-devel libxml2-devel libpng-devel libjpeg-turbo-devel sqlite-devel
 ```
 
 **跨发行版构建的 RPM（在 Debian 上构建）**：如果在非 RHEL 系统上构建了 RPM，安装到 RHEL 时可能出现 FFmpeg soname 或 glibc 版本不匹配问题。解决方案：
