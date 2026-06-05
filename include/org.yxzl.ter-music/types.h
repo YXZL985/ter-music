@@ -10,7 +10,7 @@
 #include "audio/equalizer.h"
 
 #define APP_NAME "ter-music"
-#define APP_VERSION "v1.11.1"
+#define APP_VERSION "v2.0.0"
 #define APP_AUTHORS "@燕戏竹林, @罐子(-.-)"
 #define APP_EMAIL "yxzl666xx@outlook.com"
 #define APP_REPO "https://github.com/YXZL985/ter-music.git"

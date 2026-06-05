@@ -1,3 +1,12 @@
+ter-music (2.0.0-1) unstable; urgency=medium
+
+  * 10-band ISO graphic equalizer with biquad IIR DSP.
+  * Visual bar chart EQ UI in settings panel.
+  * Config schema v2.2 with equalizer persistence.
+  * PipeWire audio backend improvements.
+
+ -- Yanxi Bamboo Forest <yxzl666xx@outlook.com>  Thu, 05 Jun 2026 00:00:00 +0800
+
 ter-music (1.11.1-1) unstable; urgency=medium
 
   * Add native APEv2 tag parser for enhanced metadata extraction.
