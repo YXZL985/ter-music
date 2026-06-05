@@ -8,6 +8,7 @@
 scripts/
 ├── README.md                    # 本文件
 ├── build/                      # 构建脚本
+│   ├── launch-auto-build.sh   # ★ 一键构建所有包类型（推荐入口）
 │   ├── build-appimage.sh      # 构建 AppImage 包
 │   ├── build-deb.sh          # 构建 DEB 包
 │   ├── build-linyaps.sh      # 构建 Linyaps (如意玲珑) 包
@@ -34,6 +35,57 @@ packaging/
 ```
 
 ## 构建脚本使用方法
+
+### 0. launch-auto-build.sh — 一键构建所有包类型（推荐入口）
+
+一键构建 ter-music 所有支持的包格式。支持交互式和 CLI 两种模式：
+自动管理 Docker 镜像（先构建镜像再构建包），无需手动逐条执行各个构建脚本。
+
+**用法：**
+```bash
+./scripts/build/launch-auto-build.sh [选项]
+```
+
+**选项：**
+- `-v, --version VERSION` — 指定版本号（默认自动检测）
+- `-a, --arch ARCH` — 目标架构：`amd64`, `arm64`（逗号分隔，默认 amd64,arm64）
+- `-t, --types TYPES` — 包类型：`deb,rpm,linyaps,appimage,portable`（逗号分隔，默认全部）
+- `-k, --keep-temp` — 保留临时文件
+- `--skip-images` — 跳过 Docker 镜像预构建
+- `--rebuild-images` — 强制重新构建 Docker 镜像
+- `--skip-builds` — 仅构建 Docker 镜像，跳过包构建
+- `--fail-fast` — 遇构建失败立即停止
+- `--no-docker` — 跳过依赖 Docker 的构建（deb/rpm）
+
+**默认构建矩阵：**
+
+| 架构 | deb | rpm | linyaps | appimage | portable |
+|------|-----|-----|---------|----------|----------|
+| amd64 | 静态链接+源码包 | 静态链接 | ✓ | ✓ | ✓ |
+| arm64 | 容器构建+源码包 | — | — | — | — |
+
+**示例：**
+```bash
+# 交互模式（不带参数运行）
+./scripts/build/launch-auto-build.sh
+
+# 指定版本构建全部包
+./scripts/build/launch-auto-build.sh -v 2.0.0
+
+# 指定架构和包类型
+./scripts/build/launch-auto-build.sh -v 2.0.0 -a amd64,arm64 -t deb,rpm
+
+# 跳过 Docker 镜像预构建（镜像已存在时）
+./scripts/build/launch-auto-build.sh -v 2.0.0 --skip-images
+```
+
+**工作流程：**
+1. 生成构建矩阵（包含所有需构建的架构/包类型组合）
+2. 收集去重后的 Docker 镜像列表，逐一检查/构建（镜像已存在则跳过）
+3. 依次执行所有包构建（失败继续，除非 `--fail-fast`）
+4. 输出汇总报告（成功/失败/跳过数量及产物目录）
+
+### 1. build-appimage.sh - 构建 AppImage 包
 
 ### 1. build-appimage.sh - 构建 AppImage 包
 

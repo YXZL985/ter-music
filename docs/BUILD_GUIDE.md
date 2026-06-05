@@ -2,6 +2,64 @@
 
 这个项目提供了多个构建脚本，用于将 Ter-Music 打包成不同的格式。
 
+> 💡 **推荐使用 `launch-auto-build.sh` 一键构建** — 自动构建所有包类型、管理 Docker 镜像，无需逐条执行各个构建脚本。
+
+## 一键构建（推荐）
+
+### launch-auto-build.sh — 一键构建所有包类型
+
+位于 `scripts/build/launch-auto-build.sh`，是构建 ter-music 所有包格式的统一入口。
+
+**核心设计：** 两阶段执行。先构建所有需要的 Docker 镜像（已存在则跳过），再依次构建所有包。
+支持交互式和 CLI 两种模式。
+
+**用法：**
+```bash
+./scripts/build/launch-auto-build.sh [选项]
+```
+
+**选项：**
+
+| 选项 | 说明 | 默认值 |
+|------|------|--------|
+| `-v, --version VERSION` | 指定版本号 | 自动检测 |
+| `-a, --arch ARCH` | 目标架构（逗号分隔）：`amd64`, `arm64` | `amd64,arm64` |
+| `-t, --types TYPES` | 包类型（逗号分隔）：`deb,rpm,linyaps,appimage,portable` | 全部 |
+| `-k, --keep-temp` | 保留临时构建文件 | 关闭 |
+| `--skip-images` | 跳过 Docker 镜像预构建 | 关闭 |
+| `--rebuild-images` | 强制重新构建 Docker 镜像 | 关闭 |
+| `--skip-builds` | 仅构建 Docker 镜像，跳过包构建 | 关闭 |
+| `--fail-fast` | 遇构建失败立即停止 | 关闭 |
+| `--no-docker` | 跳过依赖 Docker 的构建（deb/rpm） | 关闭 |
+
+**默认构建矩阵：**
+
+| 包类型 | amd64 | arm64 |
+|--------|-------|-------|
+| deb | 容器构建（静态链接 + 源码包，`Dockerfile.deb-static`） | 容器构建（动态链接 + 源码包，`Dockerfile.deb`） |
+| rpm | 容器构建（静态链接，`Dockerfile.rpm-static`） | — |
+| linyaps | 本地构建 | — |
+| appimage | 本地构建 | — |
+| portable | 本地构建 | — |
+
+**示例：**
+```bash
+# 交互模式（不带参数运行，会提示输入各项配置）
+./scripts/build/launch-auto-build.sh
+
+# 指定版本，构建全部包（amd64 默认）
+./scripts/build/launch-auto-build.sh -v 2.0.0
+
+# 指定版本、多架构、部分包类型
+./scripts/build/launch-auto-build.sh -v 2.0.0 -a amd64,arm64 -t deb,rpm
+
+# 跳过 Docker 镜像预构建（镜像已存在时加速）
+./scripts/build/launch-auto-build.sh -v 2.0.0 -a amd64 --skip-images
+
+# 仅构建 Docker 镜像，不构建包
+./scripts/build/launch-auto-build.sh --rebuild-images --skip-builds
+```
+
 ## 可用的构建脚本
 
 ### 1. build-rpm.sh - 构建 RPM 包
@@ -596,7 +654,20 @@ file bin/ter-music
 
 ## 推荐的构建流程
 
-现在可以直接构建可移植包或 AppImage，不需要先构建 RPM。推荐直接指定版本号构建：
+**推荐使用 `launch-auto-build.sh` 一键构建所有包类型（最便捷的方式）：**
+
+```bash
+# 一键构建所有包（交互模式）
+./scripts/build/launch-auto-build.sh
+
+# 指定版本，自动构建全部包
+./scripts/build/launch-auto-build.sh -v 2.0.0
+
+# 指定版本和多架构
+./scripts/build/launch-auto-build.sh -v 2.0.0 -a amd64,arm64
+```
+
+如果只需构建单个包类型，也可以直接使用对应的构建脚本：
 
 - 直接指定版本号构建可移植包（推荐，兼容性最好）：
   ```bash
