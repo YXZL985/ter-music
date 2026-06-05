@@ -251,7 +251,7 @@ check_dependencies() {
 }
 
 detect_version() {
-    local default_version="1.0.0"
+    local default_version="2.0.0"
 
     if [ -d "${SCRIPT_DIR}/.git" ] && command -v git >/dev/null 2>&1; then
         local git_version=$(git describe --tags --abbrev=0 2>/dev/null || true)
@@ -261,18 +261,12 @@ detect_version() {
         fi
     fi
 
-    if [ -f "${SCRIPT_DIR}/CMakeLists.txt" ]; then
+    if [ -f "${SCRIPT_DIR}/include/org.yxzl.ter-music/types.h" ]; then
         local match
-        match=$(grep -E 'project.*VERSION' "${SCRIPT_DIR}/CMakeLists.txt" | head -1)
+        match=$(grep -E 'APP_VERSION' "${SCRIPT_DIR}/include/org.yxzl.ter-music/types.h" | head -1)
         if [[ $match =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
             echo "${BASH_REMATCH[1]}"
             return
-        else
-            match=$(grep -E 'set.*VERSION' "${SCRIPT_DIR}/CMakeLists.txt" | head -1)
-            if [[ $match =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
-                echo "${BASH_REMATCH[1]}"
-                return
-            fi
         fi
     fi
 

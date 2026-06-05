@@ -290,8 +290,8 @@ check_environment() {
         exit 1
     fi
 
-    if [ ! -f "${SCRIPT_DIR}/include/defs.h" ]; then
-        log_error "未找到 defs.h 文件"
+    if [ ! -f "${SCRIPT_DIR}/include/org.yxzl.ter-music/types.h" ]; then
+        log_error "未找到 types.h 文件"
         log_error "请确保项目结构完整"
         exit 1
     fi
@@ -328,7 +328,7 @@ check_download_tool() {
 }
 
 detect_version() {
-    local default_version="1.0.0"
+    local default_version="2.0.0"
 
     if [ -d "${SCRIPT_DIR}/.git" ] && command -v git >/dev/null 2>&1; then
         local git_version=$(git describe --tags --abbrev=0 2>/dev/null || true)
@@ -338,9 +338,9 @@ detect_version() {
         fi
     fi
 
-    if [ -f "${SCRIPT_DIR}/include/defs.h" ]; then
+    if [ -f "${SCRIPT_DIR}/include/org.yxzl.ter-music/types.h" ]; then
         local match
-        match=$(grep -E 'APP_VERSION' "${SCRIPT_DIR}/include/defs.h" | head -1)
+        match=$(grep -E 'APP_VERSION' "${SCRIPT_DIR}/include/org.yxzl.ter-music/types.h" | head -1)
         if [[ $match =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
             echo "${BASH_REMATCH[1]}"
             return
@@ -793,7 +793,7 @@ main() {
     if [ -z "$version" ]; then
         version=$(detect_version)
         if [ "$version" != "1.0.0" ]; then
-            log_info "从 Git/defs.h/CMakeLists.txt 检测到版本: $version"
+            log_info "从 Git/types.h 检测到版本: $version"
         else
             log_info "无法检测版本，使用默认版本: $version"
         fi

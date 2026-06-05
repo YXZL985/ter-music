@@ -5,7 +5,7 @@ set -e
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 SCRIPT_DIR="$(pwd)"
 PROJECT_NAME="ter-music"
-DEFAULT_VERSION="1.0.0"
+DEFAULT_VERSION="2.0.0"
 OUTPUT_DIR="${SCRIPT_DIR}/build/rpm"
 TEMP_DIR="${SCRIPT_DIR}/.rpmbuild_temp"
 
@@ -384,7 +384,7 @@ check_dependencies() {
 
 detect_version() {
     local version="$DEFAULT_VERSION"
-    
+
     if [ -d "${SCRIPT_DIR}/.git" ] && command -v git >/dev/null 2>&1; then
         local git_version=$(git describe --tags --abbrev=0 2>/dev/null || true)
         if [[ $git_version =~ ^v?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
@@ -393,20 +393,17 @@ detect_version() {
             return
         fi
     fi
-    
-    if [ -f "${SCRIPT_DIR}/CMakeLists.txt" ]; then
+
+    if [ -f "${SCRIPT_DIR}/include/org.yxzl.ter-music/types.h" ]; then
         local match
-        match=$(grep -E 'project.*VERSION' "${SCRIPT_DIR}/CMakeLists.txt" | head -1)
+        match=$(grep -E 'APP_VERSION' "${SCRIPT_DIR}/include/org.yxzl.ter-music/types.h" | head -1)
         if [[ $match =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
             version="${BASH_REMATCH[1]}"
-        else
-            match=$(grep -E 'set.*VERSION' "${SCRIPT_DIR}/CMakeLists.txt" | head -1)
-            if [[ $match =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
-                version="${BASH_REMATCH[1]}"
-            fi
+            echo "$version"
+            return
         fi
     fi
-    
+
     echo "$version"
 }
 
