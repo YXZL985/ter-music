@@ -17,47 +17,101 @@ ter-music Quick Start Guide
 
 2. Layout Overview
 ------------------
-  +-------------------+-------------------+
-  | Playlist Pane     | Lyrics Panel      |
-  | (Left main area)  | (Right, toggleable)|
-  |                   |                   |
-  | Control Bar (bottom)                  |
-  | [Play/Pause/Next/ |                   |
-  |  Prev/Volume/Mode] |                   |
-  +-------------------+-------------------+
-  | F1:Home F2:Settings ... F8:Help F9:Quit|
-  +----------------------------------------+
+  +---------------------------+-------------------+
+  | Playlist / Queue pane     | Lyrics Panel      |
+  | (Tab to toggle views)     | (Right, toggleable)|
+  |                           |                   |
+  | Control Bar (bottom)       |                   |
+  | [<<] [>||] [>>] [Stop]    |                   |
+  | [Mode] [Speed] [Progress]  |                   |
+  +---------------------------+-------------------+
+  | F1:Home F2:Settings ... F8:Help F9:Quit      |
+  +----------------------------------------------+
 
-3. Basic Controls
------------------
-  Enter         Play selected track
-  Space/Double-click  Also plays
-  ↑/↓           Navigate list
-  ←/→           Switch focus between controls
-  Tab           Toggle between playlist and controls
-  /             Search tracks (main view)
+3. Focus Switching
+------------------
+  Key          Action
+  C            Focus to control bar
+  L            Focus to list area
+  Tab/Shift+Tab  Toggle file browser / play queue view
+
+4. List Area Controls (File Browser or Queue)
+----------------------------------------------
+  Navigation:
+  ↑/↓  or  j/k     Select track up/down
+  Enter or Space    Play selected track
 
   Playback:
-  p             Play/Pause
-  s or → (playing) Stop
-  n             Next track
-  b or ← (playing) Previous track
-  ]             Seek forward 5 seconds
-  [             Seek backward 5 seconds
-  +/=           Increase volume
-  -/_           Decrease volume
-  m             Mute toggle
-  >             Increase speed (0.75x -> 3.0x)
-  <             Decrease speed
+  n                 Next track
+  p                 Previous track
+  h                 Show playback history popup
 
-  Loop modes (press l to cycle):
-    Sequential -> Single Repeat -> List Repeat -> Shuffle
+  Queue Management:
+  a                 Append track to play queue
+  i                 Insert track as next in queue
+  d                 Remove track from queue
+  D                 Clear the entire queue
+  J                 Move track down in queue
+  K                 Move track up in queue
 
-4. Function Menu (F-Keys)
---------------------------
+  Playlists & Favorites:
+  A                 Add to a custom playlist (opens selection popup)
+  F / f             Add to favorites
+  O / o             Open a music folder
+
+  Search & Browse:
+  S  or  /          Search tracks (pinyin supported)
+  M                 Toggle music library browser
+
+  Quick Play Modes:
+  1                 Sequential
+  2                 Single Repeat
+  3                 List Repeat
+  4                 Shuffle Repeat
+  5                 Folder Sequential
+
+5. Control Bar (when focused with C)
+-------------------------------------
+  ←/→              Select control button
+  Space             Activate selected button / open popup menu
+  ,                 Seek backward 5 seconds
+  .                 Seek forward 5 seconds
+  +/=               Increase volume
+  -/_               Decrease volume
+  D                 Jump to current lyric line
+
+  Control Buttons:
+  [<<]    Previous track
+  [>||]   Play / Pause
+  [>>]    Next track
+  [Stop]  Stop playback
+  [Mode]  Play mode (ENTER to choose from 17 modes)
+  [Speed] Playback speed (popup: 0.75x - 3.0x)
+  [Vol]   Volume slider (popup)
+
+6. Play Modes (17 modes)
+-------------------------
+  Basic modes (always available):
+    Sequential        Play through list, stop at end
+    Single Repeat     Repeat current track
+    List Repeat       Repeat entire list
+    Shuffle Once      Shuffle, play each track once
+    Shuffle Repeat    Continuous shuffle
+
+  Advanced modes (require SQLite library metadata):
+    Folder*           Scoped to current directory
+    Album*            Scoped by album tag
+    Artist*           Scoped by artist tag
+    (* each has Sequential/Repeat/Shuffle/Shuffle Repeat variants)
+
+  Press ENTER on the [Mode] button to open the popup menu.
+  Enable advanced modes in Settings -> Play Mode.
+
+7. Function Keys (F1-F9)
+-------------------------
   F1  Home (return to main view)
-  F2  Settings (theme, paths, playback, etc.)
-  F3  History (browse directories and playback history)
+  F2  Settings (theme, paths, playback, equalizer, etc.)
+  F3  History (browse playback history)
   F4  Playlists (manage and create playlists)
   F5  Favorites (view and manage favorite tracks)
   F6  Info (version and project info)
@@ -65,69 +119,89 @@ ter-music Quick Start Guide
   F8  Help (this page)
   F9  Quit
 
-5. Search
----------
-  Press / in the main view to enter search mode.
-  Type keywords and press Enter to filter results.
-  Navigate with ↑/↓, press Enter to play.
-  Press Esc to cancel.
-  Supports pinyin search (e.g., typing "zhou" finds "Jay Chou").
+8. Music Library Browser
+------------------------
+  Press M to toggle library browser.
+  Navigate: Home -> Artists -> Albums -> Tracks
+  Use ↑/↓ to select, Enter to drill down.
+  Press M again or Esc to return to folder browsing.
 
-6. Lyrics
----------
+9. Search
+----------
+  Press S or / in the main view to enter search mode.
+  Type keywords, Enter to filter results.
+  Navigate with ↑/↓, Enter to play.
+  Press Esc to cancel.
+  Supports pinyin search (e.g., "zhou" finds "Jay Chou").
+
+10. Lyrics
+-----------
+  Priority order: embedded lyrics (FFmpeg/APE) > .lrc file > vinyl animation
   .lrc files in the same directory are loaded automatically.
-  Toggle the lyrics panel in Settings.
+  Embedded lyrics (in ID3/APE tags) take priority when available.
+  Toggle lyrics panel in Settings.
   Supports alignment: left, center, right.
 
-7. Remote Playback
-------------------
+11. CUE Split-track Support
+----------------------------
+  CUE sheets for FLAC/APE/WV are parsed automatically.
+  Sub-tracks appear with a [CUE] prefix in the playlist.
+  CUE file encoding is auto-detected (configurable in Settings):
+    Auto / UTF-8 / GB18030 / GBK / BIG5 / Shift-JIS
+
+12. Equalizer
+-------------
+  10-band ISO graphic equalizer (31Hz - 16kHz).
+  Adjust in Settings -> Equalizer.
+  Use ←/→ to select band, ↑/↓ to adjust gain (±12dB).
+  Pre-amp range: ±12dB.
+
+13. Remote Playback
+-------------------
   Supports SMB/SFTP/FTP/WebDAV/HTTP protocols.
   Configure connections in Settings -> Remote Devices.
   Remote URL can also be passed directly on the command line:
     ter-music ftp://user:password@host/path/
 
-8. Playlist Management
-----------------------
+14. Playlist Management
+-----------------------
   Press F4 to open playlist manager.
   Create, rename, and delete playlists.
-  Press 'a' in the main view to add the current track to a playlist.
+  Press A (uppercase) in the main view to add a track to a custom playlist.
 
-9. Favorites
-------------
-  Press 'f' on a selected track to add it to favorites.
+15. Favorites
+-------------
+  Press F/f on a selected track to add to favorites.
   Press F5 to view and manage your favorites.
 
-10. Sorting
------------
-  In Settings -> Playback, you can change the sort mode:
-    Default (by addition order)
-    By Title
-    By Artist
-    By Album
-    By Filename
-  The playlist reorders immediately after changing the sort mode.
-
-11. Album Art
+16. Album Art
 -------------
   Enable album cover display in Settings.
   Covers are rendered as braille dot art in the terminal.
+  Supports PNG and JPEG formats.
 
-12. Info Bar & Audio Backend
+17. Info Bar & Audio Backend
 ----------------------------
-  The bottom of the main view shows technical info for the current track:
-    Sample Rate: 44100Hz / 48000Hz etc.
-    Bit Depth: 16bit / 24bit
-    Bitrate: 320kbps / 1411kbps etc.
-    Codec: MP3 / FLAC / AAC etc.
+  The bottom info bar shows technical info for the current track:
+    Sample Rate, Bit Depth, Bitrate, Codec
 
-  In Settings -> Playback, you can switch the audio backend:
-    Auto (auto-detect)
-    PulseAudio
-    ALSA
+  Audio backend auto-detection priority: PipeWire > PulseAudio > ALSA
+  Switch manually in Settings -> Audio:
+    Auto, PipeWire, PulseAudio, ALSA
 
-13. Tips & Tricks
------------------
+18. Configuration & Data
+-------------------------
+  Config file:  ~/.config/ter-music/config.xml  (v2.2 XML format)
+  Library DB:   ~/.config/ter-music/library.db   (SQLite)
+  Queue:        ~/.config/ter-music/queue.txt    (persistent queue)
+  Cover cache:  ~/.config/ter-music/album_cover_cache/
+
+  Migration from v1 (config.json + JSON files) is automatic on first run.
+
+19. Tips & Tricks
+------------------
   Press ? or h in the main view for keyboard shortcut help.
   The UI adapts automatically when the terminal is resized.
   Playback state is saved on exit (can be disabled in Settings).
   Ctrl+C exits safely.
+  The settings sidebar uses ENTER to open option menus (no +/- keys needed).
