@@ -7,6 +7,8 @@
 #include <signal.h>
 #include <time.h>
 
+#include "audio/equalizer.h"
+
 #define APP_NAME "ter-music"
 #define APP_VERSION "v1.11.1"
 #define APP_AUTHORS "@燕戏竹林, @罐子(-.-)"
@@ -291,6 +293,9 @@ typedef struct {
     int config_version;
     RemoteConnectionConfig remote_connections[MAX_REMOTE_CONNECTIONS];
     int remote_connection_count;
+    int eq_enabled;              /* 0/1 — equaliser master switch */
+    int eq_preamp;               /* pre-amp gain in dB, -12..12 */
+    int eq_band_gains[EQ_BAND_COUNT]; /* per-band gain in dB, -12..12 */
 } AppConfig;
 
 typedef struct {

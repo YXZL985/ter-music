@@ -1000,6 +1000,11 @@ void *play_audio_thread(void *arg)
         int batch = (remaining < WRITE_BATCH_FRAMES) ? remaining : WRITE_BATCH_FRAMES;
         int32_t *write_ptr = cur->data + cur->consumed_frames * seg_pool.channels;
 
+        /* Equalizer */
+        if (eq_is_enabled()) {
+            eq_process(write_ptr, batch, seg_pool.channels, output_sample_rate);
+        }
+
         /* Visualizer */
         if (remaining > (output_sample_rate * get_configured_latency_ms() / 1000))
             push_visualizer_samples(write_ptr, batch, seg_pool.channels);

@@ -91,7 +91,19 @@ static const char *settings_options[] = {
     "高级播放模式",
     "默认播放模式",
     "无缝预加载下一曲",
-    "CUE字符编码"
+    "CUE字符编码",
+    "启用均衡器",
+    "预增益",
+    "31 Hz",
+    "62 Hz",
+    "125 Hz",
+    "250 Hz",
+    "500 Hz",
+    "1 kHz",
+    "2 kHz",
+    "4 kHz",
+    "8 kHz",
+    "16 kHz"
 };
 static const char *settings_options_ascii[] = {
     "Playlist Foreground",
@@ -123,9 +135,21 @@ static const char *settings_options_ascii[] = {
     "Advanced Play Modes",
     "Default Play Mode",
     "Seamless Preload",
-    "CUE Encoding"
+    "CUE Encoding",
+    "Enable Equalizer",
+    "Pre-amp",
+    "31 Hz",
+    "62 Hz",
+    "125 Hz",
+    "250 Hz",
+    "500 Hz",
+    "1 kHz",
+    "2 kHz",
+    "4 kHz",
+    "8 kHz",
+    "16 kHz"
 };
-#define SETTINGS_OPTION_COUNT 30
+#define SETTINGS_OPTION_COUNT 42
 
 enum {
     SETTINGS_IDX_THEME_COLOR_PAIR_0  = 0,
@@ -157,7 +181,19 @@ enum {
     SETTINGS_IDX_ADVANCED_PLAY_MODES = 26,
     SETTINGS_IDX_DEFAULT_PLAY_MODE2  = 27,
     SETTINGS_IDX_SEAMLESS_PRELOAD    = 28,
-    SETTINGS_IDX_CUE_ENCODING        = 29
+    SETTINGS_IDX_CUE_ENCODING        = 29,
+    SETTINGS_IDX_EQ_ENABLED          = 30,
+    SETTINGS_IDX_EQ_PREAMP           = 31,
+    SETTINGS_IDX_EQ_BAND_0           = 32,  /* 31 Hz */
+    SETTINGS_IDX_EQ_BAND_1           = 33,  /* 62 Hz */
+    SETTINGS_IDX_EQ_BAND_2           = 34,  /* 125 Hz */
+    SETTINGS_IDX_EQ_BAND_3           = 35,  /* 250 Hz */
+    SETTINGS_IDX_EQ_BAND_4           = 36,  /* 500 Hz */
+    SETTINGS_IDX_EQ_BAND_5           = 37,  /* 1 kHz */
+    SETTINGS_IDX_EQ_BAND_6           = 38,  /* 2 kHz */
+    SETTINGS_IDX_EQ_BAND_7           = 39,  /* 4 kHz */
+    SETTINGS_IDX_EQ_BAND_8           = 40,  /* 8 kHz */
+    SETTINGS_IDX_EQ_BAND_9           = 41   /* 16 kHz */
 };
 
 typedef struct {
@@ -206,10 +242,29 @@ static const int settings_playmode_option_indices[] = {
     SETTINGS_IDX_ADVANCED_PLAY_MODES
 };
 
+static const int settings_eq_option_indices[] = {
+    SETTINGS_IDX_EQ_ENABLED,
+    SETTINGS_IDX_EQ_PREAMP,
+    SETTINGS_IDX_EQ_BAND_0,
+    SETTINGS_IDX_EQ_BAND_1,
+    SETTINGS_IDX_EQ_BAND_2,
+    SETTINGS_IDX_EQ_BAND_3,
+    SETTINGS_IDX_EQ_BAND_4,
+    SETTINGS_IDX_EQ_BAND_5,
+    SETTINGS_IDX_EQ_BAND_6,
+    SETTINGS_IDX_EQ_BAND_7,
+    SETTINGS_IDX_EQ_BAND_8,
+    SETTINGS_IDX_EQ_BAND_9
+};
+
 /* Forward declarations for sel menu / re-render helpers */
 static void create_sel_window(void);
 static void close_sel_menu(int apply);
 static void rerender_settings_view(void);
+
+/* Forward declarations for EQ visual UI */
+static void render_eq_visual(void);
+static void handle_eq_input(int ch);
 
 /* Reset settings view state (called from menus.c on view switch) */
 void reset_settings_view(void)
@@ -238,6 +293,9 @@ static SettingsSectionSpec get_settings_section_spec_for_sidebar(int sidebar_idx
         case 3:
             return (SettingsSectionSpec){settings_playmode_option_indices,
                 (int)(sizeof(settings_playmode_option_indices) / sizeof(settings_playmode_option_indices[0]))};
+        case 6:
+            return (SettingsSectionSpec){settings_eq_option_indices,
+                (int)(sizeof(settings_eq_option_indices) / sizeof(settings_eq_option_indices[0]))};
         default:
             return (SettingsSectionSpec){NULL, 0};
     }
@@ -419,6 +477,26 @@ static void format_settings_option_line(int option_index, char *line, size_t lin
         }
         snprintf(line, line_size, "%s%s%s",
                  current_settings_options[option_index], separator, enc_str);
+    } else if (option_index >= SETTINGS_IDX_EQ_ENABLED &&
+               option_index <= SETTINGS_IDX_EQ_BAND_9) {
+        if (option_index == SETTINGS_IDX_EQ_ENABLED) {
+            snprintf(line, line_size, "%s%s%s",
+                     current_settings_options[option_index], separator,
+                     menu_bool_text(g_app_config.eq_enabled));
+        } else if (option_index == SETTINGS_IDX_EQ_PREAMP) {
+            snprintf(line, line_size, "%s%s%d dB",
+                     current_settings_options[option_index], separator,
+                     g_app_config.eq_preamp);
+        } else {
+            int band = option_index - SETTINGS_IDX_EQ_BAND_0;
+            int gain = g_app_config.eq_band_gains[band];
+            if (gain >= 0)
+                snprintf(line, line_size, "%s%s+%d dB",
+                         current_settings_options[option_index], separator, gain);
+            else
+                snprintf(line, line_size, "%s%s%d dB",
+                         current_settings_options[option_index], separator, gain);
+        }
     } else {
         snprintf(line, line_size, "%s", current_settings_options[option_index]);
     }
@@ -698,7 +776,35 @@ static void adjust_or_toggle_settings_option(int option_index, int delta)
             save_config();
             show_status_message(menu_text("CUE编码设置已保存", "CUE encoding saved"));
             break;
+        case SETTINGS_IDX_EQ_ENABLED:
+            g_app_config.eq_enabled = !g_app_config.eq_enabled;
+            eq_set_enabled(g_app_config.eq_enabled);
+            save_config();
+            show_status_message(g_app_config.eq_enabled
+                ? menu_text("均衡器已启用", "Equalizer enabled")
+                : menu_text("均衡器已禁用", "Equalizer disabled"));
+            break;
+        case SETTINGS_IDX_EQ_PREAMP:
+            if (delta == 0) delta = 1;
+            g_app_config.eq_preamp += delta;
+            if (g_app_config.eq_preamp < EQ_PREAMP_MIN) g_app_config.eq_preamp = EQ_PREAMP_MIN;
+            if (g_app_config.eq_preamp > EQ_PREAMP_MAX) g_app_config.eq_preamp = EQ_PREAMP_MAX;
+            eq_set_preamp(g_app_config.eq_preamp);
+            save_config();
+            break;
         default:
+            if (option_index >= SETTINGS_IDX_EQ_BAND_0 &&
+                option_index <= SETTINGS_IDX_EQ_BAND_9) {
+                int band = option_index - SETTINGS_IDX_EQ_BAND_0;
+                if (delta == 0) delta = 1;
+                g_app_config.eq_band_gains[band] += delta;
+                if (g_app_config.eq_band_gains[band] < EQ_GAIN_MIN)
+                    g_app_config.eq_band_gains[band] = EQ_GAIN_MIN;
+                if (g_app_config.eq_band_gains[band] > EQ_GAIN_MAX)
+                    g_app_config.eq_band_gains[band] = EQ_GAIN_MAX;
+                eq_set_band_gain(band, g_app_config.eq_band_gains[band]);
+                save_config();
+            }
             break;
     }
 }
@@ -1353,7 +1459,8 @@ static void activate_settings_current_option(void)
         g_settings_current_option == SETTINGS_IDX_SHOW_LYRICS ||
         g_settings_current_option == SETTINGS_IDX_SHOW_ALBUM_COVER ||
         g_settings_current_option == SETTINGS_IDX_SEAMLESS_PRELOAD ||
-        g_settings_current_option == SETTINGS_IDX_ADVANCED_PLAY_MODES) {
+        g_settings_current_option == SETTINGS_IDX_ADVANCED_PLAY_MODES ||
+        g_settings_current_option == SETTINGS_IDX_EQ_ENABLED) {
         adjust_or_toggle_settings_option(g_settings_current_option, 0);
         return;
     }
@@ -2230,6 +2337,9 @@ void render_settings_content(void)
                  menu_text(", / .：快退 / 快进", ", / .: Seek backward / forward"));
     } else if (g_menu_selected_idx == 5) {  /* 远程设备 */
         render_remote_content();
+    } else if (g_menu_selected_idx == 6) {  /* 均衡器 */
+        render_eq_visual();
+        attron(COLOR_PAIR(COLOR_PAIR_PLAYLIST));
     } else {
         mvprintw(start_y, content_start_x, "%s",
                  menu_text("按 ENTER 返回主界面", "Press Enter to return to the main view"));
@@ -2260,6 +2370,259 @@ static void rerender_settings_view(void)
  * Settings input handling (declared in menu_internal.h)
  * ============================================================ */
 
+/* ── EQ visual rendering ──────────────────────────────────── */
+
+static void render_eq_visual(void)
+{
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    int menu_width = max_x / 4;
+    int cx = menu_width + 2;
+    int start_y = 2;
+
+    /* Status header */
+    attron(COLOR_PAIR(COLOR_PAIR_PLAYLIST));
+    const char *status = g_app_config.eq_enabled
+        ? menu_text("均衡器 [已启用]", "Equalizer [Enabled]")
+        : menu_text("均衡器 [已禁用]", "Equalizer [Disabled]");
+
+    /* Clear content area */
+    for (int y = start_y; y < max_y - 2; y++) {
+        move(y, cx);
+        clrtoeol();
+    }
+
+    mvprintw(start_y, cx, "%s", status);
+    start_y++;
+
+    /* Help row (include pre-amp and enable toggle hint) */
+    mvprintw(start_y, cx, "%s",
+             menu_text("←/→ 选     ↑/↓ 调整  ESC 返回  ENTER 开关",
+                      "←/→ Select  ↑/↓ Adjust  ESC Back  ENTER Toggle"));
+    start_y++;
+
+    /* Pre-amp display */
+    {
+        int pre_selected = (g_focus_area == FOCUS_CONTENT
+                         && g_settings_current_option == SETTINGS_IDX_EQ_PREAMP);
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%s %d dB",
+                 menu_text("预增益", "Pre-amp"), g_app_config.eq_preamp);
+        if (pre_selected)
+            attron(A_REVERSE);
+        mvprintw(start_y, cx, "%s", buf);
+        if (pre_selected)
+            attroff(A_REVERSE);
+    }
+
+    /* Enable toggle */
+    {
+        int en_selected = (g_focus_area == FOCUS_CONTENT
+                        && g_settings_current_option == SETTINGS_IDX_EQ_ENABLED);
+        char buf[24];
+        snprintf(buf, sizeof(buf), "  %s: %s",
+                 menu_text("均衡器", "EQ"),
+                 g_app_config.eq_enabled
+                     ? menu_text("开", "ON")
+                     : menu_text("关", "OFF"));
+        if (en_selected)
+            attron(A_REVERSE);
+        mvprintw(start_y, cx + 20, "%s", buf);
+        if (en_selected)
+            attroff(A_REVERSE);
+    }
+    start_y++;
+
+    /* Separator */
+    mvprintw(start_y, cx, "─────────────────────────────────────────────────────");
+    start_y++;
+
+    /* Compute bar fill levels */
+    int selected_band = -1;
+    if (g_settings_current_option >= SETTINGS_IDX_EQ_BAND_0 &&
+        g_settings_current_option <= SETTINGS_IDX_EQ_BAND_9)
+        selected_band = g_settings_current_option - SETTINGS_IDX_EQ_BAND_0;
+
+    /* Each band gets 5 columns: "  ██ " filled or "     " empty */
+#define EQ_COL_W 5
+
+    int above[EQ_BAND_COUNT], below[EQ_BAND_COUNT];
+    for (int i = 0; i < EQ_BAND_COUNT; i++) {
+        int g = g_app_config.eq_band_gains[i];
+        if (g >= 0) {
+            above[i] = (g + 2) / 3;
+            if (above[i] > 4) above[i] = 4;
+            below[i] = 0;
+        } else {
+            above[i] = 0;
+            below[i] = ((-g) + 2) / 3;
+            if (below[i] > 4) below[i] = 4;
+        }
+    }
+
+    /* Draw boost bars (row 0 = top = +12dB) */
+    for (int row = 3; row >= 0; row--) {
+        move(start_y, cx);
+        for (int b = 0; b < EQ_BAND_COUNT; b++) {
+            int col = b * EQ_COL_W;
+            if (above[b] > row) {
+                if (g_focus_area == FOCUS_CONTENT && b == selected_band) {
+                    attron(A_REVERSE);
+                    mvprintw(start_y, cx + col, "  ██ ");
+                    attroff(A_REVERSE);
+                } else {
+                    mvprintw(start_y, cx + col, "  ██ ");
+                }
+            } else {
+                mvprintw(start_y, cx + col, "     ");
+            }
+        }
+        start_y++;
+    }
+
+    /* 0dB line */
+    {
+        mvprintw(start_y, cx,
+                 "─────────────────────┬─────────────────────────");
+        mvprintw(start_y, cx + 22, "0dB");
+        start_y++;
+    }
+
+    /* Draw cut bars (row 0 = top of cut = -3dB, row 3 = -12dB) */
+    for (int row = 0; row < 4; row++) {
+        move(start_y, cx);
+        for (int b = 0; b < EQ_BAND_COUNT; b++) {
+            int col = b * EQ_COL_W;
+            if (below[b] > row) {
+                if (g_focus_area == FOCUS_CONTENT && b == selected_band) {
+                    attron(A_REVERSE);
+                    mvprintw(start_y, cx + col, "  ░░ ");
+                    attroff(A_REVERSE);
+                } else {
+                    mvprintw(start_y, cx + col, "  ░░ ");
+                }
+            } else {
+                mvprintw(start_y, cx + col, "     ");
+            }
+        }
+        start_y++;
+    }
+
+    /* Separator */
+    mvprintw(start_y, cx, "─────────────────────────────────────────────────────");
+    start_y++;
+
+    /* Frequency labels */
+    move(start_y, cx);
+    for (int b = 0; b < EQ_BAND_COUNT; b++) {
+        char label[8];
+        int f = eq_band_frequencies[b];
+        if (f >= 1000)
+            snprintf(label, sizeof(label), " %dk ", f / 1000);
+        else if (f < 100)
+            snprintf(label, sizeof(label), " %d ", f);
+        else
+            snprintf(label, sizeof(label), "%d", f);
+        /* Center-pad to EQ_COL_W */
+        int pad = EQ_COL_W - (int)strlen(label);
+        if (pad > 0) printw("%*s%s%*s", pad/2, "", label, (pad+1)/2, "");
+        else         printw("%-*s", EQ_COL_W, label);
+    }
+    start_y++;
+
+    /* Gain values */
+    move(start_y, cx);
+    for (int b = 0; b < EQ_BAND_COUNT; b++) {
+        int g = g_app_config.eq_band_gains[b];
+        char gbuf[8];
+        if (g > 0)      snprintf(gbuf, sizeof(gbuf), "+%d", g);
+        else if (g == 0) snprintf(gbuf, sizeof(gbuf), " 0");
+        else             snprintf(gbuf, sizeof(gbuf), "%d", g);
+        if (g_focus_area == FOCUS_CONTENT && b == selected_band) {
+            attron(A_REVERSE);
+            printw("%-*s", EQ_COL_W, gbuf);
+            attroff(A_REVERSE);
+        } else {
+            printw("%-*s", EQ_COL_W, gbuf);
+        }
+    }
+    start_y++;
+
+    attroff(COLOR_PAIR(COLOR_PAIR_PLAYLIST));
+    wnoutrefresh(stdscr);
+    doupdate();
+#undef EQ_COL_W
+}
+
+/* ── EQ visual input handler ─────────────────────────────── */
+
+static void handle_eq_input(int ch)
+{
+    switch (ch) {
+        case KEY_LEFT:
+            if (g_focus_area == FOCUS_CONTENT) {
+                if (g_settings_current_option > SETTINGS_IDX_EQ_ENABLED &&
+                    g_settings_current_option <= SETTINGS_IDX_EQ_BAND_9) {
+                    g_settings_current_option--;
+                    rerender_settings_view();
+                } else {
+                    /* Already at first EQ option — move to sidebar */
+                    g_focus_area = FOCUS_SIDEBAR;
+                    rerender_settings_view();
+                }
+            }
+            break;
+
+        case KEY_RIGHT:
+            if (g_focus_area == FOCUS_CONTENT) {
+                if (g_settings_current_option >= SETTINGS_IDX_EQ_ENABLED &&
+                    g_settings_current_option < SETTINGS_IDX_EQ_BAND_9) {
+                    g_settings_current_option++;
+                    rerender_settings_view();
+                } else {
+                    g_settings_current_option = SETTINGS_IDX_EQ_ENABLED;
+                    rerender_settings_view();
+                }
+            }
+            break;
+
+        case KEY_UP:
+            if (g_focus_area == FOCUS_CONTENT) {
+                adjust_or_toggle_settings_option(g_settings_current_option, 1);
+                rerender_settings_view();
+            }
+            break;
+
+        case KEY_DOWN:
+            if (g_focus_area == FOCUS_CONTENT) {
+                adjust_or_toggle_settings_option(g_settings_current_option, -1);
+                rerender_settings_view();
+            }
+            break;
+
+        case 9:   /* TAB — switch to sidebar */
+            g_focus_area = FOCUS_SIDEBAR;
+            rerender_settings_view();
+            break;
+
+        case 27:  /* ESC — back to sidebar */
+            g_focus_area = FOCUS_SIDEBAR;
+            rerender_settings_view();
+            break;
+
+        case 10:  /* ENTER */
+        case ' ':
+            if (g_focus_area == FOCUS_CONTENT) {
+                activate_settings_current_option();
+                rerender_settings_view();
+            }
+            break;
+
+        default:
+            break;
+    }
+}
+
 void handle_settings_input(int ch)
 {
     /* Selection menu active — handle menu input first */
@@ -2271,6 +2634,12 @@ void handle_settings_input(int ch)
     /* Remote section handles its own input when content-focused */
     if (g_menu_selected_idx == 5 && g_focus_area == FOCUS_CONTENT) {
         handle_remote_content_input(ch);
+        return;
+    }
+
+    /* EQ section uses dedicated visual input handler */
+    if (g_menu_selected_idx == 6 && g_focus_area == FOCUS_CONTENT) {
+        handle_eq_input(ch);
         return;
     }
 

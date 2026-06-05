@@ -82,9 +82,10 @@ const char *settings_sidebar_items[] = {
     "播放模式",
     "快捷键",
     "远程设备",
-    "← 返回"  /* ← 返回 */
+    "均衡器",    /* ← 均衡器 */
+    "← 返回"    /* ← 返回 */
 };
-const int SETTINGS_ITEM_COUNT = 7;
+const int SETTINGS_ITEM_COUNT = 8;
 
 const char *history_sidebar_items[] = {
     "目录历史",
@@ -128,6 +129,7 @@ const char *settings_sidebar_items_ascii[] = {
     "Play Mode",
     "Hotkeys",
     "Remote Devices",
+    "Equalizer",
     "<- Back"
 };
 

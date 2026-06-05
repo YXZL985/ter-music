@@ -106,6 +106,7 @@ add_executable(${PROJECT_NAME}
     src/org.yxzl.ter-music/main/main.c
     src/org.yxzl.ter-music/audio/audio.c
     src/org.yxzl.ter-music/audio/atempo.c
+    src/org.yxzl.ter-music/audio/equalizer.c
     src/org.yxzl.ter-music/audio/audio_visualizer.c
     src/org.yxzl.ter-music/audio/segment_buffer.c
     src/org.yxzl.ter-music/audio/playback_thread.c

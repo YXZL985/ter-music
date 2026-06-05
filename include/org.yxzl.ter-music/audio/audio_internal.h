@@ -130,6 +130,10 @@ int  atempo_is_active(void);
 float atempo_get_speed(void);
 int  atempo_get_input_sample_rate(void);
 
+/* ---- Equaliser（定义在 equalizer.c） ---- */
+#include "audio/equalizer.h"
+void init_equalizer_from_config(void);
+
 /* ---- Audio backend stream ops（定义在 backend_ops.c） ---- */
 int  audio_backend_prepare_stream(int sample_rate, int channels);
 void audio_backend_cleanup_stream(void);

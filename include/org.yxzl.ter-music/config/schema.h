@@ -17,7 +17,7 @@ extern "C" {
 #endif
 
 /* ── Version identifiers ──────────────────────────────────────────── */
-#define CONFIG_XML_VERSION          "2.1"
+#define CONFIG_XML_VERSION          "2.2"
 #define CONFIG_CURRENT_VERSION      3
 #define CONFIG_MIN_SUPPORTED_VER    2
 
@@ -71,6 +71,13 @@ extern "C" {
 #define XML_PREF_AUDIO_BACKEND      "audio_backend"
 #define XML_PREF_SORT_MODE          "sort_mode"
 #define XML_PREF_CUE_ENCODING       "cue_encoding"
+
+/* ── Equalizer ────────────────────────────────────────────────────── */
+#define XML_SECTION_EQUALIZER       "equalizer"
+#define XML_EQ_ENABLED              "enabled"
+#define XML_EQ_PREAMP               "preamp"
+#define XML_EQ_BAND                 "band"
+#define XML_ATTR_BAND_FREQUENCY     "frequency"
 
 /* ── Remote connections ───────────────────────────────────────────── */
 #define XML_REMOTE_CONN             "connection"

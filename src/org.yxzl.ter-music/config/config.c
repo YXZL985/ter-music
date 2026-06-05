@@ -21,6 +21,7 @@
 #include "config/crypto.h"
 #include "playlist/encoding.h"
 #include "logger/logger.h"
+#include "audio/equalizer.h"
 
 /* ── Forward declarations of internal helpers ─────────────────────── */
 
@@ -150,6 +151,30 @@ int config_save_to_xml(const char *path, const AppConfig *cfg)
         SAVE_INT(XML_PREF_SORT_MODE,       cfg->sort_mode);
         SAVE_INT(XML_PREF_CUE_ENCODING,    cfg->cue_encoding);
 #undef SAVE_INT
+    }
+
+    /* ── <equalizer> ─────────────────────────────────────────── */
+    {
+        xmlNodePtr eq_node = xmlNewChild(root, NULL,
+                                          (const xmlChar *)XML_SECTION_EQUALIZER, NULL);
+        snprintf(buf, sizeof(buf), "%d", cfg->eq_enabled);
+        xmlNewChild(eq_node, NULL, (const xmlChar *)XML_EQ_ENABLED,
+                    (const xmlChar *)buf);
+        snprintf(buf, sizeof(buf), "%d", cfg->eq_preamp);
+        xmlNewChild(eq_node, NULL, (const xmlChar *)XML_EQ_PREAMP,
+                    (const xmlChar *)buf);
+
+        for (int i = 0; i < EQ_BAND_COUNT; i++) {
+            char freq_str[16];
+            snprintf(freq_str, sizeof(freq_str), "%d", eq_band_frequencies[i]);
+            char gain_str[16];
+            snprintf(gain_str, sizeof(gain_str), "%d", cfg->eq_band_gains[i]);
+            xmlNodePtr band = xmlNewChild(eq_node, NULL,
+                                           (const xmlChar *)XML_EQ_BAND,
+                                           (const xmlChar *)gain_str);
+            xmlSetProp(band, (const xmlChar *)XML_ATTR_BAND_FREQUENCY,
+                       (const xmlChar *)freq_str);
+        }
     }
 
     /* ── <remote_connections> ───────────────────────────────────── */
@@ -346,6 +371,36 @@ int config_load_from_xml(const char *path, AppConfig *cfg)
         cfg->remote_connection_count = ri;
     }
 
+    /* ── <equalizer> ─────────────────────────────────────────────── */
+    {
+        xmlNodePtr eq = xml_find_child(root, XML_SECTION_EQUALIZER);
+        if (eq) {
+            cfg->eq_enabled = xml_get_int(eq, XML_EQ_ENABLED, 0);
+            cfg->eq_preamp  = xml_get_int(eq, XML_EQ_PREAMP, 0);
+            memset(cfg->eq_band_gains, 0, sizeof(cfg->eq_band_gains));
+
+            for (xmlNodePtr child = eq->children; child; child = child->next) {
+                if (child->type == XML_ELEMENT_NODE &&
+                    xmlStrcmp(child->name, (const xmlChar *)XML_EQ_BAND) == 0) {
+                    xmlChar *freq_attr = xmlGetProp(child,
+                                        (const xmlChar *)XML_ATTR_BAND_FREQUENCY);
+                    xmlChar *content = xmlNodeGetContent(child);
+                    if (freq_attr && content) {
+                        int freq = atoi((const char *)freq_attr);
+                        for (int i = 0; i < EQ_BAND_COUNT; i++) {
+                            if (eq_band_frequencies[i] == freq) {
+                                cfg->eq_band_gains[i] = atoi((const char *)content);
+                                break;
+                            }
+                        }
+                    }
+                    xmlFree(freq_attr);
+                    xmlFree(content);
+                }
+            }
+        }
+    }
+
     xmlFreeDoc(doc);
 
     /* Apply clamping / validation */
@@ -471,4 +526,13 @@ static void clamp_config_values(AppConfig *cfg)
 
     if (cfg->cue_encoding < CUE_ENCODING_AUTO || cfg->cue_encoding >= CUE_ENCODING_COUNT)
         cfg->cue_encoding = CUE_ENCODING_AUTO;
+
+    /* ── Equalizer ── */
+    cfg->eq_enabled = cfg->eq_enabled ? 1 : 0;
+    if (cfg->eq_preamp < EQ_PREAMP_MIN) cfg->eq_preamp = EQ_PREAMP_MIN;
+    if (cfg->eq_preamp > EQ_PREAMP_MAX) cfg->eq_preamp = EQ_PREAMP_MAX;
+    for (int i = 0; i < EQ_BAND_COUNT; i++) {
+        if (cfg->eq_band_gains[i] < EQ_GAIN_MIN) cfg->eq_band_gains[i] = EQ_GAIN_MIN;
+        if (cfg->eq_band_gains[i] > EQ_GAIN_MAX) cfg->eq_band_gains[i] = EQ_GAIN_MAX;
+    }
 }

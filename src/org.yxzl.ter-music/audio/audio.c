@@ -265,6 +265,21 @@ pulse_failed:
     }
 
     log_error("audio", "No audio backend available");
+
+    /* Initialise equaliser from loaded config */
+    init_equalizer_from_config();
+}
+
+/* ============================================================
+ * Equalizer init (called after config is loaded)
+ * ============================================================ */
+
+void init_equalizer_from_config(void)
+{
+    eq_init();
+    eq_set_enabled(g_app_config.eq_enabled);
+    eq_set_preamp(g_app_config.eq_preamp);
+    eq_set_all_gains(g_app_config.eq_band_gains);
 }
 
 /* ============================================================
