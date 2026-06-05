@@ -43,13 +43,14 @@ static int g_settings_color_editing = 0;
 static int g_settings_color_which = 0;
 
 /* ============================================================
- * Selection menu state (drawn directly on stdscr, no newwin)
+ * Selection menu state (uses sub-window + box())
  * ============================================================ */
 
 static int g_sel_active = 0;    /* selection menu open? */
 static int g_sel_src   = -1;    /* SETTINGS_IDX_* that triggered it */
 static int g_sel_idx   = 0;     /* currently highlighted option index */
 static int g_sel_count = 0;     /* total option count */
+static WINDOW *g_sel_win = NULL; /* popup sub-window */
 
 /* Speed globals from audio.c (used by selection menu) */
 extern float g_speed_ratios[];
@@ -206,6 +207,7 @@ static const int settings_playmode_option_indices[] = {
 };
 
 /* Forward declarations for sel menu / re-render helpers */
+static void create_sel_window(void);
 static void close_sel_menu(int apply);
 static void rerender_settings_view(void);
 
@@ -843,12 +845,18 @@ static void close_sel_menu(int apply)
         }
     }
 
+    /* Destroy popup sub-window */
+    if (g_sel_win) {
+        delwin(g_sel_win);
+        g_sel_win = NULL;
+    }
+
     g_sel_active = 0;
     g_sel_src = -1;
 }
 
 /* ============================================================
- * Selection menu — open (drawn on stdscr, no newwin)
+ * Selection menu — open
  * ============================================================ */
 
 static void open_sel_menu(int option_index)
@@ -952,21 +960,25 @@ static void open_sel_menu(int option_index)
     g_sel_src    = option_index;
     g_sel_idx    = cur;
     g_sel_count  = count;
+
+    create_sel_window();
 }
 
 /* ============================================================
- * Selection menu — render on stdscr (box drawn with ACS)
+ * Selection menu — render on sub-window with box()
  * ============================================================ */
 
-static void draw_sel_menu(void)
+static void create_sel_window(void)
 {
-    if (!g_sel_active) return;
+    /* Destroy any existing window first */
+    if (g_sel_win) { delwin(g_sel_win); g_sel_win = NULL; }
 
-    int max_y, max_x;
-    getmaxyx(stdscr, max_y, max_x);
+    if (!g_sel_active) return;
 
     const int src = g_sel_src;
     const int cnt = g_sel_count;
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
 
     /* Build option-text array to gauge width */
     char opts[32][48];
@@ -1088,6 +1100,123 @@ static void draw_sel_menu(void)
     if (row + box_h >= max_y - 2) row = max_y - box_h - 3;
     if (row < 2) row = 2;
 
+    g_sel_win = newwin(box_h, box_w, row, col);
+}
+
+static void draw_sel_menu(void)
+{
+    if (!g_sel_active || !g_sel_win) return;
+
+    int box_h, box_w;
+    getmaxyx(g_sel_win, box_h, box_w);
+
+    const int src = g_sel_src;
+    const int cnt = g_sel_count;
+
+    /* Build option-text array */
+    char opts[32][48];
+    int n = cnt > 32 ? 32 : cnt;
+
+    for (int i = 0; i < n; i++) {
+        opts[i][0] = '\0';
+        switch (src) {
+            case SETTINGS_IDX_DEFAULT_PLAY_MODE:
+                snprintf(opts[i], 48, "%s",
+                         play_mode_display_name((PlayMode)i, use_english_ui())); break;
+            case SETTINGS_IDX_DEFAULT_SPEED:
+                if (i < g_speed_count)
+                    snprintf(opts[i], 48, "%.2fx", (double)g_speed_ratios[i]);
+                break;
+            case SETTINGS_IDX_AUDIO_BACKEND: {
+                int be[] = {AUDIO_BACKEND_AUTO,AUDIO_BACKEND_PIPEWIRE,
+                            AUDIO_BACKEND_PULSE,AUDIO_BACKEND_ALSA};
+                int idx = 0;
+                for (int j = 0; j < 4; j++) {
+                    if (j>0 && be[j]!=AUDIO_BACKEND_AUTO && !audio_backend_is_available(be[j]))
+                        continue;
+                    if (idx == i) {
+                        switch (be[j]) {
+                            case AUDIO_BACKEND_AUTO: snprintf(opts[i],48,"%s",menu_text("自动","Auto"));break;
+                            case AUDIO_BACKEND_PIPEWIRE: snprintf(opts[i],48,"PipeWire");break;
+                            case AUDIO_BACKEND_PULSE:    snprintf(opts[i],48,"PulseAudio");break;
+                            case AUDIO_BACKEND_ALSA:     snprintf(opts[i],48,"ALSA");break;
+                        }
+                        break;
+                    }
+                    idx++;
+                }
+                break;
+            }
+            case SETTINGS_IDX_SORT_MODE:{
+                const char *a[]={menu_text("默认","Default"),menu_text("标题","Title"),
+                                 menu_text("艺术家","Artist"),menu_text("专辑","Album"),
+                                 menu_text("文件名","Filename")};
+                if (i<5) snprintf(opts[i],48,"%s",a[i]); break;
+            }
+            case SETTINGS_IDX_CUE_ENCODING:{
+                const char *a[]={menu_text("自动","Auto"),"UTF-8","GB18030","GBK",
+                                 "BIG5","Shift-JIS"};
+                if (i<CUE_ENCODING_COUNT) snprintf(opts[i],48,"%s",a[i]); break;
+            }
+            case SETTINGS_IDX_LYRICS_ALIGNMENT:{
+                const char *a[]={menu_text("居左","Left"),menu_text("居中","Center"),
+                                 menu_text("居右","Right")};
+                if (i<3) snprintf(opts[i],48,"%s",a[i]); break;
+            }
+            case SETTINGS_IDX_LANGUAGE:{
+                const char *a[]={menu_text("中文","Chinese"),"English"};
+                if (i<2) snprintf(opts[i],48,"%s",a[i]); break;
+            }
+            case SETTINGS_IDX_VOLUME:
+                snprintf(opts[i],48,"%d%%",i*10); break;
+            case SETTINGS_IDX_LATENCY:{
+                int lat[]={20,40,60,80,100,120,150,200,250};
+                if (i<9) snprintf(opts[i],48,"%d ms",lat[i]); break;
+            }
+            default:
+                if (src >= 0 && src < 12) {
+                    int cv[] = {g_app_config.theme.playlist_fg,g_app_config.theme.playlist_bg,
+                                g_app_config.theme.controls_fg,g_app_config.theme.controls_bg,
+                                g_app_config.theme.lyrics_fg,g_app_config.theme.lyrics_bg,
+                                g_app_config.theme.sidebar_fg,g_app_config.theme.sidebar_bg,
+                                g_app_config.theme.highlight_fg,g_app_config.theme.highlight_bg,
+                                g_app_config.theme.border_fg,g_app_config.theme.border_bg};
+                    if (i == g_sel_count - 1) {
+                        int val = cv[src];
+                        int in_pre = 0;
+                        for (int k = 0; k < sel_color_count(); k++) {
+                            if (sel_color_val(k) == val) { in_pre = 1; break; }
+                        }
+                        if (in_pre || val < 0 || val >= COLORS)
+                            snprintf(opts[i], 48, "[%s...]", menu_text("自定义", "Custom"));
+                        else
+                            snprintf(opts[i], 48, "%s: %d", menu_text("自定义", "Custom"), val);
+                        break;
+                    }
+                    int paired = cv[(src % 2 == 0) ? src + 1 : src - 1];
+                    int idx = 0;
+                    int nc = sel_color_count();
+                    for (int j = 0; j < nc; j++) {
+                        int v = sel_color_val(j);
+                        if (v == paired) continue;
+                        if (idx == i) {
+                            snprintf(opts[i], 48, "%s (%d)", menu_color_name(v), v);
+                            break;
+                        }
+                        idx++;
+                    }
+                }
+                break;
+        }
+    }
+
+    /* ── Draw on sub-window ── */
+    werase(g_sel_win);
+
+    /* Border and title: use highlight color pair */
+    wattron(g_sel_win, COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
+    box(g_sel_win, 0, 0);
+
     /* Title */
     const char *title = "";
     switch (src) {
@@ -1105,36 +1234,41 @@ static void draw_sel_menu(void)
                 title = ui_text(" 颜色 "," Color ");
             break;
     }
+    if (title[0])
+        mvwprintw(g_sel_win, 0, 2, "%s", title);
 
-    /* ┌─ title ─┐ */
-    move(row, col);
-    attron(COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
-    addch(ACS_ULCORNER);
-    for (int i = 0; i < box_w - 2; i++) addch(ACS_HLINE);
-    addch(ACS_URCORNER);
-    if (title[0]) mvprintw(row, col + 2, "%s", title);
-    attroff(COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
-    row++;
+    /* Pre-fill all option rows with highlight background color so there are
+       no blank spots — the COLOR_PAIR fills the background, then we overlay
+       option text in terminal defaults (A_NORMAL / A_REVERSE) on top. */
+    int visible_opts = box_h - 2;
+    int scroll_offset = 0;
+    if (g_sel_idx >= visible_opts)
+        scroll_offset = g_sel_idx - visible_opts + 1;
 
-    /* options */
-    for (int i = 0; i < n && row < max_y - 3; i++, row++) {
-        move(row, col);
-        addch(ACS_VLINE);
-        if (i == g_sel_idx) attron(A_REVERSE);
-        printw(" %-*s ", box_w - 4, opts[i]);
-        if (i == g_sel_idx) attroff(A_REVERSE);
-        addch(ACS_VLINE);
+    for (int i = 0; i < visible_opts; i++)
+        mvwprintw(g_sel_win, i + 1, 1, " %-*s ", box_w - 4, "");
+
+    /* Options — HIGHLIGHT color pair, selected item uses A_REVERSE
+       for differentiation. wattrset per iteration ensures clean slate
+       with no attribute residual. */
+    for (int i = 0; i < visible_opts; i++) {
+        int opt_idx = scroll_offset + i;
+        if (opt_idx >= n) continue;
+        if (opt_idx == g_sel_idx)
+            wattrset(g_sel_win, COLOR_PAIR(COLOR_PAIR_HIGHLIGHT) | A_REVERSE);
+        else
+            wattrset(g_sel_win, COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
+        mvwprintw(g_sel_win, i + 1, 1, " %-*s ", box_w - 4, opts[opt_idx]);
     }
 
-    /* bottom border */
-    if (row < max_y - 2) {
-        move(row, col);
-        attron(COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
-        addch(ACS_LLCORNER);
-        for (int i = 0; i < box_w - 2; i++) addch(ACS_HLINE);
-        addch(ACS_LRCORNER);
-        attroff(COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
-    }
+    /* Scroll indicators (use wattrset to avoid any A_REVERSE residual) */
+    wattrset(g_sel_win, COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
+    if (scroll_offset > 0)
+        mvwaddch(g_sel_win, 1, box_w - 2, '^');
+    if (scroll_offset + visible_opts < g_sel_count)
+        mvwaddch(g_sel_win, box_h - 2, box_w - 2, 'v');
+
+    wnoutrefresh(g_sel_win);
 }
 
 /* ============================================================
@@ -2103,11 +2237,11 @@ void render_settings_content(void)
 
     attroff(COLOR_PAIR(COLOR_PAIR_PLAYLIST));
 
-    /* Draw selection menu on top of content (direct stdscr) */
+    /* Refresh stdscr first, then overlay selection menu sub-window */
+    wnoutrefresh(stdscr);
     if (g_sel_active)
         draw_sel_menu();
-
-    refresh();
+    doupdate();
 }
 
 /* ============================================================
@@ -2120,9 +2254,6 @@ static void rerender_settings_view(void)
     render_menu_sidebar(g_menu_selected_idx, settings_sidebar_items, SETTINGS_ITEM_COUNT);
     render_settings_content();
     render_menu_hint_bar();
-    /* Selection menu rendered last so it stays on top of content */
-    if (g_sel_active)
-        draw_sel_menu();
 }
 
 /* ============================================================

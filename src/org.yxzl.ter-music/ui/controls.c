@@ -386,6 +386,7 @@ static void render_controls_popup(void)
     if (!popup_win) return;
 
     int popup_h = g_popup.height;
+    int popup_w = g_popup.width;
     int visible_options = popup_h - 2;
 
     /* Scroll offset: keep selected_index visible */
@@ -393,8 +394,11 @@ static void render_controls_popup(void)
     if (g_popup.selected_index >= visible_options)
         scroll_offset = g_popup.selected_index - visible_options + 1;
 
+    /* Step 1 — clear window (default background, no color pair) */
     werase(popup_win);
-    wattron(popup_win, COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
+
+    /* Step 2 — draw border and title with HIGHLIGHT color pair */
+    wattrset(popup_win, COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
     box(popup_win, 0, 0);
 
     const char *title = "";
@@ -404,28 +408,37 @@ static void render_controls_popup(void)
         case POPUP_VOLUME:    title = ui_text(" 音量 ", " Volume "); break;
         default: break;
     }
-    mvwprintw(popup_win, 0, 2, "%s", title);
+    if (title[0])
+        mvwprintw(popup_win, 0, 2, "%s", title);
 
+    /* Step 3 — fill all option rows with HIGHLIGHT background */
+    for (int i = 0; i < visible_options; i++)
+        mvwprintw(popup_win, i + 1, 1, " %-*s ", popup_w - 4, "");
+
+    /* Step 4 — draw option text with HIGHLIGHT color pair (same as the
+       fill background), selected item gets A_REVERSE for contrast. */
     for (int i = 0; i < visible_options && (scroll_offset + i) < g_popup.option_count; i++) {
         int opt_idx = scroll_offset + i;
         char option_text[48];
         build_popup_option_text(g_popup.type, opt_idx, option_text, sizeof(option_text));
 
         if (opt_idx == g_popup.selected_index)
-            wattron(popup_win, A_REVERSE);
-        mvwprintw(popup_win, i + 1, 2, " %-20s ", option_text);
-        if (opt_idx == g_popup.selected_index)
-            wattroff(popup_win, A_REVERSE);
+            wattrset(popup_win, COLOR_PAIR(COLOR_PAIR_HIGHLIGHT) | A_REVERSE);
+        else
+            wattrset(popup_win, COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
+        mvwprintw(popup_win, i + 1, 1, " %-*s ", popup_w - 4, option_text);
     }
 
-    /* Scroll indicator arrows */
+    /* Step 5 — scroll indicator arrows */
+    wattrset(popup_win, COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
     if (scroll_offset > 0)
-        mvwaddch(popup_win, 1, popup_h - 1 < 0 ? 0 : popup_h - 2, '^');
+        mvwaddch(popup_win, 1, popup_w < 3 ? 1 : popup_w - 3, '^');
     if (scroll_offset + visible_options < g_popup.option_count)
         mvwaddch(popup_win, popup_h - 2 < 1 ? 1 : popup_h - 2,
-                 popup_h - 1 < 0 ? 0 : popup_h - 2, 'v');
+                 popup_w < 3 ? 1 : popup_w - 3, 'v');
 
-    wattroff(popup_win, COLOR_PAIR(COLOR_PAIR_HIGHLIGHT));
+    /* Step 6 — cleanup and flush */
+    wattrset(popup_win, A_NORMAL);
     wrefresh(popup_win);
 }
 
@@ -452,7 +465,6 @@ static void popup_dismiss(void)
      * their sub-window content overwrites the remaining areas. */
     redrawwin(win_playlist);
     redrawwin(win_controls);
-    clearok(stdscr, TRUE);
     render_playlist_content();
     render_controls();
     render_menu_hint_bar();
