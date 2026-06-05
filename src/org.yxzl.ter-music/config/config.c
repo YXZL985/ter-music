@@ -19,6 +19,7 @@
 #include "types.h"
 #include "config/schema.h"
 #include "config/crypto.h"
+#include "playlist/encoding.h"
 #include "logger/logger.h"
 
 /* ── Forward declarations of internal helpers ─────────────────────── */
@@ -147,6 +148,7 @@ int config_save_to_xml(const char *path, const AppConfig *cfg)
         SAVE_INT(XML_PREF_LYRICS_ALIGN,    cfg->lyrics_alignment);
         SAVE_INT(XML_PREF_AUDIO_BACKEND,   cfg->audio_backend);
         SAVE_INT(XML_PREF_SORT_MODE,       cfg->sort_mode);
+        SAVE_INT(XML_PREF_CUE_ENCODING,    cfg->cue_encoding);
 #undef SAVE_INT
     }
 
@@ -293,6 +295,7 @@ int config_load_from_xml(const char *path, AppConfig *cfg)
         cfg->lyrics_alignment         = xml_get_int(prefs, XML_PREF_LYRICS_ALIGN, 0);
         cfg->audio_backend            = xml_get_int(prefs, XML_PREF_AUDIO_BACKEND, AUDIO_BACKEND_AUTO);
         cfg->sort_mode                = xml_get_int(prefs, XML_PREF_SORT_MODE, SORT_DEFAULT);
+        cfg->cue_encoding             = xml_get_int(prefs, XML_PREF_CUE_ENCODING, CUE_ENCODING_AUTO);
     }
 
     /* ── <remote_connections> ───────────────────────────────────── */
@@ -465,4 +468,7 @@ static void clamp_config_values(AppConfig *cfg)
 
     if (cfg->sort_mode < SORT_DEFAULT || cfg->sort_mode > SORT_FILENAME)
         cfg->sort_mode = SORT_DEFAULT;
+
+    if (cfg->cue_encoding < CUE_ENCODING_AUTO || cfg->cue_encoding >= CUE_ENCODING_COUNT)
+        cfg->cue_encoding = CUE_ENCODING_AUTO;
 }

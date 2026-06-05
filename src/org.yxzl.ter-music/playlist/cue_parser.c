@@ -15,6 +15,8 @@
  */
 
 #include "playlist/cue_parser.h"
+#include "playlist/encoding.h"
+#include "config/config.h"
 #include "logger/logger.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -210,12 +212,18 @@ int cue_parse_file(const char *cue_path, CueSheet *sheet)
     fclose(fp);
     buf[bytes_read] = '\0';
 
-    /* Skip UTF-8 BOM if present */
-    char *p = buf;
-    if ((unsigned char)p[0] == 0xEF && (unsigned char)p[1] == 0xBB && (unsigned char)p[2] == 0xBF)
-        p += 3;
+    /* ── Auto-detect encoding and convert to UTF-8 ── */
+    char *converted = NULL;
+    if (encoding_detect_and_convert((const unsigned char *)buf, bytes_read,
+                                     g_app_config.cue_encoding,
+                                     &converted) == 0 && converted) {
+        free(buf);
+        buf = converted;
+        bytes_read = strlen(buf);
+    }
 
     /* ── State for parsing ── */
+    char *p = buf;
     char current_file[MAX_PATH_LEN] = "";
     char global_performer[MAX_META_LEN] = "";
     char global_title[MAX_META_LEN] = "";

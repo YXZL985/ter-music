@@ -70,6 +70,7 @@ extern "C" {
 #define XML_PREF_LYRICS_ALIGN       "lyrics_alignment"
 #define XML_PREF_AUDIO_BACKEND      "audio_backend"
 #define XML_PREF_SORT_MODE          "sort_mode"
+#define XML_PREF_CUE_ENCODING       "cue_encoding"
 
 /* ── Remote connections ───────────────────────────────────────────── */
 #define XML_REMOTE_CONN             "connection"

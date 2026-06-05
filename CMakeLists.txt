@@ -117,6 +117,7 @@ add_executable(${PROJECT_NAME}
     src/org.yxzl.ter-music/audio/progress/progress.c
     src/org.yxzl.ter-music/playlist/playlist.c
     src/org.yxzl.ter-music/playlist/cue_parser.c
+    src/org.yxzl.ter-music/playlist/encoding.c
     src/org.yxzl.ter-music/playlist/ape_tag.c
     src/org.yxzl.ter-music/search/search.c
     src/org.yxzl.ter-music/library/library.c

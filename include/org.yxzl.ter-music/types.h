@@ -287,6 +287,7 @@ typedef struct {
     int lyrics_alignment;  // 0=居左(Left), 1=居中(Center), 2=居右(Right)
     int audio_backend;     // 0=Auto, 1=PulseAudio, 2=ALSA, 3=PipeWire
     int sort_mode;         // SortMode value, 0=default (no sort)
+    int cue_encoding;      // CUE_ENCODING_* constant (playlist/encoding.h), 0=auto
     int config_version;
     RemoteConnectionConfig remote_connections[MAX_REMOTE_CONNECTIONS];
     int remote_connection_count;

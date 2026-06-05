@@ -22,6 +22,7 @@
 #include "remote/remote.h"
 #include "config/crypto.h"
 #include "playlist/playlist.h"
+#include "playlist/encoding.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -88,7 +89,8 @@ static const char *settings_options[] = {
     "排序方式",
     "高级播放模式",
     "默认播放模式",
-    "无缝预加载下一曲"
+    "无缝预加载下一曲",
+    "CUE字符编码"
 };
 static const char *settings_options_ascii[] = {
     "Playlist Foreground",
@@ -119,9 +121,10 @@ static const char *settings_options_ascii[] = {
     "Sort Mode",
     "Advanced Play Modes",
     "Default Play Mode",
-    "Seamless Preload"
+    "Seamless Preload",
+    "CUE Encoding"
 };
-#define SETTINGS_OPTION_COUNT 29
+#define SETTINGS_OPTION_COUNT 30
 
 enum {
     SETTINGS_IDX_THEME_COLOR_PAIR_0  = 0,
@@ -152,7 +155,8 @@ enum {
     SETTINGS_IDX_SORT_MODE           = 25,
     SETTINGS_IDX_ADVANCED_PLAY_MODES = 26,
     SETTINGS_IDX_DEFAULT_PLAY_MODE2  = 27,
-    SETTINGS_IDX_SEAMLESS_PRELOAD    = 28
+    SETTINGS_IDX_SEAMLESS_PRELOAD    = 28,
+    SETTINGS_IDX_CUE_ENCODING        = 29
 };
 
 typedef struct {
@@ -192,7 +196,8 @@ static const int settings_playback_option_indices[] = {
     SETTINGS_IDX_LYRICS_ALIGNMENT,
     SETTINGS_IDX_DEFAULT_SPEED,
     SETTINGS_IDX_AUDIO_BACKEND,
-    SETTINGS_IDX_SORT_MODE
+    SETTINGS_IDX_SORT_MODE,
+    SETTINGS_IDX_CUE_ENCODING
 };
 
 static const int settings_playmode_option_indices[] = {
@@ -399,6 +404,19 @@ static void format_settings_option_line(int option_index, char *line, size_t lin
         }
         snprintf(line, line_size, "%s%s%s",
                  current_settings_options[option_index], separator, sort_str);
+    } else if (option_index == SETTINGS_IDX_CUE_ENCODING) {
+        const char *enc_str;
+        switch (g_app_config.cue_encoding) {
+            case CUE_ENCODING_AUTO:      enc_str = menu_text("自动", "Auto"); break;
+            case CUE_ENCODING_UTF8:      enc_str = "UTF-8"; break;
+            case CUE_ENCODING_GB18030:   enc_str = "GB18030"; break;
+            case CUE_ENCODING_GBK:       enc_str = "GBK"; break;
+            case CUE_ENCODING_BIG5:      enc_str = "BIG5"; break;
+            case CUE_ENCODING_SHIFT_JIS: enc_str = "Shift-JIS"; break;
+            default:                     enc_str = menu_text("自动", "Auto"); break;
+        }
+        snprintf(line, line_size, "%s%s%s",
+                 current_settings_options[option_index], separator, enc_str);
     } else {
         snprintf(line, line_size, "%s", current_settings_options[option_index]);
     }
@@ -669,6 +687,15 @@ static void adjust_or_toggle_settings_option(int option_index, int delta)
             recompute_sort_order();
             show_status_message(menu_text("排序方式已生效", "Sort mode applied"));
             break;
+        case SETTINGS_IDX_CUE_ENCODING:
+            if (delta < 0) {
+                g_app_config.cue_encoding = (g_app_config.cue_encoding - 1 + CUE_ENCODING_COUNT) % CUE_ENCODING_COUNT;
+            } else {
+                g_app_config.cue_encoding = (g_app_config.cue_encoding + 1) % CUE_ENCODING_COUNT;
+            }
+            save_config();
+            show_status_message(menu_text("CUE编码设置已保存", "CUE encoding saved"));
+            break;
         default:
             break;
     }
@@ -755,6 +782,12 @@ static void close_sel_menu(int apply)
                 save_config();
                 recompute_sort_order();
                 show_status_message(menu_text("排序方式已生效", "Sort mode applied"));
+                break;
+
+            case SETTINGS_IDX_CUE_ENCODING:
+                g_app_config.cue_encoding = g_sel_idx;
+                save_config();
+                show_status_message(menu_text("CUE编码设置已保存", "CUE encoding saved"));
                 break;
 
             case SETTINGS_IDX_LYRICS_ALIGNMENT:
@@ -850,6 +883,10 @@ static void open_sel_menu(int option_index)
         case SETTINGS_IDX_SORT_MODE:
             count = 5;
             cur   = g_app_config.sort_mode;
+            break;
+        case SETTINGS_IDX_CUE_ENCODING:
+            count = CUE_ENCODING_COUNT;
+            cur   = g_app_config.cue_encoding;
             break;
         case SETTINGS_IDX_LYRICS_ALIGNMENT:
             count = 3;
@@ -972,6 +1009,11 @@ static void draw_sel_menu(void)
                                  menu_text("文件名","Filename")};
                 if (i<5) snprintf(opts[i],48,"%s",a[i]); break;
             }
+            case SETTINGS_IDX_CUE_ENCODING:{
+                const char *a[]={menu_text("自动","Auto"),"UTF-8","GB18030","GBK",
+                                 "BIG5","Shift-JIS"};
+                if (i<CUE_ENCODING_COUNT) snprintf(opts[i],48,"%s",a[i]); break;
+            }
             case SETTINGS_IDX_LYRICS_ALIGNMENT:{
                 const char *a[]={menu_text("居左","Left"),menu_text("居中","Center"),
                                  menu_text("居右","Right")};
@@ -1057,6 +1099,7 @@ static void draw_sel_menu(void)
         case SETTINGS_IDX_LANGUAGE:          title = ui_text(" 语言 "," Lang "); break;
         case SETTINGS_IDX_VOLUME:            title = ui_text(" 音量 "," Volume "); break;
         case SETTINGS_IDX_LATENCY:           title = ui_text(" 时延 "," Latency "); break;
+        case SETTINGS_IDX_CUE_ENCODING:      title = ui_text(" CUE编码 "," CUE Enc "); break;
         default:
             if (src >= 0 && src < 12)
                 title = ui_text(" 颜色 "," Color ");
@@ -1189,7 +1232,8 @@ static void activate_settings_current_option(void)
         g_settings_current_option == SETTINGS_IDX_DEFAULT_SPEED ||
         g_settings_current_option == SETTINGS_IDX_LYRICS_ALIGNMENT ||
         g_settings_current_option == SETTINGS_IDX_AUDIO_BACKEND ||
-        g_settings_current_option == SETTINGS_IDX_SORT_MODE) {
+        g_settings_current_option == SETTINGS_IDX_SORT_MODE ||
+        g_settings_current_option == SETTINGS_IDX_CUE_ENCODING) {
         open_sel_menu(g_settings_current_option);
         return;
     }
