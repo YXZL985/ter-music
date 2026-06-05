@@ -288,10 +288,10 @@ build_via_dpkg() {
         fi
 
         if ! dpkg-buildpackage "${src_dpkg_args[@]}"; then
-            log_error "源码包构建失败"
-            return 1
+            log_warn "源码包构建失败，将继续构建二进制包"
+        else
+            log_info "源码包生成完成"
         fi
-        log_info "源码包生成完成"
     fi
 
     # Step 7: For static builds, patch debian/rules to add -DSTATIC_LINKING=ON
