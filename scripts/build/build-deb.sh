@@ -472,6 +472,7 @@ show_summary() {
 
 main() {
     local version="$DEFAULT_VERSION"
+    local version_explicitly_set=false
     local keep_temp="false"
     local build_source="false"
     local build_debuginfo="false"
@@ -488,6 +489,7 @@ main() {
                 ;;
             -v|--version)
                 version="$2"
+                version_explicitly_set=true
                 shift 2
                 ;;
             -a|--arch)
@@ -537,9 +539,9 @@ main() {
     log_info "  主机架构: $(uname -m)"
     echo ""
 
-    if [ "$version" = "$DEFAULT_VERSION" ]; then
+    if [ "$version_explicitly_set" = "false" ]; then
         version=$(detect_version)
-        log_info "检测到版本: $version"
+        log_info "自动检测到版本: $version"
     else
         log_info "使用指定版本: $version"
     fi
@@ -568,7 +570,7 @@ main() {
             )
 
             local inner_args=(--static)
-            [ "$version" != "$DEFAULT_VERSION" ] && inner_args+=("-v" "$version")
+            inner_args+=("-v" "$version")
             [ "$build_source" = "true" ] && inner_args+=(--with-source)
             [ "$build_debuginfo" = "true" ] && inner_args+=(--with-debuginfo)
             [ "$keep_temp" = "true" ] && inner_args+=(--keep-temp)
@@ -603,7 +605,7 @@ main() {
         )
 
         local inner_args=()
-        [ "$version" != "$DEFAULT_VERSION" ] && inner_args+=("-v" "$version")
+        inner_args+=("-v" "$version")
         [ "$build_source" = "true" ] && inner_args+=(--with-source)
         [ "$build_debuginfo" = "true" ] && inner_args+=(--with-debuginfo)
         [ "$keep_temp" = "true" ] && inner_args+=(--keep-temp)

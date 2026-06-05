@@ -779,6 +779,7 @@ show_summary() {
 
 main() {
     local version="$DEFAULT_VERSION"
+    local version_explicitly_set=false
     local keep_temp="false"
     local no_debuginfo="true"
     local target_arch=""
@@ -794,6 +795,7 @@ main() {
                 ;;
             -v|--version)
                 version="$2"
+                version_explicitly_set=true
                 shift 2
                 ;;
             -k|--keep-temp)
@@ -853,13 +855,9 @@ main() {
     log_info "  主机架构: $(uname -m)"
     echo ""
 
-    if [ "$version" = "$DEFAULT_VERSION" ]; then
+    if [ "$version_explicitly_set" = "false" ]; then
         version=$(detect_version)
-        if [ "$version" != "$DEFAULT_VERSION" ]; then
-            log_info "从 CMakeLists.txt 检测到版本: $version"
-        else
-            log_info "无法从 CMakeLists.txt 提取版本，使用默认版本: $version"
-        fi
+        log_info "自动检测到版本: $version"
     else
         log_info "使用指定版本: $version"
     fi
@@ -913,7 +911,7 @@ main() {
 
         # 构造传递给内部 build-rpm.sh 的参数
         local inner_args=()
-        [ "$version" != "$DEFAULT_VERSION" ] && inner_args+=("-v" "$version")
+        inner_args+=("-v" "$version")
         [ "$use_static" = "true" ] && inner_args+=(--static-build)
         [ "$no_debuginfo" = "false" ] && inner_args+=(--with-debuginfo)
         [ "$keep_temp" = "true" ] && inner_args+=(--keep-temp)
