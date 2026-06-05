@@ -414,6 +414,9 @@ buildext:
       - libjpeg-dev
       - libxml2-dev
       - libcurl4-openssl-dev
+      - libsqlite3-dev
+      - libdbus-1-dev
+      - libasound2-dev
     depends:
       - libavformat60
       - libavcodec60
