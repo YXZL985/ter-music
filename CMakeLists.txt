@@ -4,6 +4,17 @@ project(ter-music LANGUAGES C)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+# ── Platform detection ──────────────────────────────────────────
+if(WIN32)
+    message(STATUS "Platform: Windows (MSVC + vcpkg)")
+    set(CMAKE_C_STANDARD 11)  # MSVC 对 C99 支持有限，用 C11
+    add_definitions(-D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_WARNINGS)
+    add_definitions(-DWIN32_LEAN_AND_MEAN -DNOMINMAX)
+endif()
+
+# ── Linux build path (pkg-config) ───────────────────────────────
+if(NOT WIN32)
+
 # 静态链接选项（仅将 FFmpeg 库静态链接，其他库动态链接）
 # FFmpeg 的 soname 在不同 EL 版本间不同，是跨版本兼容的主要障碍。
 # 其他库（ncurses、libcurl、libpng、libjpeg、pulse）的 soname
@@ -101,8 +112,56 @@ if(NOT PTHREAD_LIBRARY)
     message(FATAL_ERROR "pthread library not found")
 endif()
 
-# 添加可执行文件
-add_executable(${PROJECT_NAME}
+endif()  # NOT WIN32 — end of Linux-only dependency detection
+
+# ── Windows build path (vcpkg) ──────────────────────────────────
+if(WIN32)
+
+    # vcpkg 提供了 CMAKE_TOOLCHAIN_FILE，自动设置 FindRoot
+    # PDCurses 替代 ncursesw
+    find_package(PDCurses REQUIRED)
+    if(PDCURSES_FOUND)
+        message(STATUS "Found PDCurses: ${PDCURSES_INCLUDE_DIRS}")
+    endif()
+
+    # FFmpeg
+    find_package(FFmpeg REQUIRED COMPONENTS AVCODEC AVFORMAT SWRESAMPLE AVUTIL AVFILTER SWSCALE)
+    if(AVCODEC_FOUND)
+        message(STATUS "Found FFmpeg via vcpkg")
+    endif()
+
+    # libpng
+    find_package(PNG REQUIRED)
+    # libjpeg-turbo
+    find_package(JPEG REQUIRED)
+    # libxml2
+    find_library(LIBXML2_LIBRARY libxml2 libxml2_a)
+    find_path(LIBXML2_INCLUDE_DIR libxml/parser.h)
+    if(LIBXML2_LIBRARY AND LIBXML2_INCLUDE_DIR)
+        message(STATUS "Found libxml2: ${LIBXML2_LIBRARY}")
+    else()
+        message(FATAL_ERROR "libxml2 not found via vcpkg")
+    endif()
+    # SQLite3
+    find_package(SQLite3 REQUIRED)
+    # libcurl
+    find_package(CURL REQUIRED)
+    # winpthreads
+    find_package(pthreads REQUIRED)
+
+    message(STATUS "Audio backend: WASAPI (Windows Core Audio)")
+    message(STATUS "System media session backend: disabled (no D-Bus on Windows)")
+
+    # MSVC 编译标志
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /utf-8 /W3 /wd4996")
+    # 避免 MSVC 链接 CRT 时警告
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /NODEFAULTLIB:libcmt.lib")
+
+endif()  # WIN32
+
+# ── Source files ────────────────────────────────────────────────
+# 跨平台源文件（Linux 和 Windows 共用）
+set(TER_MUSIC_SOURCES
     src/org.yxzl.ter-music/main/main.c
     src/org.yxzl.ter-music/audio/audio.c
     src/org.yxzl.ter-music/audio/atempo.c
@@ -112,9 +171,6 @@ add_executable(${PROJECT_NAME}
     src/org.yxzl.ter-music/audio/playback_thread.c
     src/org.yxzl.ter-music/audio/play_queue.c
     src/org.yxzl.ter-music/audio/backend_ops.c
-    src/org.yxzl.ter-music/audio/backend/pulse.c
-    src/org.yxzl.ter-music/audio/backend/alsa.c
-    src/org.yxzl.ter-music/audio/backend/pipewire.c
     src/org.yxzl.ter-music/audio/progress/progress.c
     src/org.yxzl.ter-music/playlist/playlist.c
     src/org.yxzl.ter-music/playlist/cue_parser.c
@@ -152,125 +208,195 @@ add_executable(${PROJECT_NAME}
     src/org.yxzl.ter-music/logger/logger.c
 )
 
+# 平台特定源文件
+if(NOT WIN32)
+    # Linux: PulseAudio/ALSA/PipeWire 后端
+    list(APPEND TER_MUSIC_SOURCES
+        src/org.yxzl.ter-music/audio/backend/pulse.c
+        src/org.yxzl.ter-music/audio/backend/alsa.c
+        src/org.yxzl.ter-music/audio/backend/pipewire.c
+    )
+    set(HAVE_UNIX_BACKENDS TRUE)
+endif()
+if(WIN32)
+    # Windows: WASAPI 后端
+    # TODO: 创建 wasapi.c 后取消注释
+    # list(APPEND TER_MUSIC_SOURCES
+    #     src/org.yxzl.ter-music/audio/backend/wasapi.c
+    # )
+    set(HAVE_WIN_BACKENDS TRUE)
+endif()
+
+# 可执行文件目标
+add_executable(${PROJECT_NAME} ${TER_MUSIC_SOURCES})
+
 # 包含头文件目录
 target_include_directories(${PROJECT_NAME} PRIVATE
     include/org.yxzl.ter-music/
-    ${AVCODEC_INCLUDE_DIRS}
-    ${AVFORMAT_INCLUDE_DIRS}
-    ${SWRESAMPLE_INCLUDE_DIRS}
-    ${AVUTIL_INCLUDE_DIRS}
-    ${AVFILTER_INCLUDE_DIRS}
-    ${SWSCALE_INCLUDE_DIRS}
-    ${AUDIO_BACKEND_INCLUDE_DIRS}
-    ${PNG_INCLUDE_DIRS}
-    ${JPEG_INCLUDE_DIRS}
-    ${LIBXML2_INCLUDE_DIRS}
-    ${SQLITE3_INCLUDE_DIRS}
 )
 
-if(DBUS_FOUND)
-    target_include_directories(${PROJECT_NAME} PRIVATE ${DBUS_INCLUDE_DIRS})
+# Linux 特有包含路径
+if(NOT WIN32)
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        ${AVCODEC_INCLUDE_DIRS}
+        ${AVFORMAT_INCLUDE_DIRS}
+        ${SWRESAMPLE_INCLUDE_DIRS}
+        ${AVUTIL_INCLUDE_DIRS}
+        ${AVFILTER_INCLUDE_DIRS}
+        ${SWSCALE_INCLUDE_DIRS}
+        ${AUDIO_BACKEND_INCLUDE_DIRS}
+        ${PNG_INCLUDE_DIRS}
+        ${JPEG_INCLUDE_DIRS}
+        ${LIBXML2_INCLUDE_DIRS}
+        ${SQLITE3_INCLUDE_DIRS}
+    )
+
+    if(DBUS_FOUND)
+        target_include_directories(${PROJECT_NAME} PRIVATE ${DBUS_INCLUDE_DIRS})
+    endif()
+
+    if(LIBCURL_FOUND)
+        message(STATUS "Using libcurl: ${LIBCURL_VERSION}")
+        target_include_directories(${PROJECT_NAME} PRIVATE ${LIBCURL_INCLUDE_DIRS})
+        target_link_libraries(${PROJECT_NAME} ${LIBCURL_LIBRARIES})
+        target_compile_options(${PROJECT_NAME} PRIVATE ${LIBCURL_CFLAGS_OTHER})
+        target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_LIBCURL=1)
+    else()
+        message(FATAL_ERROR "libcurl is required for remote playback (SMB/SFTP/FTP/WebDAV)")
+    endif()
 endif()
 
-if(LIBCURL_FOUND)
-    message(STATUS "Using libcurl: ${LIBCURL_VERSION}")
-    target_include_directories(${PROJECT_NAME} PRIVATE ${LIBCURL_INCLUDE_DIRS})
-    target_link_libraries(${PROJECT_NAME} ${LIBCURL_LIBRARIES})
-    target_compile_options(${PROJECT_NAME} PRIVATE ${LIBCURL_CFLAGS_OTHER})
-    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_LIBCURL=1)
-else()
-    message(FATAL_ERROR "libcurl is required for remote playback (SMB/SFTP/FTP/WebDAV)")
+# Windows 特有包含路径
+if(WIN32)
+    # windows_compat.h 位于 include/ 下
+    target_include_directories(${PROJECT_NAME} PRIVATE ${PDCURSES_INCLUDE_DIRS})
+    # vcpkg 安装的库通过 find_package 的 targets 或变量链接
 endif()
 
 # 链接库
-target_link_libraries(${PROJECT_NAME}
-    ${AVCODEC_LIBRARIES}
-    ${AVFORMAT_LIBRARIES}
-    ${SWRESAMPLE_LIBRARIES}
-    ${AVUTIL_LIBRARIES}
-    ${AVFILTER_LIBRARIES}
-    ${SWSCALE_LIBRARIES}
-    ${PNG_LIBRARIES}
-    ${JPEG_LIBRARIES}
-    ${NCURSESW_LIBRARY}
-    ${LIBXML2_LIBRARIES}
-    ${SQLITE3_LIBRARIES}
-    m
-    ${PTHREAD_LIBRARY}
-    ${CMAKE_DL_LIBS}
-)
+if(NOT WIN32)
+    target_link_libraries(${PROJECT_NAME}
+        ${AVCODEC_LIBRARIES}
+        ${AVFORMAT_LIBRARIES}
+        ${SWRESAMPLE_LIBRARIES}
+        ${AVUTIL_LIBRARIES}
+        ${AVFILTER_LIBRARIES}
+        ${SWSCALE_LIBRARIES}
+        ${PNG_LIBRARIES}
+        ${JPEG_LIBRARIES}
+        ${NCURSESW_LIBRARY}
+        ${LIBXML2_LIBRARIES}
+        ${SQLITE3_LIBRARIES}
+        m
+        ${PTHREAD_LIBRARY}
+        ${CMAKE_DL_LIBS}
+    )
 
-if(DBUS_FOUND)
-    target_link_libraries(${PROJECT_NAME} ${DBUS_LIBRARIES})
+    if(DBUS_FOUND)
+        target_link_libraries(${PROJECT_NAME} ${DBUS_LIBRARIES})
+    endif()
 endif()
 
-# 添加编译选项
-target_compile_options(${PROJECT_NAME} PRIVATE
-    ${AVCODEC_CFLAGS_OTHER}
-    ${AVFORMAT_CFLAGS_OTHER}
-    ${SWRESAMPLE_CFLAGS_OTHER}
-    ${AVUTIL_CFLAGS_OTHER}
-    ${AVFILTER_CFLAGS_OTHER}
-    ${SWSCALE_CFLAGS_OTHER}
-    ${AUDIO_BACKEND_CFLAGS}
-    ${PNG_CFLAGS_OTHER}
-    ${JPEG_CFLAGS_OTHER}
-    ${LIBXML2_CFLAGS_OTHER}
-    ${SQLITE3_CFLAGS_OTHER}
-)
-
-if(DBUS_FOUND)
-    target_compile_options(${PROJECT_NAME} PRIVATE ${DBUS_CFLAGS_OTHER})
+if(WIN32)
+    target_link_libraries(${PROJECT_NAME}
+        # PDCurses
+        ${PDCURSES_LIBRARIES}
+        # FFmpeg
+        ${FFmpeg_LIBRARIES}
+        # libpng
+        ${PNG_LIBRARIES}
+        # libjpeg
+        ${JPEG_LIBRARIES}
+        # libxml2
+        ${LIBXML2_LIBRARY}
+        # SQLite3
+        ${SQLite3_LIBRARIES}
+        # libcurl
+        ${CURL_LIBRARIES}
+        # winpthreads
+        ${pthreads_LIBRARIES}
+        # WASAPI (Core Audio)
+        ole32.lib
+        mmdevapi.lib
+        ksuser.lib
+        # Windows 通用
+        user32.lib
+        advapi32.lib
+    )
 endif()
 
-if(AVFILTER_FOUND)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_AVFILTER=1)
+# 编译选项
+if(NOT WIN32)
+    target_compile_options(${PROJECT_NAME} PRIVATE
+        ${AVCODEC_CFLAGS_OTHER}
+        ${AVFORMAT_CFLAGS_OTHER}
+        ${SWRESAMPLE_CFLAGS_OTHER}
+        ${AVUTIL_CFLAGS_OTHER}
+        ${AVFILTER_CFLAGS_OTHER}
+        ${SWSCALE_CFLAGS_OTHER}
+        ${AUDIO_BACKEND_CFLAGS}
+        ${PNG_CFLAGS_OTHER}
+        ${JPEG_CFLAGS_OTHER}
+        ${LIBXML2_CFLAGS_OTHER}
+        ${SQLITE3_CFLAGS_OTHER}
+    )
+
+    if(DBUS_FOUND)
+        target_compile_options(${PROJECT_NAME} PRIVATE ${DBUS_CFLAGS_OTHER})
+    endif()
 endif()
 
-# 添加预处理器定义
+# 预处理器定义
+if(NOT WIN32)
+    if(AVFILTER_FOUND)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_AVFILTER=1)
+    endif()
+    if(DBUS_FOUND)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_DBUS=1)
+    endif()
+endif()
+
 set(TER_MUSIC_DATA_DIR "${CMAKE_INSTALL_PREFIX}/share/${PROJECT_NAME}")
 target_compile_definitions(${PROJECT_NAME} PRIVATE
-    _GNU_SOURCE
+    $<$<NOT:$<PLATFORM_ID:Windows>>:_GNU_SOURCE>
     TER_MUSIC_DATA_DIR="${TER_MUSIC_DATA_DIR}"
 )
-
-if(DBUS_FOUND)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_DBUS=1)
-endif()
 
 # 安装规则
 install(TARGETS ${PROJECT_NAME}
     RUNTIME DESTINATION bin
 )
 
-# 安装 desktop 文件
-install(FILES data/applications/${PROJECT_NAME}.desktop
-    DESTINATION share/applications
-)
+if(NOT WIN32)
+    # 安装 desktop 文件（仅 Linux）
+    install(FILES data/applications/${PROJECT_NAME}.desktop
+        DESTINATION share/applications
+    )
 
-# 安装图标
-install(FILES resources/icons/hicolor/32x32/apps/${PROJECT_NAME}.png
-    DESTINATION share/icons/hicolor/32x32/apps
-)
-install(FILES resources/icons/hicolor/48x48/apps/${PROJECT_NAME}.png
-    DESTINATION share/icons/hicolor/48x48/apps
-)
-install(FILES resources/icons/hicolor/128x128/apps/${PROJECT_NAME}.png
-    DESTINATION share/icons/hicolor/128x128/apps
-)
-install(FILES resources/icons/hicolor/scalable/apps/${PROJECT_NAME}.svg
-    DESTINATION share/icons/hicolor/scalable/apps
-)
+    # 安装图标（仅 Linux）
+    install(FILES resources/icons/hicolor/32x32/apps/${PROJECT_NAME}.png
+        DESTINATION share/icons/hicolor/32x32/apps
+    )
+    install(FILES resources/icons/hicolor/48x48/apps/${PROJECT_NAME}.png
+        DESTINATION share/icons/hicolor/48x48/apps
+    )
+    install(FILES resources/icons/hicolor/128x128/apps/${PROJECT_NAME}.png
+        DESTINATION share/icons/hicolor/128x128/apps
+    )
+    install(FILES resources/icons/hicolor/scalable/apps/${PROJECT_NAME}.svg
+        DESTINATION share/icons/hicolor/scalable/apps
+    )
 
-# 安装帮助文档
+    # Uninstall target — removes files listed in install_manifest.txt
+    add_custom_target(uninstall
+        COMMAND ${CMAKE_COMMAND} -E echo "Uninstalling ${PROJECT_NAME}..."
+        COMMAND sh -c "if [ -f '${CMAKE_BINARY_DIR}/install_manifest.txt' ]; then xargs rm -f < '${CMAKE_BINARY_DIR}/install_manifest.txt'; else echo 'No install manifest. Run make install first.'; exit 1; fi"
+        COMMAND ${CMAKE_COMMAND} -E echo "Done."
+        VERBATIM
+    )
+endif()
+
+# 安装帮助文档（全平台）
 install(FILES data/help-quickstart-zh.txt data/help-quickstart-en.txt
         DESTINATION share/ter-music
-)
-
-# Uninstall target — removes files listed in install_manifest.txt
-add_custom_target(uninstall
-    COMMAND ${CMAKE_COMMAND} -E echo "Uninstalling ${PROJECT_NAME}..."
-    COMMAND sh -c "if [ -f '${CMAKE_BINARY_DIR}/install_manifest.txt' ]; then xargs rm -f < '${CMAKE_BINARY_DIR}/install_manifest.txt'; else echo 'No install manifest. Run make install first.'; exit 1; fi"
-    COMMAND ${CMAKE_COMMAND} -E echo "Done."
-    VERBATIM
 )

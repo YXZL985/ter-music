@@ -1,0 +1,57 @@
+{
+  "version": 9,
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Default (Linux GCC)",
+      "description": "Linux GCC build with Makefiles",
+      "generator": "Unix Makefiles",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "windows-msvc",
+      "displayName": "Windows MSVC x64 (Ninja)",
+      "description": "Windows MSVC x64 build with Ninja + vcpkg",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "C:/tools/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "windows-msvc-vs",
+      "displayName": "Windows MSVC x64 (VS 2026)",
+      "description": "Windows MSVC x64 build with Visual Studio 18 2026 generator",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "x64",
+      "toolset": "v143",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "C:/tools/vcpkg/scripts/buildsystems/vcpkg.cmake"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-msvc",
+      "configurePreset": "windows-msvc",
+      "displayName": "Build (Ninja)"
+    },
+    {
+      "name": "windows-msvc-vs",
+      "configurePreset": "windows-msvc-vs",
+      "displayName": "Build (VS 2026)"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-msvc",
+      "configurePreset": "windows-msvc",
+      "displayName": "Test (Ninja)",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

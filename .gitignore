@@ -60,3 +60,7 @@ squashfs-root/*
 
 # Windows
 .vs
+
+# vcpkg build artifacts
+vcpkg_installed/
+vcpkg-manifest-install.log
