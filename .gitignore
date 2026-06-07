@@ -57,3 +57,6 @@ oadoc/
 .*_temp/
 .appimagetool/*
 squashfs-root/*
+
+# Windows
+.vs
