@@ -314,3 +314,49 @@ build/
 - pkg-config
 - 开发库：libavcodec-dev, libavformat-dev, libswresample-dev, libswscale-dev, libavutil-dev, libavfilter-dev, libpulse-dev, libncurses-dev, libxml2-dev, libcurl4-openssl-dev
 - 打包工具：dpkg-dev, rpm-build, linglong-builder 等
+
+## Windows 构建
+
+ter-music 支持在 Windows 10/11 x64 上使用 MSVC 编译。
+
+### 前置条件
+
+| 工具 | 版本要求 | 说明 |
+|------|---------|------|
+| Visual Studio 2026+ | v18.0 | 需要 "使用 C++ 的桌面开发" 工作负载 |
+| CMake | ≥ 3.10 | VS 2026 自带 (4.2.3+) |
+| Ninja | ≥ 1.13 | 推荐构建工具 |
+| vcpkg | 最新 | 包管理器 |
+
+### 构建步骤
+
+```powershell
+# 1. 安装依赖（vcpkg）
+cd C:/tools/vcpkg
+vcpkg install ffmpeg pdcurses libpng libjpeg-turbo libxml2 sqlite3 curl pthreads
+
+# 2. 配置（Ninja）
+cd ter-music
+cmake --preset windows-msvc
+
+# 3. 编译
+cmake --build --preset windows-msvc
+
+# 4. 打包安装包
+makensis packaging/windows/windows.nsi
+```
+
+### CMake Presets
+
+| Preset | 生成器 | 用途 |
+|--------|--------|------|
+| `default` | Unix Makefiles | Linux GCC (默认) |
+| `windows-msvc` | Ninja | Windows x64 MSVC + Ninja |
+| `windows-msvc-vs` | Visual Studio 18 2026 | Windows x64 VS 方案 |
+
+### 已知问题
+
+1. **vcpkg 安装**：在受限网络环境中可能需要配置镜像源或离线缓存
+2. **WASAPI 后端**：wasapi.c 使用运行时 LoadLibrary 加载 COM 接口，无需链接 mmdevapi.lib
+3. **NSIS**：安装脚本位于 `packaging/windows/windows.nsi`，需要 NSIS 3.0+
+4. **MSVC 警告**：已通过 `/wd4996` 禁止安全函数弃用警告

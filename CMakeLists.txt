@@ -219,11 +219,12 @@ if(NOT WIN32)
     set(HAVE_UNIX_BACKENDS TRUE)
 endif()
 if(WIN32)
-    # Windows: WASAPI 后端
-    # TODO: 创建 wasapi.c 后取消注释
-    # list(APPEND TER_MUSIC_SOURCES
-    #     src/org.yxzl.ter-music/audio/backend/wasapi.c
-    # )
+    # Windows: WASAPI 后端 + compat 实现
+    list(APPEND TER_MUSIC_SOURCES
+        src/org.yxzl.ter-music/audio/backend/wasapi.c
+        src/compat/getopt.c
+        src/compat/execinfo.c
+    )
     set(HAVE_WIN_BACKENDS TRUE)
 endif()
 
@@ -270,6 +271,8 @@ endif()
 if(WIN32)
     # windows_compat.h 位于 include/ 下
     target_include_directories(${PROJECT_NAME} PRIVATE ${PDCURSES_INCLUDE_DIRS})
+    # compat 头文件（getopt 等）
+    target_include_directories(${PROJECT_NAME} PRIVATE include)
     # vcpkg 安装的库通过 find_package 的 targets 或变量链接
 endif()
 

@@ -40,6 +40,10 @@
 #include <libavutil/samplefmt.h>
 #include <libavutil/version.h>
 
+#ifdef _WIN32
+#  include "audio/backend/wasapi.h"
+#endif
+
 #ifndef DT_REG
 #define DT_REG 8
 #endif
@@ -54,12 +58,19 @@
 struct pulseaudio_funcs P = {0};
 struct alsa_funcs A = {0};
 struct pipewire_funcs PW = {0};
+#ifdef _WIN32
+struct wasapi_funcs W = {0};
+#endif
 
 /* ============================================================
  * Global state
  * ============================================================ */
 
 int g_active_backend = AUDIO_BACKEND_AUTO;
+
+#ifdef _WIN32
+int wasapi_loaded = 0;
+#endif
 
 pthread_mutex_t audio_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t g_volume_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -169,6 +180,7 @@ void init_ffmpeg(void)
 
 void audio_backend_shutdown(void)
 {
+#ifndef _WIN32
     if (pulse_loaded && pa_s) { P.stream_disconnect(pa_s); P.stream_unref(pa_s); pa_s = NULL; }
     if (pulse_loaded && pa_ml) {
         if (pa_ctx) { P.context_disconnect(pa_ctx); P.context_unref(pa_ctx); pa_ctx = NULL; }
@@ -178,12 +190,18 @@ void audio_backend_shutdown(void)
     if (alsa_loaded && alsa_pcm) { A.pcm_drop(alsa_pcm); A.pcm_close(alsa_pcm); alsa_pcm = NULL; }
     alsa_ready = 0;
     if (pipewire_loaded) { pw_cleanup_stream(); pipewire_unload(); pipewire_loaded = 0; }
+#else
+    if (wasapi_loaded) { wasapi_cleanup_stream(); wasapi_unload(); wasapi_loaded = 0; }
+#endif
 }
 
 int audio_backend_is_available(int backend) {
     if (backend == AUDIO_BACKEND_PULSE)    return pulse_loaded;
     if (backend == AUDIO_BACKEND_ALSA)     return alsa_loaded;
     if (backend == AUDIO_BACKEND_PIPEWIRE) return pipewire_loaded;
+#ifdef _WIN32
+    if (backend == AUDIO_BACKEND_WASAPI)   return wasapi_loaded;
+#endif
     return 0;
 }
 
@@ -195,6 +213,8 @@ void init_audio_device(void)
 {
     log_info("audio", "Initializing audio device");
 
+#ifndef _WIN32
+    /* ── Linux: load PulseAudio / ALSA / PipeWire at runtime ── */
     if (pulse_load() == 0) { pulse_loaded = 1; log_info("audio", "PulseAudio library loaded"); }
     else { pulse_loaded = 0; log_info("audio", "PulseAudio library not available"); }
     if (alsa_load() == 0) { alsa_loaded = 1; log_info("audio", "ALSA library loaded"); }
@@ -263,6 +283,20 @@ pulse_failed:
             return;
         }
     }
+
+#else
+    /* ── Windows: load WASAPI runtime ── */
+    if (wasapi_load() == 0) {
+        wasapi_loaded = 1;
+        g_active_backend = AUDIO_BACKEND_WASAPI;
+        log_info("audio", "WASAPI backend ready");
+        printf("%s\n", audio_text("当前使用 WASAPI 音频后端", "Using WASAPI backend"));
+    } else {
+        wasapi_loaded = 0;
+        log_error("audio", "WASAPI backend not available");
+        printf("%s\n", audio_text("没有可用的音频后端", "No audio backend available"));
+    }
+#endif
 
     log_error("audio", "No audio backend available");
 

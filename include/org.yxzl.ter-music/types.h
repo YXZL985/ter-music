@@ -7,6 +7,11 @@
 #include <signal.h>
 #include <time.h>
 
+/* ── Windows 平台兼容层 ────────────────────────────── */
+#ifdef _WIN32
+#  include "windows_compat.h"
+#endif
+
 #include "audio/equalizer.h"
 
 #define APP_NAME "ter-music"
@@ -165,6 +170,7 @@ typedef struct {
 #define AUDIO_BACKEND_PULSE     1
 #define AUDIO_BACKEND_ALSA      2
 #define AUDIO_BACKEND_PIPEWIRE  3
+#define AUDIO_BACKEND_WASAPI    4   /* Windows only: WASAPI (Core Audio) */
 
 #define CONFIG_CURRENT_VERSION 3
 
@@ -287,7 +293,7 @@ typedef struct {
     int show_album_cover;
     int seamless_preload;    // 0=off, 1=pre-decode next track at end of current
     int lyrics_alignment;  // 0=居左(Left), 1=居中(Center), 2=居右(Right)
-    int audio_backend;     // 0=Auto, 1=PulseAudio, 2=ALSA, 3=PipeWire
+    int audio_backend;     // 0=Auto, 1=PulseAudio, 2=ALSA, 3=PipeWire, 4=WASAPI (Win32)
     int sort_mode;         // SortMode value, 0=default (no sort)
     int cue_encoding;      // CUE_ENCODING_* constant (playlist/encoding.h), 0=auto
     int config_version;

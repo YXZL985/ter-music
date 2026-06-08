@@ -2,7 +2,7 @@
  * @file backend_ops.c
  * @brief 音频后端流操作 — 准备/清理/写入/暂停/恢复/音量同步
  *
- * 从 audio.c 拆分，封装对 PulseAudio/ALSA/PipeWire 后端的流生命周期操作。
+ * 从 audio.c 拆分，封装对 PulseAudio/ALSA/PipeWire/WASAPI 后端的流生命周期操作。
  *
  * @author 燕戏竹林 (yxzl666xx@outlook.com)
  * @date 2026-06-02
@@ -18,6 +18,10 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+
+#ifdef _WIN32
+#  include "audio/backend/wasapi.h"
+#endif
 
 extern int g_active_backend;
 
@@ -69,6 +73,13 @@ void audio_backend_sync_volume(int force)
         pw_sync_volume(volume);
         return;
     }
+
+#ifdef _WIN32
+    if (wasapi_loaded && g_active_backend == AUDIO_BACKEND_WASAPI) {
+        wasapi_sync_volume(volume);
+        return;
+    }
+#endif
 
     (void)force;
     (void)volume;
@@ -176,6 +187,12 @@ int audio_backend_prepare_stream(int sample_rate, int channels)
         return -1;
     }
 
+#ifdef _WIN32
+    if (wasapi_loaded && g_active_backend == AUDIO_BACKEND_WASAPI) {
+        return wasapi_prepare_stream(sample_rate, channels);
+    }
+#endif
+
     update_controls_status(audio_text("没有可用的音频后端", "No audio backend available"));
     return -1;
 }
@@ -203,6 +220,12 @@ void audio_backend_cleanup_stream(void)
         pw_cleanup_stream();
         return;
     }
+#ifdef _WIN32
+    if (wasapi_loaded && g_active_backend == AUDIO_BACKEND_WASAPI) {
+        wasapi_cleanup_stream();
+        return;
+    }
+#endif
 }
 
 void audio_backend_flush_stream(void)
@@ -228,6 +251,12 @@ void audio_backend_flush_stream(void)
         pw_flush_stream();
         return;
     }
+#ifdef _WIN32
+    if (wasapi_loaded && g_active_backend == AUDIO_BACKEND_WASAPI) {
+        wasapi_flush_stream();
+        return;
+    }
+#endif
 }
 
 int audio_backend_write_samples(const int32_t *samples, int frame_count)
@@ -272,6 +301,11 @@ int audio_backend_write_samples(const int32_t *samples, int frame_count)
     if (pipewire_loaded && g_active_backend == AUDIO_BACKEND_PIPEWIRE)
         return pw_write_samples(samples, frame_count);
 
+#ifdef _WIN32
+    if (wasapi_loaded && g_active_backend == AUDIO_BACKEND_WASAPI)
+        return wasapi_write_samples(samples, frame_count);
+#endif
+
     return -1;
 }
 
@@ -293,6 +327,12 @@ void audio_backend_pause_stream(void)
         pw_pause_stream();
         return;
     }
+#ifdef _WIN32
+    if (wasapi_loaded && g_active_backend == AUDIO_BACKEND_WASAPI) {
+        wasapi_pause_stream();
+        return;
+    }
+#endif
 }
 
 void audio_backend_resume_stream(void)
@@ -313,4 +353,10 @@ void audio_backend_resume_stream(void)
         pw_resume_stream();
         return;
     }
+#ifdef _WIN32
+    if (wasapi_loaded && g_active_backend == AUDIO_BACKEND_WASAPI) {
+        wasapi_resume_stream();
+        return;
+    }
+#endif
 }
