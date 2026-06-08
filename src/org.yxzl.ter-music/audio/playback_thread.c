@@ -790,13 +790,14 @@ void *play_audio_thread(void *arg)
     /* ── Check if preloaded data is available for this track ── */
     /* Only use preload at 1.0x speed (preloaded PCM is not atempo-adjusted) */
     int used_preload = 0;
+    int n = 0;
     pthread_mutex_lock(&g_preload_data.lock);
     if (g_preload_data.valid && g_preload_data.track_index == index &&
         g_preload_data.sample_rate == output_sample_rate &&
         g_preload_data.channels == output_channels &&
         g_playback_speed >= 0.99f && g_playback_speed <= 1.01f) {
         /* Copy preloaded segments into pool */
-        int n = g_preload_data.segment_count;
+        n = g_preload_data.segment_count;
         if (n > SEGMENT_POOL_SIZE) n = SEGMENT_POOL_SIZE;
 
         for (int s = 0; s < n; s++) {
@@ -811,6 +812,9 @@ void *play_audio_thread(void *arg)
             dst->is_last = 0;   /* will be corrected by decoder in Phase 3 fill */
             dst->is_valid = (src->frame_count > 0);
         }
+        /* If preloaded segments cover the entire track, mark final one as last */
+        if (n > 0 && n == seg_pool.total_segments)
+            seg_pool.slots[n - 1].is_last = 1;
         seg_pool.current_slot = 0;
         seg_pool.current_segment_id = 0;
         used_preload = (n > 0);
@@ -820,6 +824,37 @@ void *play_audio_thread(void *arg)
         preload_data_reset(&g_preload_data);
     }
     pthread_mutex_unlock(&g_preload_data.lock);
+
+    /* ── Advance decoder past preloaded segments ──
+       Preloaded data covers the first n * SEGMENT_DURATION_SEC seconds.
+       The decoder is still at position 0. Seek it forward so Phase 3 fill
+       reads the correct portion of the file. */
+    if (used_preload && n > 0 && fmt_ctx && codec_ctx && audio_stream_index >= 0) {
+        int seek_pos = n * SEGMENT_DURATION_SEC;
+        AVRational tb = fmt_ctx->streams[audio_stream_index]->time_base;
+        int64_t target_ts = av_rescale_q(seek_pos, (AVRational){1, 1}, tb);
+        int ret = av_seek_frame(fmt_ctx, audio_stream_index, target_ts, 0);
+        if (ret >= 0) {
+            avcodec_flush_buffers(codec_ctx);
+            if (swr_ctx) swr_init(swr_ctx);
+            if (packet) av_packet_unref(packet);
+
+            /* Reset atempo filter to clear stale state */
+            if (atempo_is_active()) {
+                float speed = atempo_get_speed();
+                cleanup_atempo_filter();
+                if (speed > 0.01f)
+                    init_atempo_filter(codec_ctx, speed);
+            }
+
+            decoder_draining = 0;
+            decoder_finished = 0;
+            log_debug("audio", "Decoder advanced by %ds after preload (n=%d)", seek_pos, n);
+        } else {
+            log_warn("audio", "Failed to advance decoder past preloaded segments (n=%d, seek_pos=%d)",
+                     n, seek_pos);
+        }
+    }
 
     /* ── If no preload, decode first segment(s) normally ── */
     if (!used_preload) {

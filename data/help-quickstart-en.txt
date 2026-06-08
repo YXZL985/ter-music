@@ -58,6 +58,7 @@ ter-music Quick Start Guide
   A                 Add to a custom playlist (opens selection popup)
   F / f             Add to favorites
   O / o             Open a music folder
+  I (uppercase)     Append a music folder
 
   Search & Browse:
   S  or  /          Search tracks (pinyin supported)
@@ -78,7 +79,6 @@ ter-music Quick Start Guide
   .                 Seek forward 5 seconds
   +/=               Increase volume
   -/_               Decrease volume
-  D                 Jump to current lyric line
 
   Control Buttons:
   [<<]    Previous track
@@ -200,7 +200,7 @@ ter-music Quick Start Guide
 
 19. Tips & Tricks
 ------------------
-  Press ? or h in the main view for keyboard shortcut help.
+  Press F8 for the full help page. Press h for playback history.
   The UI adapts automatically when the terminal is resized.
   Playback state is saved on exit (can be disabled in Settings).
   Ctrl+C exits safely.
