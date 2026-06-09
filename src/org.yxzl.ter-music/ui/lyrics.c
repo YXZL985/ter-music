@@ -13,8 +13,10 @@
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
+#ifndef _WIN32
 #include <iconv.h>
 #include <libgen.h>
+#endif
 #include <math.h>
 #include <time.h>
 #include <libavformat/avformat.h>

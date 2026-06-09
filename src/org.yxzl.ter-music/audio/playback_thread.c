@@ -22,7 +22,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 #include <math.h>
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>

@@ -11,7 +11,9 @@
 extern int g_ascii_fallback_ui;
 #include <wchar.h>
 #include <locale.h>
+#ifndef _WIN32
 #include <langinfo.h>
+#endif
 
 int use_ascii_fallback_ui(void) {
     return g_ascii_fallback_ui;

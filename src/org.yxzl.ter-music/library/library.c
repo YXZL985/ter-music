@@ -26,8 +26,10 @@
 #include <string.h>
 #include <sqlite3.h>
 #include <sys/stat.h>
+#ifndef _WIN32
 #include <unistd.h>
 #include <dirent.h>
+#endif
 #include <errno.h>
 #include <pthread.h>
 #include <stdarg.h>

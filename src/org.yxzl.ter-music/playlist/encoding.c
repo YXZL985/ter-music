@@ -1,6 +1,8 @@
 #include "playlist/encoding.h"
 
+#ifndef _WIN32
 #include <iconv.h>
+#endif
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>

@@ -30,7 +30,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 #include <math.h>
 #include <time.h>
 
@@ -58,19 +60,14 @@
 struct pulseaudio_funcs P = {0};
 struct alsa_funcs A = {0};
 struct pipewire_funcs PW = {0};
-#ifdef _WIN32
-struct wasapi_funcs W = {0};
-#endif
+/* wasapi_funcs W is defined in wasapi.c, declared extern in wasapi.h */
 
 /* ============================================================
  * Global state
  * ============================================================ */
 
 int g_active_backend = AUDIO_BACKEND_AUTO;
-
-#ifdef _WIN32
-int wasapi_loaded = 0;
-#endif
+/* wasapi_loaded is defined in wasapi.c, declared extern in wasapi.h */
 
 pthread_mutex_t audio_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t g_volume_mutex = PTHREAD_MUTEX_INITIALIZER;

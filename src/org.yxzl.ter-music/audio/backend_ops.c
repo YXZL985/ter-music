@@ -16,7 +16,9 @@
 #include "logger/logger.h"
 #include <stdio.h>
 #include <string.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 #include <errno.h>
 
 #ifdef _WIN32

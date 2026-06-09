@@ -10,7 +10,9 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #ifdef HAVE_DBUS
 #include <dbus/dbus.h>

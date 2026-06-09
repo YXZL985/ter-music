@@ -162,7 +162,12 @@ typedef struct {
 #define MAX_CACHE_SIZE 100
 
 #define MAX_ALBUM_COVER_CACHE 10
-#define ALBUM_COVER_TEMP_PREFIX "/tmp/ter-music-cover-"
+#ifdef _WIN32
+/* Resolved at runtime via GetTempPath in windows_compat.h — see album_cover_temp_dir() */
+#  define ALBUM_COVER_TEMP_PREFIX album_cover_temp_dir()
+#else
+#  define ALBUM_COVER_TEMP_PREFIX "/tmp/ter-music-cover-"
+#endif
 #define MAX_REMOTE_CONNECTIONS 20
 #define MAX_REMOTE_NAME_LEN 64
 

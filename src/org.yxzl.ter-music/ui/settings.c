@@ -28,7 +28,9 @@
 #include <string.h>
 #include <ncursesw/ncurses.h>
 #include <sys/stat.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 #include <math.h>
 #include <ctype.h>
 #include <stdbool.h>

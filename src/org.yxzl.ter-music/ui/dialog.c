@@ -20,9 +20,11 @@
 extern WINDOW *win_controls;
 #include <wchar.h>
 #include <wctype.h>
+#ifndef _WIN32
 #include <dirent.h>
-#include <sys/stat.h>
 #include <unistd.h>
+#endif
+#include <sys/stat.h>
 #include <ctype.h>
 
 #ifndef MAX

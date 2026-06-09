@@ -15,7 +15,9 @@
 #include <string.h>
 #include <errno.h>
 #include <sys/stat.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "types.h"
 #include "config/schema.h"

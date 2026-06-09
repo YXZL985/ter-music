@@ -12,13 +12,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <getopt.h>
 #include <signal.h>
 #include <sys/stat.h>
-#include <dirent.h>
 #include <errno.h>
+#ifdef _WIN32
+#  include "compat/getopt.h"
+#else
+#include <getopt.h>
+#include <dirent.h>
 #include <unistd.h>
 #include <execinfo.h>
+#endif
 
 extern void init_ncurses();
 extern void create_layout();

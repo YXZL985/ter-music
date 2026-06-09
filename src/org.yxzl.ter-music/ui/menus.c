@@ -36,8 +36,10 @@
 #include <string.h>
 #include <ncursesw/ncurses.h>
 #include <sys/stat.h>
+#ifndef _WIN32
 #include <unistd.h>
 #include <dirent.h>
+#endif
 #include <errno.h>
 #include <ctype.h>
 #include <stdbool.h>

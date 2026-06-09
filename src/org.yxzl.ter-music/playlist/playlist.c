@@ -13,14 +13,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <dirent.h>
-#include <sys/stat.h>
 #include <unistd.h>
+#include <iconv.h>
+#endif
+#include <sys/stat.h>
 #include <ctype.h>
 #include <limits.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <iconv.h>
 #include <wchar.h>
 #include <locale.h>
 #include <pthread.h>

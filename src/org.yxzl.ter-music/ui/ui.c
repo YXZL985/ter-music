@@ -37,15 +37,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ncursesw/ncurses.h>
+#ifndef _WIN32
 #include <dirent.h>
-#include <sys/stat.h>
 #include <unistd.h>
+#include <langinfo.h>
+#endif
+#include <sys/stat.h>
 #include <ctype.h>
 #include <limits.h>
 #include <wchar.h>
 #include <wctype.h>
 #include <locale.h>
-#include <langinfo.h>
 #include <math.h>
 #include <pthread.h>
 #include <time.h>

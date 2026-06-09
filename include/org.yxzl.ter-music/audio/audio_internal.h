@@ -107,6 +107,25 @@ void pw_pause_stream(void);
 void pw_resume_stream(void);
 void pw_sync_volume(int volume);
 
+/* ---- WASAPI 后端状态（定义在 audio/backend/wasapi.c，仅 Win32） ---- */
+#ifdef _WIN32
+#  include "audio/backend/wasapi.h"
+extern int  wasapi_loaded;
+extern int  wasapi_stream_ready;
+extern int  wasapi_channels;
+extern int  wasapi_sample_rate;
+
+int  wasapi_load(void);
+void wasapi_unload(void);
+int  wasapi_prepare_stream(int sample_rate, int channels);
+void wasapi_cleanup_stream(void);
+void wasapi_flush_stream(void);
+int  wasapi_write_samples(const int32_t *samples, int frame_count);
+void wasapi_pause_stream(void);
+void wasapi_resume_stream(void);
+void wasapi_sync_volume(int volume);
+#endif
+
 /* ---- Segment buffer（用于分段播放） ---- */
 #include "audio/segment_buffer.h"
 extern PreloadData g_preload_data;
