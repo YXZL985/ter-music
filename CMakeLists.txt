@@ -10,6 +10,31 @@ if(WIN32)
     set(CMAKE_C_STANDARD 11)  # MSVC 对 C99 支持有限，用 C11
     add_definitions(-D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_WARNINGS)
     add_definitions(-DWIN32_LEAN_AND_MEAN -DNOMINMAX)
+
+    # ── 自动探测 VCPKG_ROOT（仅当未通过环境变量 / -D 设置时） ──
+    if(NOT VCPKG_ROOT)
+        foreach(_ver "18" "17" "16" "15")
+            set(_try_path "C:/Program Files/Microsoft Visual Studio/${_ver}/Community/VC/vcpkg")
+            if(EXISTS "${_try_path}/vcpkg.exe" OR EXISTS "${_try_path}/vcpkg-artifacts.mjs")
+                set(VCPKG_ROOT "${_try_path}" CACHE PATH "vcpkg root (auto-detected)")
+                message(STATUS "Auto-detected VCPKG_ROOT: ${VCPKG_ROOT}")
+                break()
+            endif()
+            # 也检查 Build Tools 路径
+            set(_try_bt "C:/Program Files/Microsoft Visual Studio/${_ver}/BuildTools/VC/vcpkg")
+            if(EXISTS "${_try_bt}/vcpkg.exe" OR EXISTS "${_try_bt}/vcpkg-artifacts.mjs")
+                set(VCPKG_ROOT "${_try_bt}" CACHE PATH "vcpkg root (auto-detected)")
+                message(STATUS "Auto-detected VCPKG_ROOT: ${VCPKG_ROOT}")
+                break()
+            endif()
+            unset(_try_bt)
+        endforeach()
+        if(NOT VCPKG_ROOT)
+            message(WARNING "VCPKG_ROOT not set and no VS vcpkg found. "
+                           "Set VCPKG_ROOT environment variable or pass -DVCPKG_ROOT=... to configure.")
+        endif()
+        unset(_try_path)
+    endif()
 endif()
 
 # ── Linux build path (pkg-config) ───────────────────────────────
@@ -224,6 +249,7 @@ if(WIN32)
         src/org.yxzl.ter-music/audio/backend/wasapi.c
         src/compat/getopt.c
         src/compat/execinfo.c
+        src/compat/dirent.c
     )
     set(HAVE_WIN_BACKENDS TRUE)
 endif()
