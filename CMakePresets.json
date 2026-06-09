@@ -16,7 +16,9 @@
       "description": "Windows MSVC x64 build with Ninja + vcpkg",
       "generator": "Ninja",
       "cacheVariables": {
-        "CMAKE_TOOLCHAIN_FILE": "C:/tools/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "VCPKG_DEFAULT_TRIPLET": "x64-windows",
         "CMAKE_BUILD_TYPE": "Debug"
       }
     },
@@ -26,9 +28,9 @@
       "description": "Windows MSVC x64 build with Visual Studio 18 2026 generator",
       "generator": "Visual Studio 18 2026",
       "architecture": "x64",
-      "toolset": "v143",
+      "toolset": "v180",
       "cacheVariables": {
-        "CMAKE_TOOLCHAIN_FILE": "C:/tools/vcpkg/scripts/buildsystems/vcpkg.cmake"
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
       }
     }
   ],
