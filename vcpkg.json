@@ -3,7 +3,7 @@
   "version": "2.0.0",
   "description": "Terminal UI music player for Windows",
   "homepage": "https://github.com/YXZL985/ter-music",
-  "builtin-baseline": "00d899c410b31467733472fc3a83a25729046b13",
+  "builtin-baseline": "4b3e4c276b5b87a649e66341e11553e8c577459c",
   "dependencies": [
     "ffmpeg",
     "pdcurses",
