@@ -1,0 +1,39 @@
+# ── Line endings ─────────────────────────────────────────────
+# 统一使用 LF，无论检出平台是 Linux 还是 Windows
+*               text=auto eol=lf
+
+# ── Source code ─────────────────────────────────────────────
+*.c             text eol=lf
+*.h             text eol=lf
+*.cmake         text eol=lf
+*.json          text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.xml           text eol=lf
+*.sh            text eol=lf
+*.py            text eol=lf
+*.md            text eol=lf
+*.txt           text eol=lf
+*.nsi           text eol=lf
+*.bat           text eol=crlf
+*.ps1           text eol=lf
+
+# ── Build artifacts / generated ────────────────────────────
+*.o             binary
+*.obj           binary
+*.exe           binary
+*.dll           binary
+*.so            binary
+
+# ── Media / data ───────────────────────────────────────────
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.svg           text eol=lf
+*.ico           binary
+*.desktop       text eol=lf
+
+# ── Otherwise binary file types (never normalize) ──────────
+*.tar.gz        binary
+*.zip           binary
+*.7z            binary
