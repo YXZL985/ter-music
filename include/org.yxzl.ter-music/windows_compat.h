@@ -62,6 +62,9 @@
 #define usleep(us)  Sleep((DWORD)((us) / 1000))
 #define sleep(sec)  Sleep((DWORD)(sec) * 1000)
 
+/* isatty 映射（MSVC 在 <io.h> 中提供 _isatty） */
+#define isatty(fd) _isatty(fd)
+
 /* ssize_t 定义（MSVC 无 ssize_t） */
 #ifdef _MSC_VER
 #  ifndef _SSIZE_T_DEFINED
@@ -165,6 +168,10 @@ struct sigaction {
 #  define SIGPIPE 13
 #endif
 
+/* ── dirent.h 替代 ──────────────────────────────────────── */
+/* 完整实现在 compat/dirent.c，使用 FindFirstFile/FindNextFile 封装 */
+#include "compat/dirent.h"
+
 /* ── getopt.h 替代 ──────────────────────────────────────── */
 /* 需要单独包含 compat/getopt.h 获得完整 getopt_long 实现 */
 /* 这里仅声明外部变量 */
@@ -259,6 +266,23 @@ static inline size_t iconv(iconv_t cd,
 #include <time.h>
 #include <sys/timeb.h>
 
+/* gettimeofday / struct timeval（MSVC 无 <sys/time.h>） */
+struct timeval {
+    long tv_sec;
+    long tv_usec;
+};
+static inline int gettimeofday(struct timeval *tv, void *tz) {
+    (void)tz;
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    /* Convert from 100ns intervals since 1601-01-01 to seconds since 1970-01-01 */
+    uint64_t t = ((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
+    t -= 116444736000000000ULL;  /* 1601→1970 offset in 100ns */
+    tv->tv_sec  = (long)(t / 10000000);
+    tv->tv_usec = (long)((t % 10000000) / 10);
+    return 0;
+}
+
 /* clock_gettime(CLOCK_MONOTONIC, ...) */
 static inline int clock_gettime_monotonic(struct timespec *ts) {
     static LARGE_INTEGER freq = {0};
@@ -300,6 +324,22 @@ static inline void path_normalize(char *path) {
 #ifndef PATH_MAX
 #  define PATH_MAX MAX_PATH
 #endif
+
+/* ── 临时目录（用于专辑封面等） ──────────────────────────── */
+static inline const char *album_cover_temp_dir(void) {
+    static char buf[MAX_PATH];
+    static int initialized = 0;
+    if (!initialized) {
+        DWORD len = GetTempPathA(MAX_PATH - 20, buf);
+        if (len == 0 || len > MAX_PATH - 20) {
+            /* fallback: current directory */
+            strcpy(buf, ".\\");
+        }
+        strcat(buf, "ter-music-cover-");
+        initialized = 1;
+    }
+    return buf;
+}
 
 /* ── 环境变量 ───────────────────────────────────────────── */
 #define setenv(name, value, overwrite)  SetEnvironmentVariableA((name), (value))
